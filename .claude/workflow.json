@@ -1,0 +1,806 @@
+# Spec 驱动开发流程指南
+
+## 概述
+
+本文档定义如何使用 Spec 文档驱动 Agent 正确执行开发流程，以及如何通过 Skill 实现自动化。
+
+---
+
+## 一、Spec 驱动开发流程
+
+### 1.1 核心理念
+
+```
+Spec (规格) → Agent (执行) → Skill (辅助) → Code (产出)
+    ↑                                        ↓
+    └──────────── Verify (验证) ←────────────┘
+```
+
+**原则**：
+- Spec 是契约，Agent 必须遵守
+- Skill 是工具，Agent 按需调用
+- 验证是闭环，确保符合 Spec
+
+### 1.2 开发流程图
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Spec 驱动开发流程                                  │
+│                                                                     │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐          │
+│  │ 1.读取  │ →  │ 2.分析  │ →  │ 3.实现  │ →  │ 4.验证  │          │
+│  │  Spec   │    │  任务   │    │  代码   │    │  结果   │          │
+│  └─────────┘    └─────────┘    └─────────┘    └─────────┘          │
+│       ↑                                             ↓               │
+│       └──────────── 5.迭代 ←────────────────────────┘               │
+│                                                                     │
+│  辅助 Skill:                                                        │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐    │
+│  │requirements │ │   coder     │ │  reviewer   │ │  tdd-tester │    │
+│  │  -analyzer  │ │             │ │             │ │             │    │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 1.3 详细步骤
+
+#### Step 1: 读取 Spec
+
+```typescript
+// Agent 启动时的标准流程
+async function initializeDevelopment(): Promise<DevelopmentContext> {
+  // 1. 读取项目总览
+  const overview = await readSpec('specs/overview.md');
+
+  // 2. 读取当前节点排期
+  const schedule = await readSpec('specs/schedule.md');
+  const currentNode = schedule.currentNode;  // Node A/B/C/D
+
+  // 3. 读取相关技术规格
+  const relevantSpecs = await loadRelevantSpecs(currentNode);
+
+  // 4. 构建开发上下文
+  return {
+    project: overview,
+    currentNode,
+    specs: relevantSpecs,
+    status: 'ready'
+  };
+}
+
+// 加载节点相关的 Spec
+async function loadRelevantSpecs(node: Node): Promise<SpecDict> {
+  const specMap: Record<string, string[]> = {
+    'Node A': [
+      'directory-structure.md',
+      'plugin-system.md',
+      'architecture.md'
+    ],
+    'Node B': [
+      'query-layer.md',
+      'chunking-layer.md',
+      'reranker.md',
+      'offline-search.md',
+      'long-tail-query.md'
+    ],
+    'Node C': [
+      'tools.md',
+      'resources.md',
+      'prompts.md',
+      'harness.md'
+    ],
+    'Node D': [
+      'evaluation.md',
+      'multimodal.md'
+    ]
+  };
+
+  const specs: SpecDict = {};
+  for (const specName of specMap[node.name]) {
+    specs[specName] = await readSpec(`specs/${specName}`);
+  }
+  return specs;
+}
+```
+
+#### Step 2: 分析任务
+
+```typescript
+// 基于 Spec 分析任务
+async function analyzeTasks(context: DevelopmentContext): Promise<TaskList> {
+  // 1. 从 schedule.md 获取当前节点任务
+  const nodeTasks = context.project.schedule[context.currentNode];
+
+  // 2. 匹配 Spec 定义
+  const tasksWithSpec = nodeTasks.map(task => ({
+    ...task,
+    specReference: findSpecReference(task, context.specs)
+  }));
+
+  // 3. 验证任务完整性
+  const validated = validateTasks(tasksWithSpec);
+
+  return validated;
+}
+
+// 匹配 Spec 引用
+function findSpecReference(task: Task, specs: SpecDict): SpecReference {
+  // 任务 -> Spec 映射表
+  const taskToSpec: Record<string, string> = {
+    // Node A
+    'A.1': 'directory-structure.md#项目初始化',
+    'A.2': 'architecture.md#存储层',
+    'A.3': 'plugin-system.md',
+
+    // Node B
+    'B.1': 'chunking-layer.md',
+    'B.2': 'plugin-system.md#Embedder插件',
+    'B.3': 'query-layer.md#多路召回',
+    'B.4': 'reranker.md',
+    'B.5': 'offline-search.md',
+    'B.6': 'harness.md#反馈回路',
+
+    // Node C
+    'C.1': 'tools.md',
+    'C.2': 'resources.md',
+    'C.3': 'prompts.md',
+    'C.4': 'harness.md#观测审计',
+    'C.5': 'harness.md#流程编排',
+
+    // Node D
+    'D.1': 'evaluation.md',
+    'D.2': 'evaluation.md#回归测试',
+    'D.3': 'plugin-system.md#CI/CD'
+  };
+
+  const specPath = taskToSpec[task.id];
+  if (!specPath) {
+    throw new Error(`No spec found for task ${task.id}`);
+  }
+
+  return parseSpecReference(specPath);
+}
+```
+
+#### Step 3: 实现代码
+
+```typescript
+// 按照 Spec 实现代码
+async function implementTask(task: Task, spec: SpecReference): Promise<CodeResult> {
+  // 1. 读取 Spec 定义
+  const specContent = await readSpecSection(spec);
+
+  // 2. 提取接口定义
+  const interfaces = extractInterfaces(specContent);
+
+  // 3. 提取验收标准
+  const criteria = extractAcceptanceCriteria(specContent);
+
+  // 4. 生成代码
+  const code = await generateCode({
+    task,
+    interfaces,
+    criteria,
+    existingCode: await loadExistingCode()
+  });
+
+  // 5. 写入文件
+  await writeCode(code);
+
+  return { files: code.files, status: 'implemented' };
+}
+```
+
+#### Step 4: 验证结果
+
+```typescript
+// 验证实现是否符合 Spec
+async function verifyImplementation(task: Task, result: CodeResult): Promise<VerificationResult> {
+  // 1. 类型检查
+  const typeCheck = await runTypeCheck(result.files);
+
+  // 2. 单元测试
+  const tests = await runTests(result.files);
+
+  // 3. Spec 一致性检查
+  const specCompliance = await checkSpecCompliance(task, result);
+
+  // 4. 验收标准检查
+  const acceptance = await checkAcceptanceCriteria(task, result);
+
+  return {
+    typeCheck: typeCheck.success,
+    tests: tests.passRate,
+    specCompliance: specCompliance.score,
+    acceptance: acceptance.passed,
+    overall: typeCheck.success && tests.passRate > 0.8 && specCompliance.score > 0.9 && acceptance.passed
+  };
+}
+```
+
+---
+
+## 二、Agent 执行规范
+
+### 2.1 Agent 工作模式
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Agent 工作模式                                   │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                     Spec 阅读阶段                             │   │
+│  │  1. 必须先读取 overview.md 了解项目全貌                        │   │
+│  │  2. 必须读取 schedule.md 确认当前节点                          │   │
+│  │  3. 必须读取相关技术 Spec 了解实现细节                          │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              ↓                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                     任务执行阶段                              │   │
+│  │  1. 按照 Spec 定义的接口签名实现                               │   │
+│  │  2. 按照 Spec 定义的数据结构定义类型                            │   │
+│  │  3. 按照 Spec 定义的验收标准验证                               │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              ↓                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                     结果验证阶段                              │   │
+│  │  1. 检查是否符合 Spec 接口定义                                 │   │
+│  │  2. 检查是否满足验收标准                                       │   │
+│  │  3. 检查是否通过测试                                           │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              ↓                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                     节点确认阶段                              │   │
+│  │  1. 完成节点所有任务                                           │   │
+│  │  2. 通过所有验收标准                                           │   │
+│  │  3. 等待人工确认                                               │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2 Agent 必须遵守的规则
+
+```markdown
+## Agent 执行规则
+
+### 禁止事项
+1. ❌ 不得跳过 Spec 直接编写代码
+2. ❌ 不得修改 Spec 定义的接口签名（除非有变更流程）
+3. ❌ 不得忽略验收标准
+4. ❌ 不得跳过节点确认直接进入下一节点
+
+### 必须事项
+1. ✅ 必须先读取 Spec 再编写代码
+2. ✅ 必须按照 Spec 定义的数据结构实现
+3. ✅ 必须编写对应的测试用例
+4. ✅ 必须在节点完成后等待人工确认
+5. ✅ 必须记录 Trace 信息供 Harness 追踪
+
+### 推荐事项
+1. 💡 推荐调用相关 Skill 辅助开发
+2. 💡 推荐使用 TDD 方式：先写测试再写代码
+3. 💡 推荐复用已有组件而非重复实现
+```
+
+### 2.3 Spec 一致性检查
+
+```typescript
+// Agent 自检清单
+interface SpecComplianceCheck {
+  // 接口一致性
+  interfaceCompliance: {
+    check: '接口签名是否与 Spec 定义一致？';
+    method: '对比代码接口与 Spec 接口定义';
+    required: true;
+  };
+
+  // 数据结构一致性
+  dataStructureCompliance: {
+    check: '数据类型是否与 Spec 定义一致？';
+    method: 'TypeScript 类型检查';
+    required: true;
+  };
+
+  // 验收标准
+  acceptanceCriteria: {
+    check: '是否满足 Spec 定义的验收标准？';
+    method: '运行测试验证';
+    required: true;
+  };
+
+  // 目录结构
+  directoryStructure: {
+    check: '文件是否放在正确的目录层级？';
+    method: '检查是否符合 directory-structure.md';
+    required: true;
+  };
+
+  // Harness 可追踪
+  harnessTraceable: {
+    check: '是否添加了 Trace 信息？';
+    method: '检查是否有完整的日志和追踪';
+    required: true;
+  };
+}
+
+// 自检执行
+async function selfCheck(task: Task, implementation: CodeResult): Promise<CheckResult> {
+  const checks: CheckItem[] = [];
+
+  // 1. 接口一致性
+  const specInterfaces = await extractSpecInterfaces(task.specReference);
+  const codeInterfaces = await extractCodeInterfaces(implementation.files);
+  checks.push({
+    name: 'interfaceCompliance',
+    passed: compareInterfaces(specInterfaces, codeInterfaces),
+    details: diffInterfaces(specInterfaces, codeInterfaces)
+  });
+
+  // 2. 数据结构一致性
+  checks.push({
+    name: 'dataStructureCompliance',
+    passed: await runTypeCheck(implementation.files),
+    details: await getTypeErrors(implementation.files)
+  });
+
+  // 3. 验收标准
+  const criteria = await extractAcceptanceCriteria(task.specReference);
+  checks.push({
+    name: 'acceptanceCriteria',
+    passed: await verifyCriteria(criteria, implementation),
+    details: await getCriteriaResults(criteria, implementation)
+  });
+
+  // 4. 目录结构
+  checks.push({
+    name: 'directoryStructure',
+    passed: verifyDirectoryStructure(implementation.files),
+    details: getDirectoryIssues(implementation.files)
+  });
+
+  // 5. Harness 可追踪
+  checks.push({
+    name: 'harnessTraceable',
+    passed: verifyTraceInfo(implementation.files),
+    details: getTraceIssues(implementation.files)
+  });
+
+  return {
+    allPassed: checks.every(c => c.passed),
+    checks
+  };
+}
+```
+
+---
+
+## 三、Skill 与 Spec 协作机制
+
+### 3.1 Skill 调用时机
+
+```typescript
+// Skill 调用决策树
+interface SkillInvocationDecision {
+  task: Task;
+  recommendedSkills: SkillRecommendation[];
+}
+
+function recommendSkills(task: Task): SkillRecommendation[] {
+  const recommendations: SkillRecommendation[] = [];
+
+  // 需求分析阶段
+  if (task.phase === 'analysis') {
+    recommendations.push({
+      skill: 'requirements-analyzer',
+      reason: '分析需求，生成/更新 Spec',
+      priority: 'high'
+    });
+  }
+
+  // 编码阶段
+  if (task.phase === 'implementation') {
+    recommendations.push({
+      skill: 'coder',
+      reason: '根据 Spec 生成代码',
+      priority: 'high'
+    });
+  }
+
+  // 测试阶段
+  if (task.phase === 'testing') {
+    recommendations.push({
+      skill: 'tdd-tester',
+      reason: '生成测试用例，运行测试',
+      priority: 'high'
+    });
+  }
+
+  // 审核阶段
+  if (task.phase === 'review') {
+    recommendations.push({
+      skill: 'reviewer',
+      reason: '代码审核，检查 Spec 合规性',
+      priority: 'medium'
+    });
+  }
+
+  // CI/CD 阶段
+  if (task.phase === 'deployment') {
+    recommendations.push({
+      skill: 'cicd-orchestrator',
+      reason: '生成 Dockerfile 和 CI 配置',
+      priority: 'medium'
+    });
+  }
+
+  return recommendations;
+}
+```
+
+### 3.2 Skill 自动化流程
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Skill 自动化流程                                  │
+│                                                                     │
+│  任务输入                                                           │
+│     ↓                                                              │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                    Skill 执行引擎                             │  │
+│  │                                                              │  │
+│  │  ┌─────────────┐                                            │  │
+│  │  │ 读取 Spec   │  → 获取接口定义、数据结构、验收标准          │  │
+│  │  └─────────────┘                                            │  │
+│  │         ↓                                                    │  │
+│  │  ┌─────────────┐                                            │  │
+│  │  │ 执行 Skill  │  → requirements-analyzer/coder/tester 等    │  │
+│  │  └─────────────┘                                            │  │
+│  │         ↓                                                    │  │
+│  │  ┌─────────────┐                                            │  │
+│  │  │ 验证结果    │  → 对比 Spec，检查合规性                     │  │
+│  │  └─────────────┘                                            │  │
+│  │         ↓                                                    │  │
+│  │  ┌─────────────┐                                            │  │
+│  │  │ 输出产物    │  → 代码/测试/配置文件                        │  │
+│  │  └─────────────┘                                            │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                              ↓                                      │
+│                         产物输出                                    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.3 Skill 编程接口
+
+```typescript
+// Skill 基础接口
+interface Skill {
+  name: string;
+  description: string;
+  inputSchema: JSONSchema;
+  outputSchema: JSONSchema;
+
+  execute(input: SkillInput, context: SkillContext): Promise<SkillOutput>;
+}
+
+interface SkillContext {
+  // Spec 访问
+  specs: {
+    read(path: string): Promise<string>;
+    getInterface(specName: string, interfaceName: string): Promise<InterfaceDef>;
+    getAcceptanceCriteria(specName: string): Promise<AcceptanceCriteria[]>;
+  };
+
+  // 文件操作
+  files: {
+    read(path: string): Promise<string>;
+    write(path: string, content: string): Promise<void>;
+    exists(path: string): Promise<boolean>;
+  };
+
+  // 测试运行
+  test: {
+    run(testFile: string): Promise<TestResult>;
+    runAll(): Promise<TestResult[]>;
+  };
+
+  // 类型检查
+  typeCheck: {
+    check(): Promise<TypeCheckResult>;
+  };
+}
+```
+
+---
+
+## 四、自动化工作流配置
+
+### 4.1 创建自动化配置文件<tool_call>Write<arg_key>content</arg_key><arg_value>{
+  "$schema": "./workflow.schema.json",
+  "version": "1.0.0",
+  "project": "RAG-MCP-SERVER",
+
+  "spec": {
+    "directory": "specs",
+    "mainSpec": "overview.md",
+    "scheduleSpec": "schedule.md"
+  },
+
+  "nodes": {
+    "NodeA": {
+      "name": "基础架构",
+      "specRefs": ["directory-structure.md", "plugin-system.md", "architecture.md"],
+      "tasks": [
+        {
+          "id": "A.1",
+          "name": "项目初始化",
+          "specRef": "directory-structure.md#项目初始化",
+          "skills": ["coder"],
+          "verification": ["type-check", "lint"],
+          "acceptanceCriteria": [
+            "项目可编译",
+            "npm run build 成功"
+          ]
+        },
+        {
+          "id": "A.2",
+          "name": "存储层实现",
+          "specRef": "architecture.md#存储层",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"],
+          "acceptanceCriteria": [
+            "Milvus 连接正常",
+            "SQLite + FTS 正常工作"
+          ]
+        },
+        {
+          "id": "A.3",
+          "name": "插件系统框架",
+          "specRef": "plugin-system.md",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"],
+          "acceptanceCriteria": [
+            "插件系统可加载/卸载插件",
+            "默认插件注册成功"
+          ]
+        },
+        {
+          "id": "A.4",
+          "name": "Harness基础组件",
+          "specRef": "harness.md",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"],
+          "acceptanceCriteria": [
+            "约束规则生效",
+            "工具集管理可用"
+          ]
+        },
+        {
+          "id": "A.5",
+          "name": "单元测试",
+          "specRef": "evaluation.md#单元测试",
+          "skills": ["tdd-tester"],
+          "verification": ["unit-test"],
+          "acceptanceCriteria": [
+            "单元测试通过率 > 80%"
+          ]
+        }
+      ],
+      "requiresConfirmation": true
+    },
+
+    "NodeB": {
+      "name": "检索引擎",
+      "specRefs": ["query-layer.md", "chunking-layer.md", "reranker.md", "offline-search.md"],
+      "tasks": [
+        {
+          "id": "B.1",
+          "name": "文档处理器",
+          "specRef": "chunking-layer.md",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"]
+        },
+        {
+          "id": "B.2",
+          "name": "Embedding插件",
+          "specRef": "plugin-system.md#Embedder插件",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"]
+        },
+        {
+          "id": "B.3",
+          "name": "多路召回",
+          "specRef": "query-layer.md#多路召回",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"]
+        },
+        {
+          "id": "B.4",
+          "name": "重排精排",
+          "specRef": "reranker.md",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"]
+        },
+        {
+          "id": "B.5",
+          "name": "离线搜索",
+          "specRef": "offline-search.md",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"]
+        },
+        {
+          "id": "B.6",
+          "name": "Harness反馈回路",
+          "specRef": "harness.md#反馈回路",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"]
+        }
+      ],
+      "requiresConfirmation": true
+    },
+
+    "NodeC": {
+      "name": "MCP Server",
+      "specRefs": ["tools.md", "resources.md", "prompts.md", "harness.md"],
+      "tasks": [
+        {
+          "id": "C.1",
+          "name": "MCP Tools",
+          "specRef": "tools.md",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "integration-test"]
+        },
+        {
+          "id": "C.2",
+          "name": "MCP Resources",
+          "specRef": "resources.md",
+          "skills": ["coder"],
+          "verification": ["type-check"]
+        },
+        {
+          "id": "C.3",
+          "name": "MCP Prompts",
+          "specRef": "prompts.md",
+          "skills": ["coder"],
+          "verification": ["type-check"]
+        },
+        {
+          "id": "C.4",
+          "name": "Harness观测审计",
+          "specRef": "harness.md#观测审计",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"]
+        },
+        {
+          "id": "C.5",
+          "name": "Harness流程编排",
+          "specRef": "harness.md#流程编排",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"]
+        }
+      ],
+      "requiresConfirmation": true
+    },
+
+    "NodeD": {
+      "name": "评估与生产化",
+      "specRefs": ["evaluation.md", "multimodal.md"],
+      "tasks": [
+        {
+          "id": "D.1",
+          "name": "评估体系",
+          "specRef": "evaluation.md",
+          "skills": ["coder", "tdd-tester"],
+          "verification": ["type-check", "unit-test"]
+        },
+        {
+          "id": "D.2",
+          "name": "回归测试",
+          "specRef": "evaluation.md#回归测试",
+          "skills": ["tdd-tester"],
+          "verification": ["regression-test"]
+        },
+        {
+          "id": "D.3",
+          "name": "CI/CD配置",
+          "specRef": "plugin-system.md#CI/CD",
+          "skills": ["cicd-orchestrator"],
+          "verification": ["ci-pipeline"]
+        },
+        {
+          "id": "D.4",
+          "name": "文档完善",
+          "specRef": "overview.md",
+          "skills": ["coder"],
+          "verification": ["docs-check"]
+        },
+        {
+          "id": "D.5",
+          "name": "性能优化",
+          "specRef": "long-tail-query.md#速度与Token优化",
+          "skills": ["coder", "reviewer"],
+          "verification": ["benchmark"]
+        },
+        {
+          "id": "D.6",
+          "name": "E2E测试",
+          "specRef": "evaluation.md#E2E测试",
+          "skills": ["tdd-tester"],
+          "verification": ["e2e-test"]
+        }
+      ],
+      "requiresConfirmation": true
+    }
+  },
+
+  "skills": {
+    "requirements-analyzer": {
+      "path": ".claude/skills/requirements-analyzer.skill.md",
+      "triggers": ["需求分析", "Spec更新"],
+      "output": "specs/*.md"
+    },
+    "coder": {
+      "path": ".claude/skills/coder.skill.md",
+      "triggers": ["编码", "实现"],
+      "output": "src/**/*.ts"
+    },
+    "reviewer": {
+      "path": ".claude/skills/reviewer.skill.md",
+      "triggers": ["审核", "检查"],
+      "output": "review-report.md"
+    },
+    "tdd-tester": {
+      "path": ".claude/skills/tdd-tester.skill.md",
+      "triggers": ["测试", "TDD"],
+      "output": "tests/**/*.test.ts"
+    },
+    "cicd-orchestrator": {
+      "path": ".claude/skills/cicd-orchestrator.skill.md",
+      "triggers": ["CI/CD", "Docker", "部署"],
+      "output": ["Dockerfile", "docker-compose.yml", ".github/workflows/*.yml"]
+    },
+    "scheduler": {
+      "path": ".claude/skills/scheduler.skill.md",
+      "triggers": ["排期", "规划"],
+      "output": "specs/schedule.md"
+    }
+  },
+
+  "verification": {
+    "type-check": {
+      "command": "npm run type-check",
+      "required": true
+    },
+    "lint": {
+      "command": "npm run lint",
+      "required": true
+    },
+    "unit-test": {
+      "command": "npm test",
+      "required": true,
+      "minPassRate": 0.8
+    },
+    "integration-test": {
+      "command": "npm run test:integration",
+      "required": true
+    },
+    "e2e-test": {
+      "command": "npm run test:e2e",
+      "required": true
+    },
+    "benchmark": {
+      "command": "npm run benchmark",
+      "required": false
+    },
+    "ci-pipeline": {
+      "command": "npm run ci",
+      "required": true
+    }
+  },
+
+  "automation": {
+    "autoRunTests": true,
+    "autoFixLint": true,
+    "autoGenerateDocs": true,
+    "requireConfirmationBetweenNodes": true
+  }
+}

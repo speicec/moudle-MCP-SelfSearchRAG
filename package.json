@@ -1,0 +1,57 @@
+{
+  "name": "rag-mcp-server",
+  "version": "0.1.0",
+  "description": "RAG MCP Server - 基于 Harness 工程范式的检索增强生成 MCP 服务器",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "spec-check": "node scripts/spec-check.js",
+    "benchmark": "tsx scripts/benchmark.ts",
+    "eval": "tsx scripts/evaluation.ts",
+    "ci": "npm run type-check && npm run lint && npm test && npm run spec-check",
+    "clean": "rm -rf dist",
+    "prepare": "husky install || true"
+  },
+  "keywords": [
+    "rag",
+    "mcp",
+    "model-context-protocol",
+    "retrieval-augmented-generation",
+    "harness",
+    "vector-search",
+    "milvus"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@zilliz/milvus2-sdk-node": "^2.4.0",
+    "better-sqlite3": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "husky": "^9.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
