@@ -36,13 +36,14 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.85.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@zilliz/milvus2-sdk-node": "^2.4.0",
-    "better-sqlite3": "^11.0.0"
+    "sql.js": "^1.14.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^20.0.0",
+    "@types/sql.js": "^1.4.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.57.0",
