@@ -10,4 +10,5 @@ export * from './splitters/index';
 export { TextEnhancer, textEnhancer } from './enhancer';
 export { OverlapCalculator, overlapCalculator } from './overlap';
 export { ChunkValidator, chunkValidator } from './validator';
-export { ChunkingPipelineImpl, chunkingPipeline, ChunkingTrace } from './pipeline';
+export { ChunkingPipelineImpl, chunkingPipeline } from './pipeline';
+export type { ChunkingTrace } from './pipeline';

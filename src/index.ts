@@ -6,30 +6,36 @@
 // Layer 0: Types
 export * from './types';
 
-// Layer 1: Storage
-export {
+// Layer 1: Storage - 类型导出
+export type {
   IVectorStore,
   IMetadataStore,
   IFullTextStore,
   ICacheStore,
   StorageStats,
-  CacheStats,
+  CacheStats
+} from './storage';
+
+// Layer 1: Storage - 值导出 (类)
+export {
   MilvusVectorStore,
   SQLiteMetadataStore,
   SQLiteFullTextStore,
   MemoryCacheStore
 } from './storage';
 
-// Layer 1: Plugins
+// Layer 1: Plugins - 类型导出
+export type { BasePlugin } from './plugins';
+
+// Layer 1: Plugins - 值导出
 export {
-  BasePlugin,
   PluginRegistry,
   pluginRegistry,
   PluginLoader,
   pluginLoader
 } from './plugins';
 
-// Layer 2: Chunking
+// Layer 2: Chunking - 值导出 (都是类)
 export {
   DocumentAnalyzer,
   RecursiveChunker,
@@ -41,17 +47,17 @@ export {
   chunkingPipeline
 } from './chunking';
 
-// Layer 2: Embedding
+// Layer 2: Embedding - 值导出 (类)
 export { EmbeddingPipeline } from './embedding';
 
-// Layer 3: Query
+// Layer 3: Query - 值导出 (都是类)
 export {
   QueryParser,
   QueryRouter,
   QueryDecomposer
 } from './query';
 
-// Layer 4: Retrieval
+// Layer 4: Retrieval - 值导出 (都是类)
 export {
   MultiPathRecall,
   RuleBasedReranker,
@@ -59,7 +65,7 @@ export {
   ResultFusion
 } from './retrieval';
 
-// Layer 5: Harness
+// Layer 5: Harness - 值导出 (都是类)
 export {
   ConstraintEngine,
   defaultRules,
@@ -70,7 +76,7 @@ export {
   FlowOrchestrator
 } from './harness';
 
-// Layer 6: Server
+// Layer 6: Server - 值导出 (类)
 export {
   MCPServer,
   allToolDefinitions,
@@ -78,7 +84,7 @@ export {
   allPromptDefinitions
 } from './server';
 
-// Evaluation
+// Evaluation - 值导出 (都是类)
 export {
   RetrievalEvaluator,
   RegressionRunner,
@@ -87,7 +93,7 @@ export {
   defaultBenchmarks
 } from './evaluation';
 
-// Config
+// Config - 值导出 (类)
 export { ConfigLoader, configLoader } from './config';
 
 // 版本信息
