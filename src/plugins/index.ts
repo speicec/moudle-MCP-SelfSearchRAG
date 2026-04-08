@@ -8,10 +8,14 @@ export * from './interface';
 export { PluginRegistry, pluginRegistry } from './registry';
 export { PluginLoader, pluginLoader } from './loader';
 
-// 注册内置插件
+// 内置插件
+export * from './builtin/index';
+
+// 注册默认插件
 import { pluginRegistry } from './registry';
 import { BasePlugin } from './interface';
 import type { PluginType } from '../types/index';
+import { registerBuiltinPlugins } from './builtin/index';
 
 // 简单的默认 Embedder 插件
 class DefaultEmbedderPlugin extends BasePlugin {
@@ -53,3 +57,6 @@ pluginRegistry.register({
   },
   factory: () => new DefaultChunkerPlugin()
 });
+
+// 注册内置插件
+registerBuiltinPlugins();
