@@ -78,6 +78,15 @@ export {
   allPromptDefinitions
 } from './server';
 
+// Evaluation
+export {
+  RetrievalEvaluator,
+  RegressionRunner,
+  BenchmarkRunner,
+  defaultRegressionTests,
+  defaultBenchmarks
+} from './evaluation';
+
 // Config
 export { ConfigLoader, configLoader } from './config';
 
