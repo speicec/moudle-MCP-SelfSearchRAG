@@ -15,7 +15,7 @@ dist-ssr
 stats.html
 *.local
 
-# Editor directories and files
+# Editor  directories and files
 .vscode/*
 .idea
 .DS_Store
