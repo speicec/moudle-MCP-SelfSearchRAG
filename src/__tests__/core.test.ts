@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { Pipeline } from '../src/core/pipeline.js';
-import { Context, ProcessingState } from '../src/core/context.js';
-import { Document, createDocument } from '../src/core/document.js';
-import { BasePlugin } from '../src/core/plugin.js';
-import { BaseStage } from '../src/core/stage.js';
-
+import { Pipeline } from '../core/pipeline.js';
+import { Context, ProcessingState } from '../core/context.js';
+import { Document, createDocument } from '../core/document.js';
+import { BasePlugin } from '../core/plugin.js';
+import { BaseStage } from '../core/stage.js';
 describe('Harness Core', () => {
   describe('Context', () => {
     it('should create context with initial document', () => {
