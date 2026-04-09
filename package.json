@@ -1,0 +1,52 @@
+{
+  "name": "enhanced-rag-mcp-server",
+  "version": "0.1.0",
+  "description": "Enhanced RAG system with multimodal support and complex PDF parsing, exposed via MCP Server",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "rag-mcp-server": "dist/mcp/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:fast": "esbuild src/index.ts src/mcp/server.ts --outdir=dist --format=esm --platform=node --target=ES2022 --bundle",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "mcp": "node dist/mcp/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "rag",
+    "mcp",
+    "multimodal",
+    "pdf-parsing",
+    "vector-search"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "pdf-parse": "^1.1.1",
+    "uuid": "^9.0.0",
+    "chromadb": "^1.5.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "esbuild": "^0.19.0",
+    "vitest": "^1.0.0",
+    "@types/node": "^20.0.0",
+    "@types/pdf-parse": "^1.1.1",
+    "@types/uuid": "^9.0.0",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0"
+  }
+}
