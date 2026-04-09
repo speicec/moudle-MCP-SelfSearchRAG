@@ -5,7 +5,9 @@
       "Bash(openspec status:*)",
       "Bash(openspec instructions:*)",
       "Bash(npx tsc:*)",
-      "Bash(openspec list:*)"
+      "Bash(openspec list:*)",
+      "Bash(mkdir -p openspec/changes/archive)",
+      "Bash(ls openspec/changes/archive/2026-04-09-fix-typescript-strict-errors)"
     ]
   }
 }
