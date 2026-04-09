@@ -12,7 +12,7 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build
+# Build (optional, tsx can run .ts directly)
 RUN npm run build
 
 # Production stage
@@ -23,25 +23,20 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies only
-RUN npm ci --only=production
+# Install dependencies including tsx
+RUN npm ci
 
-# Copy built files from builder
+# Copy source and built files
+COPY --from=builder /app/src ./src
 COPY --from=builder /app/dist ./dist
-
-# Copy config
-COPY --from=builder /app/src/config ./src/config
+COPY --from=builder /app/data ./data
 
 # Set environment
 ENV NODE_ENV=production
-ENV PORT=3000
 
-# Expose port
-EXPOSE 3000
-
-# Health check
+# Health check (optional)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
-# Start the server
-CMD ["node", "dist/index.js"]
+# Start the server using tsx (handles ESM imports properly)
+CMD ["npx", "tsx", "src/main.ts"]

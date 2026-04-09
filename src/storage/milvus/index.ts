@@ -12,14 +12,26 @@ export class MilvusVectorStore implements IVectorStore {
   private collectionName: string;
   private dimension: number = 1536;
   private connected: boolean = false;
+  private config: { host: string; port: string; user: string; password: string };
 
-  constructor(config: { host: string; port: number; collection: string }) {
+  constructor(config: { host: string; port: number | string; collection: string; user?: string; password?: string }) {
     this.collectionName = config.collection;
+    this.config = {
+      host: config.host,
+      port: String(config.port),
+      user: config.user || '',
+      password: config.password || ''
+    };
   }
 
   async connect(): Promise<void> {
+    const address = `${this.config.host}:${this.config.port}`;
+    console.error(`[MilvusVectorStore] Connecting to: ${address}`);
+
     this.client = new MilvusClient({
-      address: `${this.collectionName}`, // 使用环境变量或配置
+      address,
+      username: this.config.user,
+      password: this.config.password,
       timeout: 10000
     });
     this.connected = true;
