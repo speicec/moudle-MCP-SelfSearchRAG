@@ -192,6 +192,7 @@ app.post('/api/index', async (req, res) => {
         docId,
         content: chunkContent,
         embedding: embedding.embedding,
+        position: { start: i, end: Math.min(i + chunkSize, content.length) },
         metadata: { type: 'text' as const }
       });
     }

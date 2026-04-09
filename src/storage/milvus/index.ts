@@ -135,30 +135,62 @@ export class MilvusVectorStore implements IVectorStore {
   async search(vector: number[], topK: number, _filter?: object): Promise<SearchResult[]> {
     if (!this.client) throw new Error('Not connected');
 
-    const searchResult = await this.client.search({
-      collection_name: this.collectionName,
-      vectors: [vector],
-      top_k: topK,
-      metric_type: 'COSINE',
-      params: { nprobe: 16 },
-      output_fields: ['id', 'doc_id', 'content', 'source', 'type']
-    });
+    try {
+      const searchResult = await this.client.search({
+        collection_name: this.collectionName,
+        vectors: [vector],
+        top_k: topK,
+        metric_type: 'COSINE',
+        params: { nprobe: 16 },
+        output_fields: ['id', 'doc_id', 'content', 'source', 'type']
+      });
 
-    if (!searchResult.results || searchResult.results.length === 0) {
+      // 调试：打印返回结构
+      console.error('[MilvusVectorStore] Search result keys:', Object.keys(searchResult));
+      console.error('[MilvusVectorStore] Results type:', typeof searchResult.results);
+
+      if (!searchResult.results) {
+        return [];
+      }
+
+      // 处理不同的返回格式
+      let results: any[] = [];
+
+      if (Array.isArray(searchResult.results)) {
+        // 格式1: [[{id, score...}]] - 二维数组
+        if (Array.isArray(searchResult.results[0])) {
+          results = searchResult.results[0];
+        }
+        // 格式2: [{id, score...}] - 一维数组
+        else if (typeof searchResult.results[0] === 'object') {
+          results = searchResult.results;
+        }
+      }
+      // 格式3: {0: [{id, score...}]} - 对象格式
+      else if (typeof searchResult.results === 'object') {
+        const firstKey = Object.keys(searchResult.results)[0];
+        if (firstKey && Array.isArray(searchResult.results[firstKey])) {
+          results = searchResult.results[firstKey];
+        }
+      }
+
+      console.error('[MilvusVectorStore] Parsed results count:', results.length);
+
+      return results.map((result: Record<string, unknown>) => {
+        const typeVal = result.type as string;
+        const validType = (typeVal === 'text' || typeVal === 'code' || typeVal === 'mixed') ? typeVal : 'text';
+        return {
+          chunkId: result.id as string,
+          docId: result.doc_id as string,
+          content: result.content as string,
+          score: result.score as number,
+          source: result.source as string,
+          metadata: { type: validType as 'text' | 'code' | 'mixed' }
+        };
+      });
+    } catch (error) {
+      console.error('[MilvusVectorStore] Search error:', error);
       return [];
     }
-
-    return searchResult.results[0].map((result: Record<string, unknown>) => {
-      const typeVal = result.type as string;
-      const validType = (typeVal === 'text' || typeVal === 'code' || typeVal === 'mixed') ? typeVal : 'text';
-      return {
-        chunkId: result.id as string,
-        docId: result.doc_id as string,
-        content: result.content as string,
-        score: result.score as number,
-        source: result.source as string,
-        metadata: { type: validType as 'text' | 'code' | 'mixed' }
-      };
-    });
   }
 }
