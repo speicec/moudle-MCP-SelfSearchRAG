@@ -37,6 +37,7 @@ export interface PipelineError {
   plugin?: string;
   message: string;
   recoverable: boolean;
+  stack?: string;
 }
 
 /**

@@ -1,5 +1,7 @@
 import type { Context, ContextSnapshot } from './context.js';
 import type { PipelineResult, PipelineError } from './harness.js';
+import type { PipelineEvent, PipelineStageName } from '../server/types.js';
+import { WebSocketHandler } from '../server/websocket-handler.js';
 
 /**
  * Logging hook - logs execution progress
@@ -208,6 +210,106 @@ export function combineHooks(
           await hook.onError(error, ctx);
         }
       }
+    },
+  };
+}
+
+/**
+ * WebSocket emitter hook - broadcasts pipeline events via WebSocket
+ */
+export function createWebSocketEmitterHook(
+  wsHandler?: WebSocketHandler
+): {
+  preExecution: (ctx: Context) => Promise<Context>;
+  postExecution: (result: PipelineResult) => Promise<void>;
+  onError: (error: PipelineError, ctx: Context) => Promise<void>;
+} {
+  const handler = wsHandler ?? WebSocketHandler.getGlobalHandler();
+
+  const broadcast = (event: PipelineEvent): void => {
+    if (handler) {
+      handler.broadcast(event);
+    }
+  };
+
+  return {
+    preExecution: async (ctx: Context): Promise<Context> => {
+      const docId = ctx.getDocumentId() ?? 'unknown';
+      broadcast({
+        type: 'pipeline:start',
+        documentId: docId,
+        message: 'Pipeline execution started',
+        timestamp: Date.now(),
+      });
+      return ctx;
+    },
+
+    postExecution: async (result: PipelineResult): Promise<void> => {
+      const docId = result.documentId;
+      broadcast({
+        type: 'pipeline:complete',
+        documentId: docId,
+        message: `Pipeline completed: ${result.status}`,
+        timestamp: Date.now(),
+      });
+    },
+
+    onError: async (error: PipelineError, ctx: Context): Promise<void> => {
+      const docId = ctx.getDocumentId() ?? 'unknown';
+      const errorObj: { message: string; stack?: string } = { message: error.message };
+      if (error.stack !== undefined) {
+        errorObj.stack = error.stack;
+      }
+      broadcast({
+        type: 'error',
+        documentId: docId,
+        error: errorObj,
+        message: `Error in stage "${error.stage}"`,
+        timestamp: Date.now(),
+      });
+    },
+  };
+}
+
+/**
+ * Stage progress hook - emits stage:start and stage:complete events
+ */
+export function createStageProgressHook(
+  wsHandler?: WebSocketHandler
+): {
+  preStage: (stage: PipelineStageName, ctx: Context) => Promise<Context>;
+  postStage: (stage: PipelineStageName, result: unknown, ctx: Context) => Promise<void>;
+} {
+  const handler = wsHandler ?? WebSocketHandler.getGlobalHandler();
+
+  const broadcast = (event: PipelineEvent): void => {
+    if (handler) {
+      handler.broadcast(event);
+    }
+  };
+
+  return {
+    preStage: async (stage: PipelineStageName, ctx: Context): Promise<Context> => {
+      const docId = ctx.getDocumentId() ?? 'unknown';
+      broadcast({
+        type: 'stage:start',
+        stage,
+        documentId: docId,
+        message: `Stage ${stage} started`,
+        timestamp: Date.now(),
+      });
+      return ctx;
+    },
+
+    postStage: async (stage: PipelineStageName, _result: unknown, ctx: Context): Promise<void> => {
+      const docId = ctx.getDocumentId() ?? 'unknown';
+      broadcast({
+        type: 'stage:complete',
+        stage,
+        documentId: docId,
+        message: `Stage ${stage} completed`,
+        timestamp: Date.now(),
+      });
     },
   };
 }
