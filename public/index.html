@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG MCP Server</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      color: #e0e0e0;
+    }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    h1 { text-align: center; margin-bottom: 30px; color: #00d4ff; }
+
+    .card {
+      background: rgba(255,255,255,0.05);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+    }
+
+    .status-item {
+      background: rgba(0,212,255,0.1);
+      padding: 15px;
+      border-radius: 8px;
+      text-align: center;
+    }
+
+    .status-value { font-size: 24px; font-weight: bold; color: #00d4ff; }
+    .status-label { font-size: 12px; color: #888; margin-top: 5px; }
+
+    .search-box {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    input, textarea, select {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 8px;
+      padding: 12px;
+      color: #fff;
+      font-size: 14px;
+      width: 100%;
+    }
+
+    input:focus, textarea:focus { outline: none; border-color: #00d4ff; }
+
+    button {
+      background: linear-gradient(135deg, #00d4ff, #0099cc);
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
+      color: #fff;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    button:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,212,255,0.3); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .results { margin-top: 20px; }
+
+    .result-item {
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 10px;
+      border-left: 3px solid #00d4ff;
+    }
+
+    .result-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: #888;
+    }
+
+    .result-score {
+      background: rgba(0,212,255,0.2);
+      padding: 2px 8px;
+      border-radius: 4px;
+      color: #00d4ff;
+    }
+
+    .result-content {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .tab {
+      padding: 10px 20px;
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 8px;
+      color: #888;
+      cursor: pointer;
+    }
+
+    .tab.active {
+      background: rgba(0,212,255,0.2);
+      border-color: #00d4ff;
+      color: #00d4ff;
+    }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    .doc-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+
+    .doc-path { font-weight: 500; }
+    .doc-size { color: #888; font-size: 12px; }
+
+    .delete-btn {
+      background: rgba(255,80,80,0.2);
+      color: #ff5050;
+      padding: 5px 10px;
+      font-size: 12px;
+    }
+
+    .delete-btn:hover { background: rgba(255,80,80,0.4); }
+
+    .loading { text-align: center; padding: 40px; color: #888; }
+
+    .error {
+      background: rgba(255,80,80,0.1);
+      border: 1px solid rgba(255,80,80,0.3);
+      color: #ff8080;
+      padding: 10px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+
+    .success {
+      background: rgba(80,255,80,0.1);
+      border: 1px solid rgba(80,255,80,0.3);
+      color: #80ff80;
+      padding: 10px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔍 RAG MCP Server</h1>
+
+    <!-- 状态卡片 -->
+    <div class="card">
+      <div class="status-grid" id="status">
+        <div class="status-item">
+          <div class="status-value" id="status-docs">-</div>
+          <div class="status-label">文档数量</div>
+        </div>
+        <div class="status-item">
+          <div class="status-value" id="status-chunks">-</div>
+          <div class="status-label">分块数量</div>
+        </div>
+        <div class="status-item">
+          <div class="status-value" id="status-milvus">-</div>
+          <div class="status-label">Milvus</div>
+        </div>
+        <div class="status-item">
+          <div class="status-value" id="status-collection">-</div>
+          <div class="status-label">Collection</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 标签页 -->
+    <div class="tabs">
+      <button class="tab active" onclick="showPanel('search')">🔍 搜索</button>
+      <button class="tab" onclick="showPanel('index')">📄 索引文档</button>
+      <button class="tab" onclick="showPanel('documents')">📚 文档列表</button>
+    </div>
+
+    <!-- 搜索面板 -->
+    <div class="panel active" id="panel-search">
+      <div class="card">
+        <div class="search-box">
+          <input type="text" id="search-query" placeholder="输入搜索内容..." onkeypress="if(event.key==='Enter')search()">
+          <select id="search-mode">
+            <option value="hybrid">混合检索</option>
+            <option value="vector">向量检索</option>
+            <option value="fulltext">全文检索</option>
+          </select>
+          <input type="number" id="search-topk" value="10" min="1" max="100" style="width:80px">
+          <button onclick="search()">搜索</button>
+        </div>
+        <div id="search-results" class="results"></div>
+      </div>
+    </div>
+
+    <!-- 索引面板 -->
+    <div class="panel" id="panel-index">
+      <div class="card">
+        <div style="margin-bottom:15px">
+          <label>文档路径</label>
+          <input type="text" id="index-path" placeholder="/docs/example.md">
+        </div>
+        <div style="margin-bottom:15px">
+          <label>文档内容</label>
+          <textarea id="index-content" rows="10" placeholder="粘贴文档内容..."></textarea>
+        </div>
+        <button onclick="indexDocument()">索引文档</button>
+        <div id="index-result" style="margin-top:15px"></div>
+      </div>
+    </div>
+
+    <!-- 文档列表面板 -->
+    <div class="panel" id="panel-documents">
+      <div class="card">
+        <div id="documents-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin + '/api';
+
+    // 加载状态
+    async function loadStatus() {
+      try {
+        const res = await fetch(`${API_BASE}/status`);
+        const json = await res.json();
+        if (json.success) {
+          document.getElementById('status-docs').textContent = json.data.indexed_docs;
+          document.getElementById('status-chunks').textContent = json.data.indexed_chunks;
+          document.getElementById('status-milvus').textContent = json.data.milvus_connected ? '✓' : '✗';
+          document.getElementById('status-collection').textContent = json.data.config?.collection || '-';
+        }
+      } catch (e) {
+        console.error('Load status failed:', e);
+      }
+    }
+
+    // 搜索
+    async function search() {
+      const query = document.getElementById('search-query').value;
+      const mode = document.getElementById('search-mode').value;
+      const topK = parseInt(document.getElementById('search-topk').value);
+
+      if (!query) return;
+
+      const resultsDiv = document.getElementById('search-results');
+      resultsDiv.innerHTML = '<div class="loading">搜索中...</div>';
+
+      try {
+        const res = await fetch(`${API_BASE}/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, mode, top_k: topK })
+        });
+        const json = await res.json();
+
+        if (json.success) {
+          if (json.data.results.length === 0) {
+            resultsDiv.innerHTML = '<div class="loading">没有找到结果</div>';
+          } else {
+            resultsDiv.innerHTML = json.data.results.map(r => `
+              <div class="result-item">
+                <div class="result-header">
+                  <span>📄 ${r.source || r.doc_id}</span>
+                  <span class="result-score">评分: ${r.score?.toFixed(3) || '-'}</span>
+                </div>
+                <div class="result-content">${escapeHtml(r.content)}</div>
+              </div>
+            `).join('');
+          }
+        } else {
+          resultsDiv.innerHTML = `<div class="error">${json.error}</div>`;
+        }
+      } catch (e) {
+        resultsDiv.innerHTML = `<div class="error">搜索失败: ${e}</div>`;
+      }
+    }
+
+    // 索引文档
+    async function indexDocument() {
+      const path = document.getElementById('index-path').value;
+      const content = document.getElementById('index-content').value;
+
+      if (!path || !content) {
+        document.getElementById('index-result').innerHTML = '<div class="error">请填写路径和内容</div>';
+        return;
+      }
+
+      document.getElementById('index-result').innerHTML = '<div class="loading">索引中...</div>';
+
+      try {
+        const res = await fetch(`${API_BASE}/index`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path, content })
+        });
+        const json = await res.json();
+
+        if (json.success) {
+          document.getElementById('index-result').innerHTML =
+            `<div class="success">✓ ${json.data.message}</div>`;
+          document.getElementById('index-path').value = '';
+          document.getElementById('index-content').value = '';
+          loadStatus();
+        } else {
+          document.getElementById('index-result').innerHTML = `<div class="error">${json.error}</div>`;
+        }
+      } catch (e) {
+        document.getElementById('index-result').innerHTML = `<div class="error">索引失败: ${e}</div>`;
+      }
+    }
+
+    // 加载文档列表
+    async function loadDocuments() {
+      const listDiv = document.getElementById('documents-list');
+      listDiv.innerHTML = '<div class="loading">加载中...</div>';
+
+      try {
+        const res = await fetch(`${API_BASE}/documents`);
+        const json = await res.json();
+
+        if (json.success) {
+          if (json.data.length === 0) {
+            listDiv.innerHTML = '<div class="loading">暂无文档</div>';
+          } else {
+            listDiv.innerHTML = json.data.map(d => `
+              <div class="doc-item">
+                <div>
+                  <div class="doc-path">${d.path}</div>
+                  <div class="doc-size">${formatSize(d.size)} · ${new Date(d.indexed_at).toLocaleString()}</div>
+                </div>
+                <button class="delete-btn" onclick="deleteDoc('${d.id}')">删除</button>
+              </div>
+            `).join('');
+          }
+        }
+      } catch (e) {
+        listDiv.innerHTML = `<div class="error">加载失败: ${e}</div>`;
+      }
+    }
+
+    // 删除文档
+    async function deleteDoc(docId) {
+      if (!confirm('确定删除此文档？')) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/documents/${docId}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          loadDocuments();
+          loadStatus();
+        }
+      } catch (e) {
+        alert('删除失败: ' + e);
+      }
+    }
+
+    // 切换面板
+    function showPanel(name) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelector(`.tab:nth-child(${name === 'search' ? 1 : name === 'index' ? 2 : 3})`).classList.add('active');
+      document.getElementById(`panel-${name}`).classList.add('active');
+
+      if (name === 'documents') loadDocuments();
+    }
+
+    // 工具函数
+    function escapeHtml(text) {
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // 初始化
+    loadStatus();
+    setInterval(loadStatus, 30000);
+  </script>
+</body>
+</html>

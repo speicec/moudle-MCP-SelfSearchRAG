@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "rag": {
+      "command": "npx",
+      "args": ["tsx", "src/main.ts"],
+      "cwd": "d:\\WebstormProjects\\RAG\\MY-RAG-MCP-SERVER",
+      "env": {
+        "MILVUS_HOST": "localhost",
+        "MILVUS_PORT": "19530",
+        "MILVUS_USER": "khoor",
+        "MILVUS_PASSWORD": "000000"
+      }
+    }
+  }
+}

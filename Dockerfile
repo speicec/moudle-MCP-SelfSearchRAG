@@ -30,13 +30,18 @@ RUN npm ci
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/data ./data
+COPY --from=builder /app/public ./public
 
 # Set environment
 ENV NODE_ENV=production
+ENV PORT=3000
 
-# Health check (optional)
+# Expose port
+EXPOSE 3000
+
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/status || exit 1
 
-# Start the server using tsx (handles ESM imports properly)
-CMD ["npx", "tsx", "src/main.ts"]
+# Start the API server (for web interface)
+CMD ["npx", "tsx", "src/api.ts"]
