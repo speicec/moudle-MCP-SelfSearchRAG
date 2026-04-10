@@ -12,6 +12,13 @@ import {
   aggregateEmbeddings,
 } from './utils.js';
 import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs/promises';
+import path from 'path';
+
+/**
+ * Storage file name for persistence
+ */
+const STORAGE_FILE = 'hierarchical-store.json';
 
 /**
  * HierarchicalStore - manages storage and retrieval of hierarchical chunks
@@ -20,15 +27,97 @@ import { v4 as uuidv4 } from 'uuid';
  * - Small chunks: used for precise retrieval (100-300 tokens)
  * - Parent chunks: provide full context (500-1500 tokens)
  * - Bidirectional lookup: small→parent, parent→children
+ *
+ * Now supports persistence to disk for data recovery after restart.
  */
 export class HierarchicalStore {
   private smallChunks: Map<string, HierarchicalChunk> = new Map();
   private parentChunks: Map<string, HierarchicalChunk> = new Map();
   private config: SemanticChunkerConfig;
   private documentEmbeddings: Map<string, number[]> = new Map();
+  private storagePath?: string;
+  private autoSave: boolean = false;
+  private saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config?: Partial<SemanticChunkerConfig>) {
     this.config = { ...DEFAULT_SEMANTIC_CHUNKER_CONFIG, ...config };
+  }
+
+  /**
+   * Enable persistence with auto-save
+   */
+  async enablePersistence(storagePath: string, autoSave: boolean = true): Promise<void> {
+    this.storagePath = storagePath;
+    this.autoSave = autoSave;
+
+    // Ensure directory exists
+    await fs.mkdir(storagePath, { recursive: true });
+
+    // Load existing data
+    await this.load();
+  }
+
+  /**
+   * Save store to disk
+   */
+  async save(): Promise<void> {
+    if (!this.storagePath) return;
+
+    const data = {
+      version: 1,
+      smallChunks: Array.from(this.smallChunks.entries()),
+      parentChunks: Array.from(this.parentChunks.entries()),
+      documentEmbeddings: Array.from(this.documentEmbeddings.entries()),
+      savedAt: new Date().toISOString(),
+    };
+
+    const filePath = path.join(this.storagePath, STORAGE_FILE);
+    await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+    console.log(`[HierarchicalStore] Saved ${this.smallChunks.size} small chunks, ${this.parentChunks.size} parent chunks`);
+  }
+
+  /**
+   * Schedule a debounced save (for auto-save after modifications)
+   */
+  private scheduleSave(): void {
+    if (!this.autoSave || !this.storagePath) return;
+
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+
+    this.saveTimeout = setTimeout(() => {
+      this.save().catch(err => {
+        console.error('[HierarchicalStore] Auto-save failed:', err);
+      });
+    }, 1000); // Debounce 1 second
+  }
+
+  /**
+   * Load store from disk
+   */
+  async load(): Promise<void> {
+    if (!this.storagePath) return;
+
+    const filePath = path.join(this.storagePath, STORAGE_FILE);
+
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const data = JSON.parse(content);
+
+      if (data.version === 1) {
+        this.smallChunks = new Map(data.smallChunks);
+        this.parentChunks = new Map(data.parentChunks);
+        this.documentEmbeddings = new Map(data.documentEmbeddings);
+
+        console.log(`[HierarchicalStore] Loaded ${this.smallChunks.size} small chunks, ${this.parentChunks.size} parent chunks from ${data.savedAt}`);
+      }
+    } catch (error) {
+      // File doesn't exist or is corrupted - start fresh
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn('[HierarchicalStore] Failed to load store, starting fresh:', (error as Error).message);
+      }
+    }
   }
 
   /**
@@ -57,6 +146,9 @@ export class HierarchicalStore {
       parent.childIds = group.map(c => c.id);
       this.parentChunks.set(parent.id, parent);
     }
+
+    // Trigger auto-save after building hierarchy
+    this.scheduleSave();
 
     return [...smallChunks, ...parents];
   }
@@ -290,6 +382,9 @@ export class HierarchicalStore {
     }
 
     this.documentEmbeddings.delete(documentId);
+
+    // Trigger auto-save after removal
+    this.scheduleSave();
   }
 
   /**
@@ -323,6 +418,9 @@ export class HierarchicalStore {
     this.smallChunks.clear();
     this.parentChunks.clear();
     this.documentEmbeddings.clear();
+
+    // Trigger auto-save after clear
+    this.scheduleSave();
   }
 
   /**

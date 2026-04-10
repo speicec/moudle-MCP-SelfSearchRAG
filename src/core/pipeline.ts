@@ -8,6 +8,8 @@ import type {
   PreExecutionHook,
   PostExecutionHook,
   ErrorHook,
+  StageStartHook,
+  StageCompleteHook,
 } from './harness.js';
 import type { ProcessingState } from './context.js';
 import type { Document } from './document.js';
@@ -34,6 +36,8 @@ export class Pipeline implements Harness {
   private preExecutionHooks: PreExecutionHook[] = [];
   private postExecutionHooks: PostExecutionHook[] = [];
   private errorHooks: ErrorHook[] = [];
+  private stageStartHooks: StageStartHook[] = [];
+  private stageCompleteHooks: StageCompleteHook[] = [];
 
   constructor(config: HarnessConfig, registry?: PluginRegistry) {
     this.config = config;
@@ -59,6 +63,8 @@ export class Pipeline implements Harness {
       this.preExecutionHooks = config.hooks.preExecution ?? [];
       this.postExecutionHooks = config.hooks.postExecution ?? [];
       this.errorHooks = config.hooks.onError ?? [];
+      this.stageStartHooks = config.hooks.onStageStart ?? [];
+      this.stageCompleteHooks = config.hooks.onStageComplete ?? [];
     }
   }
 
@@ -80,8 +86,18 @@ export class Pipeline implements Harness {
       for (const stage of this.stages) {
         context.setState(getStageState(stage.name) as ProcessingState);
 
+        // Call stage start hooks
+        for (const hook of this.stageStartHooks) {
+          await hook(stage.name, context);
+        }
+
         try {
           context = await stage.execute(context);
+
+          // Call stage complete hooks
+          for (const hook of this.stageCompleteHooks) {
+            await hook(stage.name, context);
+          }
 
           // Check for stage errors
           const stageErrors = context.getErrors();

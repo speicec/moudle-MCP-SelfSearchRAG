@@ -109,3 +109,15 @@ export const DEFAULT_HTTP_SERVER_CONFIG: HttpServerConfig = {
   host: 'localhost',
   documentStoragePath: './data/documents',
 };
+
+/**
+ * Fastify instance extensions
+ */
+declare module 'fastify' {
+  interface FastifyInstance {
+    documentStoragePath?: string;
+    wsHandler?: import('./websocket-handler.js').WebSocketHandler;
+    hierarchicalStore?: import('../chunking/hierarchical-store.js').HierarchicalStore;
+    embeddingService?: import('../embedding/embedding-service.js').TextEmbeddingService;
+  }
+}

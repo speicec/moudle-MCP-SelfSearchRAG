@@ -3,16 +3,10 @@ import type { DocumentMetadata, PipelineEvent } from '../types.js';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs/promises';
 import path from 'path';
+import { processDocumentAsync } from '../document-processor.js';
 
 const SUPPORTED_FILE_TYPES = ['.pdf', '.txt', '.md'];
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-
-declare module 'fastify' {
-  interface FastifyInstance {
-    documentStoragePath?: string;
-    wsHandler?: import('../websocket-handler.js').WebSocketHandler;
-  }
-}
 
 /**
  * Document routes as Fastify plugin
@@ -56,7 +50,7 @@ export async function documentRoutes(fastify: FastifyInstance): Promise<void> {
     // Save file
     await fs.writeFile(filePath, fileBuffer);
 
-    // Create metadata
+    // Create metadata with processing status
     const metadata: DocumentMetadata = {
       id: documentId,
       filename: data.filename ?? 'unknown',
@@ -71,16 +65,15 @@ export async function documentRoutes(fastify: FastifyInstance): Promise<void> {
       JSON.stringify(metadata, null, 2)
     );
 
-    // Emit pipeline:start event
-    if (wsHandler) {
-      const startEvent: PipelineEvent = {
-        type: 'pipeline:start',
-        documentId,
-        message: `Document ${data.filename} uploaded, starting pipeline`,
-        timestamp: Date.now(),
-      };
-      wsHandler.broadcast(startEvent);
-    }
+    // Trigger async pipeline processing (fire-and-forget)
+    processDocumentAsync({
+      documentId,
+      filePath,
+      fastify,
+      storagePath,
+    }).catch(err => {
+      fastify.log.error({ documentId, error: err }, 'Pipeline processing failed');
+    });
 
     return reply.status(200).send(metadata);
   });

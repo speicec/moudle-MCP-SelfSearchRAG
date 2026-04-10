@@ -48,9 +48,16 @@ export class ParsePlugin extends BasePlugin {
     }
 
     const content = document.content;
+
+    // Handle plain text documents (string or Buffer)
     if (typeof content === 'string') {
-      // Handle plain text documents
       return this.processTextDocument(ctx, content);
+    }
+
+    // Handle text format documents (Buffer content with text/plain MIME type)
+    if (document.metadata.format === 'text') {
+      const textContent = content.toString('utf-8');
+      return this.processTextDocument(ctx, textContent);
     }
 
     // Handle PDF documents

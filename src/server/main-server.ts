@@ -11,6 +11,9 @@
  * - Frontend static file serving
  */
 
+// Load environment variables from .env file
+import 'dotenv/config';
+
 import { startHttpServer } from '../server/http-server.js';
 
 // Parse command line arguments

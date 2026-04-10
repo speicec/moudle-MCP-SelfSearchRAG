@@ -46,6 +46,8 @@ export interface PipelineError {
 export type PreExecutionHook = (ctx: Context) => Promise<Context> | Context;
 export type PostExecutionHook = (result: PipelineResult) => Promise<void> | void;
 export type ErrorHook = (error: PipelineError, ctx: Context) => Promise<void> | void;
+export type StageStartHook = (stageName: string, ctx: Context) => Promise<void> | void;
+export type StageCompleteHook = (stageName: string, ctx: Context) => Promise<void> | void;
 
 /**
  * Harness configuration
@@ -56,6 +58,8 @@ export interface HarnessConfig {
     preExecution?: PreExecutionHook[];
     postExecution?: PostExecutionHook[];
     onError?: ErrorHook[];
+    onStageStart?: StageStartHook[];
+    onStageComplete?: StageCompleteHook[];
   };
 }
 

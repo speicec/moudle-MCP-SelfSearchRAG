@@ -5,6 +5,8 @@ import type { FastifyInstance } from 'fastify';
 import { documentRoutes } from '../server/routes/documents.js';
 import { chatRoutes } from '../server/routes/chat.js';
 import { WebSocketHandler } from '../server/websocket-handler.js';
+import { HierarchicalStore } from '../chunking/hierarchical-store.js';
+import { TextEmbeddingService } from '../embedding/embedding-service.js';
 import websocket from '@fastify/websocket';
 
 describe('HTTP Server', () => {
@@ -30,9 +32,15 @@ describe('HTTP Server', () => {
     wsHandler = new WebSocketHandler();
     wsHandler.registerWebSocketRoute(fastify);
 
+    // Create HierarchicalStore and EmbeddingService for RAG
+    const hierarchicalStore = new HierarchicalStore();
+    const embeddingService = new TextEmbeddingService();
+
     // Register routes
     fastify.decorate('documentStoragePath', './test-data/documents');
     fastify.decorate('wsHandler', wsHandler);
+    fastify.decorate('hierarchicalStore', hierarchicalStore);
+    fastify.decorate('embeddingService', embeddingService);
     await fastify.register(documentRoutes, { prefix: '/api/documents' });
     await fastify.register(chatRoutes, { prefix: '/api/chat' });
 

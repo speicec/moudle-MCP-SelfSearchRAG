@@ -108,7 +108,7 @@ export const DEFAULT_RETRIEVAL_CONFIG: SmallToBigRetrievalConfig = {
   similarityThreshold: 0.5,
   maxContextTokens: 4000,
   enableFallback: true,
-  fallbackThreshold: 0.3,
+  fallbackThreshold: 0.4,
 };
 
 /**

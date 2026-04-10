@@ -7,6 +7,8 @@ import { TextEmbeddingService } from './embedding-service.js';
 import { ImageEmbeddingService } from './image-embedding-service.js';
 import { ChunkingService, type ChunkingConfig, DEFAULT_CHUNKING_CONFIG } from './chunking.js';
 import { EmbeddingCache } from './cache.js';
+import { getEmbeddingFactory, getEmbeddingMode } from './embedding-factory.js';
+import type { TextEmbeddingModel } from './embedding-model.js';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -33,7 +35,7 @@ export const DEFAULT_EMBEDDING_STAGE_CONFIG: EmbeddingStageConfig = {
  * Embedding plugin - generates embeddings for document content
  */
 export class EmbeddingPlugin extends BasePlugin {
-  private textEmbedder: TextEmbeddingService;
+  private textEmbedder: TextEmbeddingModel;
   private imageEmbedder: ImageEmbeddingService;
   private chunker: ChunkingService;
   private cache: EmbeddingCache;
@@ -42,7 +44,13 @@ export class EmbeddingPlugin extends BasePlugin {
   constructor(config: EmbeddingStageConfig = {}) {
     super('embed');
     this.config = { ...DEFAULT_EMBEDDING_STAGE_CONFIG, ...config };
-    this.textEmbedder = new TextEmbeddingService();
+
+    // Use factory to create embedding service based on EMBEDDING_MODE
+    const factory = getEmbeddingFactory();
+    this.textEmbedder = factory.createTextEmbeddingService();
+
+    console.log(`[EmbeddingPlugin] Using ${getEmbeddingMode()} embedding mode, dimension: ${this.textEmbedder.getDimension()}`);
+
     this.imageEmbedder = new ImageEmbeddingService();
     this.chunker = new ChunkingService({
       chunkSize: this.config.chunkSize ?? DEFAULT_CHUNKING_CONFIG.chunkSize,

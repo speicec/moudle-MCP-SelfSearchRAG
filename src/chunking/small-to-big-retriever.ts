@@ -62,6 +62,7 @@ export class SmallToBigRetriever {
   private store: HierarchicalStore;
   private queryCache: QueryCache;
   private embeddingGenerator?: (text: string) => Promise<number[]>;
+  private embeddingTimeoutMs: number = 10000; // 10 second timeout for embedding calls (5.4)
 
   constructor(
     store: HierarchicalStore,
@@ -81,25 +82,64 @@ export class SmallToBigRetriever {
 
   /**
    * 6.1: Generate embedding for query with caching
+   * 4.3: Log embedding API calls
+   * 5.1: Add try-catch for embedding service errors
+   * 5.4: Add timeout handling for embedding service calls
    */
   async getQueryEmbedding(query: string): Promise<number[]> {
     // Check cache
     const cached = this.queryCache.get(query);
     if (cached) {
+      console.log('[SmallToBigRetriever] Query embedding cache hit | query length:', query.length);
       return cached;
     }
 
     // Generate new embedding
     if (!this.embeddingGenerator) {
-      // Synthetic embedding for testing
+      // Synthetic embedding for testing (when no generator configured)
+      console.log('[SmallToBigRetriever] Using synthetic embedding (no generator set)');
       const embedding = this.syntheticEmbedding(query);
       this.queryCache.set(query, embedding);
       return embedding;
     }
 
-    const embedding = await this.embeddingGenerator(query);
-    this.queryCache.set(query, embedding);
-    return embedding;
+    // 4.3: Log embedding API request
+    console.log('[SmallToBigRetriever] Embedding API request | query length:', query.length);
+    const startTime = Date.now();
+
+    // 5.1 & 5.4: Add try-catch and timeout handling
+    try {
+      const embedding = await this.withTimeout(
+        this.embeddingGenerator(query),
+        this.embeddingTimeoutMs,
+        'Embedding API timeout'
+      );
+
+      // 4.3: Log embedding API response
+      const duration = Date.now() - startTime;
+      console.log('[SmallToBigRetriever] Embedding API response | duration:', duration, 'ms | dimension:', embedding.length);
+
+      this.queryCache.set(query, embedding);
+      return embedding;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      console.error('[SmallToBigRetriever] Embedding API error | duration:', duration, 'ms | error:', error instanceof Error ? error.message : String(error));
+
+      // 5.1: Throw error to be handled by caller
+      throw error;
+    }
+  }
+
+  /**
+   * 5.4: Timeout wrapper for async operations
+   */
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(message)), timeoutMs)
+      ),
+    ]);
   }
 
   /**
@@ -118,8 +158,21 @@ export class SmallToBigRetriever {
     );
 
     if (filteredResults.length === 0 && this.config.enableFallback) {
+      // 4.2: Log fallback trigger with reason and result count
+      console.log('[SmallToBigRetriever] Fallback triggered: reason=no primary results above threshold', `| threshold=${this.config.similarityThreshold}`);
+
       // 6.7: Fallback to direct parent search
-      return this.fallbackSearch(queryEmbedding);
+      const fallbackResults = await this.fallbackSearch(queryEmbedding);
+
+      // 4.2: Log fallback result count
+      console.log('[SmallToBigRetriever] Fallback results:', fallbackResults.length, `| threshold=${this.config.fallbackThreshold}`);
+
+      // 3.3: Early termination when no fallback results meet threshold
+      if (fallbackResults.length === 0) {
+        return []; // No results meet fallback threshold
+      }
+
+      return fallbackResults;
     }
 
     // 6.4: Expand to parent chunks
@@ -143,6 +196,7 @@ export class SmallToBigRetriever {
 
   /**
    * 6.2: Search in small chunks with cosine similarity
+   * 4.1: Log similarity scores for debugging
    */
   private searchSmallChunks(
     queryEmbedding: number[]
@@ -168,7 +222,15 @@ export class SmallToBigRetriever {
     }
 
     // Sort by similarity descending
-    return sortBySimilarity(results);
+    const sorted = sortBySimilarity(results);
+
+    // 4.1: Log top similarity scores and match count
+    if (sorted.length > 0) {
+      const topScores = sorted.slice(0, 5).map(r => r.similarityScore.toFixed(3));
+      console.log('[SmallToBigRetriever] searchSmallChunks: top scores:', topScores.join(', '), `| total chunks: ${sorted.length}`);
+    }
+
+    return sorted;
   }
 
   /**
@@ -290,9 +352,10 @@ export class SmallToBigRetriever {
 
   /**
    * Generate synthetic embedding for testing
+   * Uses the configured embedding dimension (default 384 for multilingual-e5-small)
    */
   private syntheticEmbedding(text: string): number[] {
-    const dimension = 128;
+    const dimension = 384; // Match multilingual-e5-small dimension
     const embedding: number[] = new Array(dimension).fill(0);
 
     for (let i = 0; i < text.length; i++) {

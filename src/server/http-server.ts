@@ -9,6 +9,9 @@ import { DEFAULT_HTTP_SERVER_CONFIG } from './types.js';
 import { documentRoutes } from './routes/documents.js';
 import { chatRoutes } from './routes/chat.js';
 import { WebSocketHandler } from './websocket-handler.js';
+import { HierarchicalStore } from '../chunking/hierarchical-store.js';
+import { getEmbeddingFactory, getEmbeddingMode } from '../embedding/embedding-factory.js';
+import { TextEmbeddingService } from '../embedding/embedding-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,10 +48,33 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
   const wsHandler = new WebSocketHandler();
   wsHandler.registerWebSocketRoute(fastify);
 
+  // Create HierarchicalStore singleton for RAG
+  const hierarchicalStore = new HierarchicalStore();
+
+  // Enable persistence for the store
+  const storeDataPath = path.resolve(__dirname, '../../data/store');
+  await hierarchicalStore.enablePersistence(storeDataPath, true);
+
+  // Create embedding service using factory
+  const embeddingFactory = getEmbeddingFactory();
+  const embeddingService = embeddingFactory.createTextEmbeddingService();
+
+  // Log embedding service configuration status
+  const mode = getEmbeddingMode();
+  if (mode === 'local') {
+    fastify.log.info('Embedding service: Using LOCAL embedding (transformers.js, multilingual support)');
+  } else {
+    const hasApiKey = !!process.env.EMBEDDING_API_KEY || !!process.env.OPENAI_API_KEY;
+    fastify.log.info(`Embedding service: Using API embedding (${hasApiKey ? 'configured' : 'MOCK - no API key'})`);
+  }
+
   // Register API routes
   await fastify.register(documentRoutes, { prefix: '/api/documents' });
   fastify.decorate('documentStoragePath', finalConfig.documentStoragePath);
   fastify.decorate('wsHandler', wsHandler);
+  fastify.decorate('hierarchicalStore', hierarchicalStore);
+  // Store embeddingService as any to avoid type issues with Fastify's decorate
+  fastify.decorate('embeddingService', embeddingService as unknown as TextEmbeddingService);
 
   await fastify.register(chatRoutes, { prefix: '/api/chat' });
 
@@ -83,18 +109,19 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
     };
   });
 
-  return { fastify, wsHandler };
+  return { fastify, wsHandler, hierarchicalStore };
 }
 
 /**
  * Start HTTP server
  */
 export async function startHttpServer(config: Partial<HttpServerConfig> = {}): Promise<void> {
-  const { fastify, wsHandler } = await createHttpServer(config);
+  const { fastify, wsHandler, hierarchicalStore } = await createHttpServer(config);
   const finalConfig = { ...DEFAULT_HTTP_SERVER_CONFIG, ...config };
 
-  // Store wsHandler globally for pipeline emitter access
-  (globalThis as unknown as { wsHandler: WebSocketHandler }).wsHandler = wsHandler;
+  // Store wsHandler and hierarchicalStore globally for pipeline emitter access
+  (globalThis as unknown as { wsHandler: WebSocketHandler; hierarchicalStore: HierarchicalStore }).wsHandler = wsHandler;
+  (globalThis as unknown as { wsHandler: WebSocketHandler; hierarchicalStore: HierarchicalStore }).hierarchicalStore = hierarchicalStore;
 
   try {
     await fastify.listen({ port: finalConfig.port, host: finalConfig.host });

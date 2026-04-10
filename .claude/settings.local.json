@@ -11,7 +11,17 @@
       "Bash(npm run:*)",
       "Bash(openspec archive:*)",
       "Bash(npm install:*)",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(netstat -ano)",
+      "Bash(curl:*)",
+      "Bash(taskkill //PID 25872 //F)",
+      "Bash(awk '{print $5}')",
+      "Bash(taskkill //PID 13552 //F)",
+      "Bash(npm list:*)",
+      "Bash(ls D:/WebstormProjects/RAG/MY-RAG-MCP-SERVER/node_modules/@xenova/transformers/*.d.ts)",
+      "WebSearch",
+      "Bash(EMBEDDING_MODE=local npm run start:server)",
+      "Bash(curl -s http://localhost:3001/api/health)"
     ]
   }
 }

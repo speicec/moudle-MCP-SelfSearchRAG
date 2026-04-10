@@ -12,6 +12,9 @@ A powerful RAG (Retrieval-Augmented Generation) system with multimodal support a
 - **Semantic Chunking**: Embedding-based chunk boundaries using cosine similarity cliff detection
 - **Hierarchical Retrieval**: Small-to-Big retrieval strategy with parent-child chunk structure
 - **Web Dashboard**: React frontend for document management, chat queries, and pipeline visualization
+- **Local Embedding**: Zero-cost, offline-capable multilingual embeddings using transformers.js
+- **Multilingual Support**: Chinese, English, and 100+ languages for semantic search
+- **Cross-modal Search**: Text-to-image and image-to-text retrieval using CLIP
 
 ## Installation
 
@@ -20,20 +23,92 @@ npm install
 npm run build
 ```
 
-## Configuration
+### Pre-download Models (Optional)
 
-Set environment variables:
+For offline operation, download models before first use:
 
 ```bash
-# Required for OpenAI embeddings
-OPENAI_API_KEY=your-api-key
-
-# Optional: Custom API endpoint
-OPENAI_API_BASE_URL=https://api.openai.com/v1
-
-# Optional: Image embedding endpoint
-IMAGE_EMBEDDING_ENDPOINT=your-endpoint
+npm run download-models
 ```
+
+This downloads:
+- `multilingual-e5-small` (~118MB) - Multilingual text embedding
+- `clip-vit-base-patch32` (~340MB) - Multimodal image/text embedding
+
+Models are cached in `~/.cache/huggingface/hub/` (or `%USERPROFILE%\.cache\huggingface\hub\` on Windows).
+
+## Configuration
+
+### Embedding Mode
+
+Choose between local (free, offline) or API-based embeddings:
+
+```bash
+# Local embedding mode (default) - No API key required
+EMBEDDING_MODE=local
+
+# API embedding mode - Requires API key
+EMBEDDING_MODE=api
+```
+
+### Local Embedding Configuration
+
+```bash
+# Embedding mode
+EMBEDDING_MODE=local
+
+# Text model (supports 100+ languages including Chinese)
+LOCAL_TEXT_MODEL=multilingual-e5-small
+
+# Multimodal model for text-to-image search
+LOCAL_MULTIMODAL_MODEL=clip-vit-base-patch32
+
+# Custom cache directory (optional)
+# TRANSFORMERS_CACHE=/path/to/custom/cache
+
+# Force offline mode (after models are cached)
+# LOCAL_FILES_ONLY=true
+```
+
+### API Embedding Configuration
+
+```bash
+# Embedding mode
+EMBEDDING_MODE=api
+
+# API key for embedding service
+EMBEDDING_API_KEY=your-api-key-here
+
+# API base URL (OpenAI or compatible)
+EMBEDDING_API_BASE_URL=https://api.openai.com/v1
+
+# Embedding model
+EMBEDDING_MODEL=text-embedding-3-small
+```
+
+### Multilingual Support
+
+The local embedding mode supports **100+ languages** including:
+- Chinese (Simplified & Traditional)
+- English
+- Japanese
+- Korean
+- French, German, Spanish, etc.
+
+Chinese queries will find relevant English documents, and vice versa.
+
+### Multimodal Capabilities
+
+With the CLIP model, you can:
+- **Text-to-Image Search**: Query "加班表格" to find table screenshots
+- **Image-to-Text Search**: Upload an image to find related text descriptions
+- **Image-to-Image Search**: Find similar images
+
+### Supported Image Formats
+
+- PNG
+- JPEG/JPG
+- WebP
 
 ## Usage
 
@@ -145,6 +220,18 @@ List all indexed documents.
 │                          │                              │
 │                          ▼                              │
 │  ┌───────────────────────────────────────────────────┐ │
+│  │         Embedding Service Factory                 │ │
+│  │  ┌─────────────────┐  ┌─────────────────────────┐│ │
+│  │  │ Local (local)   │  │ API (api)               ││ │
+│  │  │ • multilingual  │  │ • OpenAI/DeepSeek       ││ │
+│  │  │   -e5-small     │  │ • text-embedding-3      ││ │
+│  │  │ • CLIP          │  │   -small                ││ │
+│  │  │ (multimodal)    │  │                         ││ │
+│  │  └─────────────────┘  └─────────────────────────┘│ │
+│  └───────────────────────────────────────────────────┘ │
+│                          │                              │
+│                          ▼                              │
+│  ┌───────────────────────────────────────────────────┐ │
 │  │            React Frontend Bundle                  │ │
 │  │  DocumentManager │ ChatWindow │ PipelineVisualizer│ │
 │  └───────────────────────────────────────────────────┘ │
@@ -156,7 +243,7 @@ List all indexed documents.
 1. **Ingest**: Validate and store document
 2. **Parse**: Extract text, tables, images, formulas
 3. **Chunk**: Semantic chunking using embedding similarity cliffs
-4. **Embed**: Generate vector embeddings
+4. **Embed**: Generate vector embeddings (local or API)
 5. **Index**: Store in hierarchical structure (small + parent chunks)
 
 ### WebSocket Events
@@ -214,6 +301,35 @@ npm run build
 |--------|----------|-------------|
 | GET | `/api/health` | Health check |
 | GET | `/api/ws-status` | WebSocket connection count |
+
+## Troubleshooting
+
+### Model Download Issues
+
+If models fail to download:
+
+1. Check network connection
+2. Use a mirror site by setting environment variable:
+   ```bash
+   HF_ENDPOINT=https://hf-mirror.com
+   ```
+3. Manually download models from HuggingFace
+
+### Offline Mode Not Working
+
+1. Ensure models are cached first:
+   ```bash
+   npm run download-models
+   ```
+2. Set `LOCAL_FILES_ONLY=true` to force offline mode
+3. Check cache directory: `~/.cache/huggingface/hub/`
+
+### Memory Issues
+
+For large batches:
+- Embedding cache automatically clears when memory exceeds 500MB
+- Process documents in smaller batches
+- Set lower cache size: adjust `maxCacheSize` in service
 
 ## License
 

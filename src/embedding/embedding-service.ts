@@ -4,6 +4,7 @@ import { DEFAULT_EMBEDDING_CONFIG } from './embedding-model.js';
 
 /**
  * Text embedding service implementation
+ * Supports OpenAI-compatible embedding APIs
  */
 export class TextEmbeddingService implements TextEmbeddingModel {
   private config: EmbeddingModelConfig;
@@ -15,8 +16,20 @@ export class TextEmbeddingService implements TextEmbeddingModel {
       ...DEFAULT_EMBEDDING_CONFIG.textModel,
       ...config,
     };
-    this.apiKey = process.env.OPENAI_API_KEY;
-    this.baseUrl = process.env.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
+
+    // Support multiple environment variable formats
+    // Priority: EMBEDDING_API_KEY > OPENAI_API_KEY
+    this.apiKey = process.env.EMBEDDING_API_KEY ?? process.env.OPENAI_API_KEY;
+
+    // Priority: EMBEDDING_API_BASE_URL > OPENAI_API_BASE_URL > default
+    this.baseUrl = process.env.EMBEDDING_API_BASE_URL
+      ?? process.env.OPENAI_API_BASE_URL
+      ?? 'https://api.openai.com/v1';
+
+    // Support custom model from environment
+    if (process.env.EMBEDDING_MODEL) {
+      this.config.modelId = process.env.EMBEDDING_MODEL;
+    }
   }
 
   /**
@@ -48,14 +61,26 @@ export class TextEmbeddingService implements TextEmbeddingModel {
   }
 
   /**
+   * Check if API is configured
+   */
+  hasApiKey(): boolean {
+    return !!this.apiKey;
+  }
+
+  /**
+   * Get API base URL
+   */
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  /**
    * Generate embedding for single text
    */
   async embedText(text: string): Promise<number[]> {
     // Truncate if necessary
     const truncated = this.truncateText(text);
 
-    // Mock implementation - in production, call actual embedding API
-    // For OpenAI: POST to /embeddings
     const embedding = await this.generateEmbedding(truncated);
 
     return embedding;
@@ -132,18 +157,76 @@ export class TextEmbeddingService implements TextEmbeddingModel {
 
   /**
    * Generate embedding via API
-   * Mock implementation - replace with actual API call
+   * Calls OpenAI-compatible embedding API for real semantic embeddings
    */
   private async generateEmbedding(text: string): Promise<number[]> {
-    // In production, this would call:
-    // POST https://api.openai.com/v1/embeddings
-    // {
-    //   "model": "text-embedding-3-small",
-    //   "input": text
-    // }
+    // If no API key, fall back to mock for development
+    if (!this.apiKey) {
+      console.warn('[TextEmbeddingService] No API key configured, using mock embedding (no semantic meaning)');
+      return this.generateMockEmbedding(text);
+    }
 
-    // Mock: generate deterministic pseudo-embedding based on text hash
-    // This is for development/testing only
+    const startTime = Date.now();
+
+    try {
+      console.log(`[TextEmbeddingService] Calling embedding API: ${this.baseUrl}/embeddings (model: ${this.config.modelId})`);
+
+      const response = await fetch(`${this.baseUrl}/embeddings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.config.modelId,
+          input: text,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        let errorMsg = `Embedding API error: ${response.status}`;
+
+        try {
+          const errorJson = JSON.parse(errorData);
+          errorMsg += ` - ${errorJson.error?.message || errorData}`;
+        } catch {
+          errorMsg += ` - ${errorData}`;
+        }
+
+        throw new Error(errorMsg);
+      }
+
+      const data = await response.json() as {
+        data: Array<{ embedding: number[] }>;
+      };
+
+      if (!data.data?.[0]?.embedding) {
+        throw new Error('Invalid embedding API response: missing embedding data');
+      }
+
+      const duration = Date.now() - startTime;
+      console.log(`[TextEmbeddingService] Embedding generated successfully (${duration}ms, dim: ${data.data[0].embedding.length})`);
+
+      // Update dimension if different from config
+      if (data.data[0].embedding.length !== this.config.dimension) {
+        console.log(`[TextEmbeddingService] Updating dimension from ${this.config.dimension} to ${data.data[0].embedding.length}`);
+        this.config.dimension = data.data[0].embedding.length;
+      }
+
+      return data.data[0].embedding;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      console.error(`[TextEmbeddingService] API call failed (${duration}ms):`, error instanceof Error ? error.message : error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate mock embedding for development/testing
+   * WARNING: These embeddings have NO semantic meaning!
+   */
+  private generateMockEmbedding(text: string): number[] {
     const dimension = this.config.dimension;
     const vector: number[] = [];
 
