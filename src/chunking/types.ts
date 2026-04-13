@@ -1,5 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 
+// Re-export config types for convenience
+export type { ContextWindowConfig, StructureBoundaryConfig } from './config.js';
+
 /**
  * Chunk level in hierarchical structure
  */
@@ -100,6 +103,21 @@ export interface SentenceEmbedding {
 }
 
 /**
+ * Structure boundary type
+ */
+export type StructureBoundaryType = 'chapter' | 'section' | 'list-start' | 'heading';
+
+/**
+ * Structure boundary in document
+ */
+export interface StructureBoundary {
+  position: number;           // character position in document
+  type: StructureBoundaryType;
+  confidence: number;         // 0-1 confidence score
+  matchedText?: string;       // the text that matched the boundary pattern
+}
+
+/**
  * Sliding window embedding result
  */
 export interface WindowEmbedding {
@@ -121,6 +139,10 @@ export interface HierarchicalRetrievalResult {
   sourceDocumentId: string;
   metadata: ChunkMetadata;
   expandedFromSmallChunk: boolean;
+  // Context window fields (new)
+  contextWindow?: string;      // extracted context around matched content
+  windowStart?: number;        // start position of context window in parent
+  windowEnd?: number;          // end position of context window in parent
 }
 
 /**

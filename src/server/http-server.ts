@@ -8,10 +8,12 @@ import type { HttpServerConfig } from './types.js';
 import { DEFAULT_HTTP_SERVER_CONFIG } from './types.js';
 import { documentRoutes } from './routes/documents.js';
 import { chatRoutes } from './routes/chat.js';
+import { statsRoutes } from './routes/stats.js';
 import { WebSocketHandler } from './websocket-handler.js';
 import { HierarchicalStore } from '../chunking/hierarchical-store.js';
 import { getEmbeddingFactory, getEmbeddingMode } from '../embedding/embedding-factory.js';
 import { TextEmbeddingService } from '../embedding/embedding-service.js';
+import { StatsAggregationService, createStatsAggregationService } from './stats-aggregation-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -77,6 +79,12 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
   fastify.decorate('embeddingService', embeddingService as unknown as TextEmbeddingService);
 
   await fastify.register(chatRoutes, { prefix: '/api/chat' });
+  await fastify.register(statsRoutes, { prefix: '/api/stats' });
+
+  // Create stats aggregation service and start periodic emission
+  const statsService = createStatsAggregationService(fastify, hierarchicalStore, 5000);
+  statsService.start();
+  fastify.decorate('statsService', statsService);
 
   // Serve frontend static files (for production)
   const frontendDistPath = path.resolve(__dirname, '../frontend');
@@ -109,14 +117,14 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
     };
   });
 
-  return { fastify, wsHandler, hierarchicalStore };
+  return { fastify, wsHandler, hierarchicalStore, statsService };
 }
 
 /**
  * Start HTTP server
  */
 export async function startHttpServer(config: Partial<HttpServerConfig> = {}): Promise<void> {
-  const { fastify, wsHandler, hierarchicalStore } = await createHttpServer(config);
+  const { fastify, wsHandler, hierarchicalStore, statsService } = await createHttpServer(config);
   const finalConfig = { ...DEFAULT_HTTP_SERVER_CONFIG, ...config };
 
   // Store wsHandler and hierarchicalStore globally for pipeline emitter access
@@ -135,6 +143,7 @@ export async function startHttpServer(config: Partial<HttpServerConfig> = {}): P
   // Graceful shutdown
   const shutdown = async () => {
     fastify.log.info('Shutting down server...');
+    statsService?.stop();
     wsHandler.broadcast({
       type: 'error',
       message: 'Server shutting down',

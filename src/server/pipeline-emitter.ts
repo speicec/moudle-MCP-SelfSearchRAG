@@ -1,4 +1,4 @@
-import type { PipelineEvent, PipelineStageName } from './types.js';
+import type { PipelineEvent, PipelineStageName, StageMetrics, ChunkCreatedData, RetrievalMatchData, StatsUpdateData, RetrievalResultItem } from './types.js';
 import { WebSocketHandler } from './websocket-handler.js';
 
 /**
@@ -59,6 +59,67 @@ export class PipelineEmitter {
       stage,
       documentId: this.documentId,
       message: message ?? `Stage ${stage} completed`,
+      timestamp: Date.now(),
+    });
+  }
+
+  emitStageMetrics(stage: PipelineStageName, metrics: StageMetrics): void {
+    this.emit({
+      type: 'stage:metrics',
+      stage,
+      documentId: this.documentId,
+      metrics,
+      message: `Stage ${stage} metrics collected`,
+      timestamp: Date.now(),
+    });
+  }
+
+  emitChunkCreated(chunk: ChunkCreatedData, totalChunks: number): void {
+    this.emit({
+      type: 'chunk:created',
+      documentId: this.documentId,
+      chunk,
+      totalChunks,
+      message: `Chunk created: ${chunk.id}`,
+      timestamp: Date.now(),
+    });
+  }
+
+  emitRetrievalStart(query: string): void {
+    this.emit({
+      type: 'retrieval:start',
+      query,
+      message: `Retrieval started for query`,
+      timestamp: Date.now(),
+    });
+  }
+
+  emitRetrievalMatch(query: string, match: RetrievalMatchData): void {
+    this.emit({
+      type: 'retrieval:match',
+      query,
+      match,
+      message: `Match found: rank ${match.rank}`,
+      timestamp: Date.now(),
+    });
+  }
+
+  emitRetrievalComplete(query: string, results: RetrievalResultItem[], duration: number): void {
+    this.emit({
+      type: 'retrieval:complete',
+      query,
+      results,
+      duration,
+      message: `Retrieval complete: ${results.length} results in ${duration}ms`,
+      timestamp: Date.now(),
+    });
+  }
+
+  emitStatsUpdate(stats: StatsUpdateData): void {
+    this.emit({
+      type: 'stats:update',
+      stats,
+      message: 'Statistics updated',
       timestamp: Date.now(),
     });
   }

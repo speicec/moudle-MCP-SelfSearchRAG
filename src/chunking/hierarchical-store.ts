@@ -2,6 +2,7 @@ import type {
   HierarchicalChunk,
   ChunkLevel,
   QualityScore,
+  StructureBoundary,
 } from './types.js';
 import { createHierarchicalChunk, createDefaultQualityScore } from './types.js';
 import type { SemanticChunkerConfig } from './config.js';
@@ -11,6 +12,7 @@ import {
   mergeChunks,
   aggregateEmbeddings,
 } from './utils.js';
+import { StructureBoundaryDetector, createStructureBoundaryDetector } from './structure-boundary-detector.js';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs/promises';
 import path from 'path';
@@ -38,9 +40,11 @@ export class HierarchicalStore {
   private storagePath?: string;
   private autoSave: boolean = false;
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
+  private boundaryDetector: StructureBoundaryDetector;
 
   constructor(config?: Partial<SemanticChunkerConfig>) {
     this.config = { ...DEFAULT_SEMANTIC_CHUNKER_CONFIG, ...config };
+    this.boundaryDetector = createStructureBoundaryDetector(this.config.structureBoundaryConfig);
   }
 
   /**
@@ -155,20 +159,61 @@ export class HierarchicalStore {
 
   /**
    * Group small chunks for parent creation (500-1500 token target)
+   * Respects structure boundaries when enabled
    */
   private groupForParents(chunks: HierarchicalChunk[]): HierarchicalChunk[][] {
     if (chunks.length === 0) {
       return [];
     }
 
+    // Detect structure boundaries in combined content if enabled
+    let boundaries: StructureBoundary[] = [];
+    if (this.config.respectStructureBoundaries) {
+      const combinedContent = chunks.map(c => c.content).join('\n');
+      boundaries = this.boundaryDetector.detect(combinedContent);
+      const highConfidenceBoundaries = this.boundaryDetector.getHighConfidenceBoundaries(boundaries);
+
+      console.log(
+        '[HierarchicalStore] Structure boundaries detected:',
+        boundaries.length,
+        '| high confidence:', highConfidenceBoundaries.length
+      );
+    }
+
     const groups: HierarchicalChunk[][] = [];
     let currentGroup: HierarchicalChunk[] = [];
     let currentTokens = 0;
+    let contentOffset = 0; // Track position in combined content
 
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      if (!chunk) continue;
+
       const chunkTokens = estimateTokenCount(chunk.content);
 
-      // 4.5: Enforce parent max size limit
+      // Check if this chunk crosses a structure boundary
+      const chunkEndPosition = contentOffset + chunk.content.length;
+      const crossesBoundary = this.config.respectStructureBoundaries &&
+        boundaries.some(b =>
+          b.position > contentOffset &&
+          b.position < chunkEndPosition
+        );
+
+      // Check if adding this chunk would cross a high-confidence boundary before the chunk
+      const nextChunkStart = contentOffset + chunk.content.length + 1; // +1 for newline
+      const hasBoundaryAfter = this.config.respectStructureBoundaries &&
+        this.boundaryDetector.isHighConfidenceBoundary(
+          boundaries.find(b => b.position >= nextChunkStart - 10 && b.position <= nextChunkStart + 10) ?? { position: 0, type: 'section', confidence: 0 }
+        );
+
+      // Force split if crossing boundary
+      if (crossesBoundary && currentGroup.length > 0) {
+        groups.push(currentGroup);
+        currentGroup = [];
+        currentTokens = 0;
+      }
+
+      // Enforce parent max size limit
       if (currentTokens + chunkTokens > this.config.parentChunkMaxTokens) {
         if (currentGroup.length > 0) {
           groups.push(currentGroup);
@@ -180,12 +225,22 @@ export class HierarchicalStore {
         currentTokens += chunkTokens;
       }
 
+      // Force split after high-confidence boundary
+      if (hasBoundaryAfter && currentGroup.length > 0 && currentTokens >= this.config.smallChunkMinTokens) {
+        groups.push(currentGroup);
+        currentGroup = [];
+        currentTokens = 0;
+      }
+
       // Check minimum parent size
       if (currentTokens >= this.config.parentChunkMinTokens) {
         groups.push(currentGroup);
         currentGroup = [];
         currentTokens = 0;
       }
+
+      // Update content offset (chunk content + newline separator)
+      contentOffset += chunk.content.length + 1;
     }
 
     // Handle remaining chunks
@@ -199,7 +254,15 @@ export class HierarchicalStore {
             0
           );
 
-          if (lastGroupTokens + currentTokens <= this.config.parentChunkMaxTokens) {
+          // Check if merging would cross a boundary
+          const wouldCrossBoundary = this.config.respectStructureBoundaries &&
+            lastGroup.some(gc => {
+              const gcIdx = chunks.findIndex(c => c.id === gc.id);
+              const currentIdx = chunks.findIndex(c => currentGroup[0]?.id === c.id);
+              return gcIdx !== -1 && currentIdx !== -1 && Math.abs(currentIdx - gcIdx) > 5;
+            });
+
+          if (!wouldCrossBoundary && lastGroupTokens + currentTokens <= this.config.parentChunkMaxTokens) {
             lastGroup.push(...currentGroup);
           } else {
             groups.push(currentGroup);
@@ -212,6 +275,7 @@ export class HierarchicalStore {
       }
     }
 
+    console.log('[HierarchicalStore] Created', groups.length, 'parent groups from', chunks.length, 'small chunks');
     return groups;
   }
 
@@ -364,6 +428,87 @@ export class HierarchicalStore {
     return {
       small: this.getAllSmallChunks().filter(c => c.sourceDocumentId === documentId),
       parent: this.getAllParentChunks().filter(c => c.sourceDocumentId === documentId),
+    };
+  }
+
+  /**
+   * Get chunks paginated with filtering and sorting
+   */
+  getChunksPaginated(options: {
+    documentId?: string;
+    level?: ChunkLevel;
+    page?: number;
+    pageSize?: number;
+    sortBy?: 'position' | 'qualityScore' | 'tokenCount';
+    sortOrder?: 'asc' | 'desc';
+    minQuality?: number;
+    maxQuality?: number;
+  }): {
+    chunks: HierarchicalChunk[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  } {
+    const {
+      documentId,
+      level,
+      page = 1,
+      pageSize = 20,
+      sortBy = 'position',
+      sortOrder = 'asc',
+      minQuality,
+      maxQuality,
+    } = options;
+
+    // Collect chunks based on level filter
+    let chunks: HierarchicalChunk[] = [];
+    if (level === 'small') {
+      chunks = Array.from(this.smallChunks.values());
+    } else if (level === 'parent') {
+      chunks = Array.from(this.parentChunks.values());
+    } else {
+      chunks = [...Array.from(this.smallChunks.values()), ...Array.from(this.parentChunks.values())];
+    }
+
+    // Filter by document ID
+    if (documentId) {
+      chunks = chunks.filter(c => c.sourceDocumentId === documentId);
+    }
+
+    // Filter by quality score
+    if (minQuality !== undefined) {
+      chunks = chunks.filter(c => c.qualityScore.composite >= minQuality);
+    }
+    if (maxQuality !== undefined) {
+      chunks = chunks.filter(c => c.qualityScore.composite <= maxQuality);
+    }
+
+    // Sort
+    chunks.sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'position') {
+        comparison = a.position.start - b.position.start;
+      } else if (sortBy === 'qualityScore') {
+        comparison = a.qualityScore.composite - b.qualityScore.composite;
+      } else if (sortBy === 'tokenCount') {
+        comparison = estimateTokenCount(a.content) - estimateTokenCount(b.content);
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    // Paginate
+    const total = chunks.length;
+    const totalPages = Math.ceil(total / pageSize);
+    const startIndex = (page - 1) * pageSize;
+    const paginatedChunks = chunks.slice(startIndex, startIndex + pageSize);
+
+    return {
+      chunks: paginatedChunks,
+      total,
+      page,
+      pageSize,
+      totalPages,
     };
   }
 

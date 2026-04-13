@@ -37,16 +37,27 @@ export class IndexPlugin extends BasePlugin {
    */
   async process(ctx: Context): Promise<Context> {
     const embeddings = ctx.getEmbeddings();
+    const chunks = ctx.getChunks();
 
     if (!embeddings || embeddings.length === 0) {
+      // Provide more detailed error message
+      const chunkCount = chunks?.length ?? 0;
+      const errorMsg = chunkCount > 0
+        ? `No embeddings to index. ${chunkCount} chunks were created but embedding generation failed. Check the embedding service logs for details.`
+        : 'No embeddings to index. No chunks were created from the document. The document may be empty or contain only images.';
+
+      console.error(`[IndexPlugin] ${errorMsg}`);
+
       ctx.addError({
         stage: 'index',
         plugin: this.name,
-        message: 'No embeddings to index',
+        message: errorMsg,
         recoverable: false,
       });
       return ctx;
     }
+
+    console.log(`[IndexPlugin] Indexing ${embeddings.length} embeddings...`);
 
     try {
       // Add embeddings to vector store
@@ -56,13 +67,17 @@ export class IndexPlugin extends BasePlugin {
       const stats = await this.store.getStats();
       ctx.set('indexStats', stats);
 
+      console.log(`[IndexPlugin] Successfully indexed ${embeddings.length} embeddings`);
+
       ctx.setState(State.INDEXING);
 
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Indexing failed';
+      console.error(`[IndexPlugin] Error during indexing: ${errorMsg}`);
       ctx.addError({
         stage: 'index',
         plugin: this.name,
-        message: error instanceof Error ? error.message : 'Indexing failed',
+        message: errorMsg,
         recoverable: false,
       });
     }

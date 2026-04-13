@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import type { FastifyInstance } from 'fastify';
-import type { DocumentMetadata, PipelineEvent } from './types.js';
+import type { DocumentMetadata, PipelineEvent, ChunkCreatedData } from './types.js';
 import { createDocumentFromFile, detectMimeType } from '../core/document.js';
 import { createPipeline } from '../core/pipeline.js';
 import { createIngestStage } from '../core/ingest-stage.js';
@@ -56,6 +56,7 @@ async function updateMetadata(
 
 /**
  * Build pipeline with stages and WebSocket emitter
+ * Includes metrics collection for each stage
  */
 function buildPipeline(
   documentId: string,
@@ -64,6 +65,11 @@ function buildPipeline(
 ): Harness {
   const registry = new PluginRegistry();
   const emitter = new PipelineEmitter(documentId, wsHandler);
+
+  // Track stage start times for metrics
+  const stageStartTimes: Map<string, number> = new Map();
+  let pipelineStartTime = 0;
+  let documentSize = 0;
 
   // Register stage factories
   registry.registerFactory('ingest', () => createIngestStage()['plugins'][0]!);
@@ -82,30 +88,79 @@ function buildPipeline(
     hooks: {
       preExecution: [
         (ctx) => {
+          pipelineStartTime = Date.now();
+          // Capture document size from context if available
+          const document = (ctx as unknown as { document?: { content?: string } }).document;
+          if (document && document.content) {
+            documentSize = document.content.length;
+          }
           emitter.emitPipelineStart();
           return ctx;
         },
       ],
       onStageStart: [
         (stageName) => {
+          stageStartTimes.set(stageName, Date.now());
           emitter.emitStageStart(stageName as import('./types.js').PipelineStageName);
         },
       ],
       onStageComplete: [
-        (stageName) => {
+        (stageName, context) => {
+          const startTime = stageStartTimes.get(stageName) ?? Date.now();
+          const duration = Date.now() - startTime;
+
+          // Emit stage completion
           emitter.emitStageComplete(stageName as import('./types.js').PipelineStageName);
+
+          // Collect and emit stage-specific metrics
+          const metrics: import('./types.js').StageMetrics = {
+            processingTimeMs: duration,
+          };
+
+          // Add stage-specific metrics based on stage name
+          if (stageName === 'ingest') {
+            metrics.fileSizeBytes = documentSize;
+          } else if (stageName === 'parse') {
+            const chunks = (context as unknown as { getChunks?: () => TextChunk[] })?.getChunks?.();
+            if (chunks) {
+              metrics.tokensExtracted = estimateTotalTokens(chunks);
+              metrics.pagesExtracted = chunks.reduce((sum, c) =>
+                sum + (c.pageNumber !== undefined ? 1 : 0), 0);
+            }
+          } else if (stageName === 'embed') {
+            const embeddings = (context as unknown as { getEmbeddings?: () => EmbeddingResult[] })?.getEmbeddings?.();
+            if (embeddings && embeddings.length > 0) {
+              const firstEmbedding = embeddings[0];
+              if (firstEmbedding && firstEmbedding.vector) {
+                metrics.embeddingDimension = firstEmbedding.vector.length;
+              }
+            }
+          } else if (stageName === 'index') {
+            const chunks = (context as unknown as { getChunks?: () => TextChunk[] })?.getChunks?.();
+            if (chunks) {
+              metrics.chunksCreated = chunks.length;
+              metrics.throughput = chunks.length / (duration / 1000); // chunks per second
+            }
+          }
+
+          emitter.emitStageMetrics(stageName as import('./types.js').PipelineStageName, metrics);
         },
       ],
       postExecution: [
         async (result) => {
           if (result.status === 'success') {
-            const chunks = result.context.getChunks();
-            const embeddings = result.context.getEmbeddings();
+            const ctx = result.context as unknown as { getChunks?: () => TextChunk[]; getEmbeddings?: () => EmbeddingResult[] };
+            const chunks = ctx?.getChunks?.();
+            const embeddings = ctx?.getEmbeddings?.();
+            const totalDuration = Date.now() - pipelineStartTime;
 
-            // Store chunks in hierarchical store
+            // Store chunks in hierarchical store and emit chunk events
             if (chunks && embeddings) {
-              await storeInHierarchical(chunks, embeddings, documentId, hierarchicalStore);
+              await storeInHierarchical(chunks, embeddings, documentId, hierarchicalStore, emitter);
             }
+
+            // Record in stats service if available
+            // (this will be handled by the statsService listening to events)
 
             emitter.emitPipelineComplete({
               chunksCreated: chunks?.length ?? 0,
@@ -127,16 +182,22 @@ function buildPipeline(
 
 /**
  * Convert pipeline chunks to hierarchical chunks and store
+ * Emits chunk:created events in batches (every 10 chunks)
  */
 async function storeInHierarchical(
   chunks: TextChunk[],
   embeddings: EmbeddingResult[],
   documentId: string,
-  store: HierarchicalStore
+  store: HierarchicalStore,
+  emitter: PipelineEmitter
 ): Promise<void> {
   const hierarchicalChunks: import('../chunking/types.js').HierarchicalChunk[] = [];
+  const BATCH_SIZE = 10;
 
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    if (!chunk) continue;
+
     const matchingEmbedding = embeddings.find(e => e.chunkId === chunk.id);
     const embeddingVector = matchingEmbedding?.vector ?? [];
 
@@ -161,6 +222,20 @@ async function storeInHierarchical(
 
     hierarchicalChunks.push(hierarchicalChunk);
     store.addChunk(hierarchicalChunk);
+
+    // Emit chunk:created event every BATCH_SIZE chunks
+    if ((i + 1) % BATCH_SIZE === 0 || i === chunks.length - 1) {
+      const chunkData: ChunkCreatedData = {
+        id: hierarchicalChunk.id,
+        level: 'small',
+        contentPreview: chunk.text.slice(0, 100),
+        tokenCount: Math.ceil(chunk.text.length / 4),
+        qualityScore: hierarchicalChunk.qualityScore.composite,
+        position: hierarchicalChunk.position,
+        metadata: hierarchicalChunk.metadata as unknown as Record<string, unknown>,
+      };
+      emitter.emitChunkCreated(chunkData, i + 1);
+    }
   }
 
   // Build hierarchy from small chunks

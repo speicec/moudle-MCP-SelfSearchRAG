@@ -145,4 +145,94 @@ export async function documentRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: 'Document not found' });
     }
   });
+
+  /**
+   * GET /:id/chunks - Get chunks for a document with pagination/filter/sort
+   */
+  fastify.get('/:id/chunks', async (
+    request: FastifyRequest<{
+      Params: { id: string };
+      Querystring: {
+        level?: 'small' | 'parent';
+        page?: number;
+        pageSize?: number;
+        sortBy?: 'position' | 'qualityScore' | 'tokenCount';
+        sortOrder?: 'asc' | 'desc';
+        minQuality?: number;
+        maxQuality?: number;
+      };
+    }>,
+    reply: FastifyReply
+  ) => {
+    const { id } = request.params;
+    const hierarchicalStore = fastify.hierarchicalStore;
+
+    if (!hierarchicalStore) {
+      return reply.status(503).send({ error: 'Document store not initialized' });
+    }
+
+    // Check document exists
+    const metaPath = path.join(storagePath, `${id}.json`);
+    try {
+      await fs.access(metaPath);
+    } catch {
+      return reply.status(404).send({ error: 'Document not found' });
+    }
+
+    // Get paginated chunks
+    const paginationOptions: {
+      documentId: string;
+      level?: 'small' | 'parent';
+      page: number;
+      pageSize: number;
+      sortBy: 'position' | 'qualityScore' | 'tokenCount';
+      sortOrder: 'asc' | 'desc';
+      minQuality?: number;
+      maxQuality?: number;
+    } = {
+      documentId: id,
+      page: request.query.page ?? 1,
+      pageSize: request.query.pageSize ?? 20,
+      sortBy: request.query.sortBy ?? 'position',
+      sortOrder: request.query.sortOrder ?? 'asc',
+    };
+
+    // Only add optional fields if defined
+    if (request.query.level) {
+      paginationOptions.level = request.query.level;
+    }
+    if (request.query.minQuality !== undefined) {
+      paginationOptions.minQuality = request.query.minQuality;
+    }
+    if (request.query.maxQuality !== undefined) {
+      paginationOptions.maxQuality = request.query.maxQuality;
+    }
+
+    const result = hierarchicalStore.getChunksPaginated(paginationOptions);
+
+    // Transform chunks for response (add token count, preview)
+    const transformedChunks = result.chunks.map(chunk => ({
+      id: chunk.id,
+      level: chunk.level,
+      contentPreview: chunk.content.slice(0, 200),
+      tokenCount: Math.ceil(chunk.content.length / 4),
+      qualityScore: chunk.qualityScore.composite,
+      position: chunk.position,
+      parentId: chunk.parentId,
+      childIds: chunk.childIds,
+      sourceDocumentId: chunk.sourceDocumentId,
+      metadata: chunk.metadata,
+    }));
+
+    return reply.status(200).send({
+      documentId: id,
+      chunks: transformedChunks,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
+        totalPages: result.totalPages,
+      },
+    });
+  });
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { useConnectionStore, usePipelineStore, type PipelineEvent } from '../store';
+import { useConnectionStore, usePipelineStore, useTimelineStore, useChunkStore, useStatsStore, useRetrievalStore, type PipelineEvent } from '../store';
 
 const WS_URL = `ws://${window.location.host}/ws`;
 const RECONNECT_DELAY_BASE = 1000;
@@ -12,6 +12,54 @@ export function useWebSocket() {
 
   const { setStatus } = useConnectionStore();
   const { handleEvent } = usePipelineStore();
+  const timelineStore = useTimelineStore();
+  const chunkStore = useChunkStore();
+  const statsStore = useStatsStore();
+  const retrievalStore = useRetrievalStore();
+
+  /**
+   * Handle all WebSocket events including new event types
+   */
+  const handleAllEvents = useCallback((event: PipelineEvent) => {
+    // Handle legacy pipeline events
+    handleEvent(event);
+
+    // Handle new timeline events
+    if (event.type === 'pipeline:start' && event.documentId) {
+      timelineStore.handlePipelineStart(event.documentId, event.timestamp);
+    } else if (event.type === 'stage:start' && event.stage) {
+      timelineStore.handleStageStart(event.stage, event.timestamp);
+    } else if (event.type === 'stage:progress' && event.stage) {
+      timelineStore.handleStageProgress(event.stage, event.progress ?? 0);
+    } else if (event.type === 'stage:complete' && event.stage) {
+      timelineStore.handleStageComplete(event.stage, event.timestamp);
+    } else if (event.type === 'stage:metrics' && event.stage && event.metrics) {
+      timelineStore.handleStageMetrics(event.stage, event.metrics);
+    } else if (event.type === 'pipeline:complete') {
+      timelineStore.handlePipelineComplete(event.timestamp);
+    } else if (event.type === 'error' && event.stage && event.error) {
+      timelineStore.handleError(event.stage, event.error.message);
+    }
+
+    // Handle chunk creation events
+    if (event.type === 'chunk:created' && event.chunk && event.documentId) {
+      chunkStore.handleChunkCreated(event.chunk, event.documentId);
+    }
+
+    // Handle stats update events
+    if (event.type === 'stats:update' && event.stats) {
+      statsStore.handleStatsUpdate(event.stats);
+    }
+
+    // Handle retrieval events
+    if (event.type === 'retrieval:start' && event.query) {
+      retrievalStore.handleRetrievalStart(event.query, event.timestamp);
+    } else if (event.type === 'retrieval:match' && event.query && event.match) {
+      retrievalStore.handleRetrievalMatch(event.match);
+    } else if (event.type === 'retrieval:complete' && event.query && event.results && event.duration) {
+      retrievalStore.handleRetrievalComplete(event.results, event.duration, event.timestamp);
+    }
+  }, [handleEvent, timelineStore, chunkStore, statsStore, retrievalStore]);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -31,7 +79,7 @@ export function useWebSocket() {
       ws.onmessage = (event) => {
         try {
           const message: PipelineEvent = JSON.parse(event.data);
-          handleEvent(message);
+          handleAllEvents(message);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
         }
@@ -64,7 +112,7 @@ export function useWebSocket() {
       console.error('Failed to create WebSocket:', error);
       setStatus('disconnected');
     }
-  }, [setStatus, handleEvent]);
+  }, [setStatus, handleAllEvents]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {

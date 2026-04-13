@@ -10,13 +10,84 @@ export type PipelineEventType =
   | 'stage:start'
   | 'stage:progress'
   | 'stage:complete'
+  | 'stage:metrics'
   | 'pipeline:complete'
+  | 'chunk:created'
+  | 'retrieval:start'
+  | 'retrieval:match'
+  | 'retrieval:complete'
+  | 'stats:update'
   | 'error';
 
 /**
  * Pipeline stage names
  */
 export type PipelineStageName = 'ingest' | 'parse' | 'chunk' | 'embed' | 'index';
+
+/**
+ * Stage metrics for detailed processing statistics
+ */
+export interface StageMetrics {
+  fileSizeBytes?: number;
+  pagesExtracted?: number;
+  tokensExtracted?: number;
+  embeddingDimension?: number;
+  chunksCreated?: number;
+  processingTimeMs?: number;
+  throughput?: number; // items per second
+}
+
+/**
+ * Chunk creation event data
+ */
+export interface ChunkCreatedData {
+  id: string;
+  level: 'small' | 'parent';
+  contentPreview: string; // first 100 chars
+  tokenCount: number;
+  qualityScore: number;
+  position: { start: number; end: number };
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Retrieval match data
+ */
+export interface RetrievalMatchData {
+  smallChunkId: string;
+  similarityScore: number;
+  rank: number;
+}
+
+/**
+ * Statistics update data
+ */
+export interface StatsUpdateData {
+  pipelineStats: {
+    totalDocumentsProcessed: number;
+    averageProcessingTimeMs: number;
+    totalChunksCreated: number;
+    averageChunksPerDocument: number;
+  };
+  retrievalStats: {
+    totalQueries: number;
+    averageRetrievalTimeMs: number;
+    averageResultsPerQuery: number;
+    successRate: number;
+  };
+  chunkStats: {
+    totalSmallChunks: number;
+    totalParentChunks: number;
+    averageQualityScore: number;
+    qualityDistribution: { high: number; medium: number; low: number };
+  };
+  stageTimeDistribution: {
+    ingest: number;
+    parse: number;
+    embed: number;
+    index: number;
+  };
+}
 
 /**
  * Pipeline event for WebSocket broadcasting
@@ -28,6 +99,15 @@ export interface PipelineEvent {
   message?: string;
   timestamp: number;
   documentId?: string;
+  // New fields for extended events
+  metrics?: StageMetrics;
+  chunk?: ChunkCreatedData;
+  totalChunks?: number;
+  query?: string;
+  match?: RetrievalMatchData;
+  results?: RetrievalResultItem[];
+  duration?: number;
+  stats?: StatsUpdateData;
   error?: {
     message: string;
     stack?: string;
@@ -79,6 +159,10 @@ export interface RetrievalResultItem {
   parentChunkContent: string;
   similarityScore: number;
   sourceDocumentId: string;
+  // Context window fields (new)
+  contextWindow?: string | undefined;
+  windowStart?: number | undefined;
+  windowEnd?: number | undefined;
 }
 
 /**
@@ -119,5 +203,6 @@ declare module 'fastify' {
     wsHandler?: import('./websocket-handler.js').WebSocketHandler;
     hierarchicalStore?: import('../chunking/hierarchical-store.js').HierarchicalStore;
     embeddingService?: import('../embedding/embedding-service.js').TextEmbeddingService;
+    statsService?: import('./stats-aggregation-service.js').StatsAggregationService;
   }
 }

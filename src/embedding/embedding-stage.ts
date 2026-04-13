@@ -78,32 +78,65 @@ export class EmbeddingPlugin extends BasePlugin {
 
     try {
       // 1. Chunk text content
+      console.log(`[EmbeddingPlugin] Starting chunking for document ${documentId}`);
       const chunks = this.chunker.chunkContent(parsedContent, documentId);
+      console.log(`[EmbeddingPlugin] Created ${chunks.length} chunks for document ${documentId}`);
+
+      if (chunks.length === 0) {
+        ctx.addError({
+          stage: 'embed',
+          plugin: this.name,
+          message: 'No text chunks created from document. The document may be empty or contain only images.',
+          recoverable: false,
+        });
+        return ctx;
+      }
+
       ctx.set('chunks', chunks);
 
       // 2. Generate text embeddings
       const embeddings: EmbeddingResult[] = [];
 
       if (this.config.enableTextEmbeddings) {
+        console.log(`[EmbeddingPlugin] Generating embeddings for ${chunks.length} chunks...`);
         const textEmbeddings = await this.generateTextEmbeddings(chunks, documentId);
+        console.log(`[EmbeddingPlugin] Generated ${textEmbeddings.length} embeddings`);
         embeddings.push(...textEmbeddings);
       }
 
       // 3. Generate image embeddings
       if (this.config.enableImageEmbeddings) {
         const images = this.extractImages(parsedContent);
-        const imageEmbeddings = await this.generateImageEmbeddings(images, documentId);
-        embeddings.push(...imageEmbeddings);
+        if (images.length > 0) {
+          console.log(`[EmbeddingPlugin] Generating embeddings for ${images.length} images...`);
+          const imageEmbeddings = await this.generateImageEmbeddings(images, documentId);
+          embeddings.push(...imageEmbeddings);
+        }
+      }
+
+      if (embeddings.length === 0) {
+        ctx.addError({
+          stage: 'embed',
+          plugin: this.name,
+          message: 'No embeddings were generated. Check if the embedding service is working correctly.',
+          recoverable: false,
+        });
+        return ctx;
       }
 
       ctx.set('embeddings', embeddings);
       ctx.setState(State.EMBEDDING);
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Embedding generation failed';
+      console.error(`[EmbeddingPlugin] Error during embedding: ${errorMessage}`);
+      if (error instanceof Error && error.stack) {
+        console.error(`[EmbeddingPlugin] Stack trace: ${error.stack}`);
+      }
       ctx.addError({
         stage: 'embed',
         plugin: this.name,
-        message: error instanceof Error ? error.message : 'Embedding generation failed',
+        message: errorMessage,
         recoverable: false,
       });
     }
@@ -119,35 +152,59 @@ export class EmbeddingPlugin extends BasePlugin {
     documentId: string
   ): Promise<EmbeddingResult[]> {
     const results: EmbeddingResult[] = [];
+    const totalChunks = chunks.length;
+    const batchSize = 10; // Process in batches to avoid memory issues
 
-    for (const chunk of chunks) {
-      let vector: number[];
+    console.log(`[EmbeddingPlugin] Processing ${totalChunks} chunks in batches of ${batchSize}`);
 
-      // Check cache first
-      const cacheKey = chunk.text;
-      if (this.config.cacheEnabled && this.cache.has(cacheKey, 'text')) {
-        const cached = this.cache.get(cacheKey, 'text');
-        vector = cached!;
-      } else {
-        vector = await this.textEmbedder.embedText(chunk.text);
-        if (this.config.cacheEnabled) {
-          this.cache.set(cacheKey, vector, 'text');
+    for (let i = 0; i < chunks.length; i += batchSize) {
+      const batch = chunks.slice(i, Math.min(i + batchSize, chunks.length));
+      const batchNum = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(totalChunks / batchSize);
+
+      console.log(`[EmbeddingPlugin] Processing batch ${batchNum}/${totalBatches} (${batch.length} chunks)`);
+
+      for (const chunk of batch) {
+        try {
+          let vector: number[];
+
+          // Check cache first
+          const cacheKey = chunk.text;
+          if (this.config.cacheEnabled && this.cache.has(cacheKey, 'text')) {
+            const cached = this.cache.get(cacheKey, 'text');
+            vector = cached!;
+          } else {
+            vector = await this.textEmbedder.embedText(chunk.text);
+            if (this.config.cacheEnabled) {
+              this.cache.set(cacheKey, vector, 'text');
+            }
+          }
+
+          results.push({
+            id: uuidv4(),
+            vector,
+            chunkId: chunk.id,
+            modality: 'text',
+            metadata: {
+              sourceDocumentId: documentId,
+              pageNumber: chunk.pageNumber,
+              contentType: chunk.metadata.contentType,
+              createdAt: new Date(),
+            },
+          });
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          console.error(`[EmbeddingPlugin] Failed to embed chunk ${chunk.id}: ${errorMsg}`);
+          // Continue with other chunks instead of failing completely
         }
       }
 
-      results.push({
-        id: uuidv4(),
-        vector,
-        chunkId: chunk.id,
-        modality: 'text',
-        metadata: {
-          sourceDocumentId: documentId,
-          pageNumber: chunk.pageNumber,
-          contentType: chunk.metadata.contentType,
-          createdAt: new Date(),
-        },
-      });
+      // Log progress
+      const progress = Math.min(100, Math.round(((i + batch.length) / totalChunks) * 100));
+      console.log(`[EmbeddingPlugin] Embedding progress: ${progress}% (${results.length}/${totalChunks} successful)`);
     }
+
+    console.log(`[EmbeddingPlugin] Completed embedding: ${results.length}/${totalChunks} chunks successful`);
 
     return results;
   }

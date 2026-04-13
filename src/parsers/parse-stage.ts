@@ -118,9 +118,28 @@ export class ParsePlugin extends BasePlugin {
    * Process PDF document
    */
   private async processPdfDocument(ctx: Context, content: Buffer): Promise<Context> {
+    console.log(`[ParsePlugin] Processing PDF document (${(content.length / 1024 / 1024).toFixed(2)} MB)`);
+
     try {
       // Extract text
+      console.log('[ParsePlugin] Extracting text from PDF...');
       const textResults = await this.textExtractor.extract(content);
+      console.log(`[ParsePlugin] Extracted text from ${textResults.length} pages`);
+
+      // Log total text length
+      const totalText = textResults.reduce((sum, r) => sum + r.totalCharacters, 0);
+      console.log(`[ParsePlugin] Total text extracted: ${(totalText / 1024).toFixed(2)} KB`);
+
+      if (totalText === 0) {
+        console.warn('[ParsePlugin] No text extracted from PDF. The document may be image-based or encrypted.');
+        ctx.addError({
+          stage: 'parse',
+          plugin: this.name,
+          message: 'No text could be extracted from the PDF. The document may be image-based, encrypted, or corrupted.',
+          recoverable: false,
+        });
+        return ctx;
+      }
 
       // Build page contents
       const pages: PageContent[] = [];
@@ -155,7 +174,7 @@ export class ParsePlugin extends BasePlugin {
       }
 
       // Extract images (placeholder - full implementation would parse PDF structure)
-      const images = await this.imageExtractor.extract(content);
+      // const images = await this.imageExtractor.extract(content);
       // Distribute images to pages based on position
 
       const parsedContent: ParsedContent = {
@@ -171,11 +190,18 @@ export class ParsePlugin extends BasePlugin {
       ctx.set('parsedContent', parsedContent);
       ctx.setState(State.PARSING);
 
+      console.log(`[ParsePlugin] PDF parsing complete: ${pages.length} pages, ${totalText} characters`);
+
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'PDF parsing failed';
+      console.error(`[ParsePlugin] Error during PDF parsing: ${errorMsg}`);
+      if (error instanceof Error && error.stack) {
+        console.error(`[ParsePlugin] Stack trace: ${error.stack}`);
+      }
       ctx.addError({
         stage: 'parse',
         plugin: this.name,
-        message: error instanceof Error ? error.message : 'PDF parsing failed',
+        message: errorMsg,
         recoverable: false,
       });
     }

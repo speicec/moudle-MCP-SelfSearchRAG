@@ -3,8 +3,8 @@ import type {
   HierarchicalRetrievalResult,
   AssembledContext,
 } from './types.js';
-import type { SmallToBigRetrievalConfig } from './config.js';
-import { DEFAULT_RETRIEVAL_CONFIG } from './config.js';
+import type { SmallToBigRetrievalConfig, ContextWindowConfig } from './config.js';
+import { DEFAULT_RETRIEVAL_CONFIG, DEFAULT_CONTEXT_WINDOW_CONFIG } from './config.js';
 import { HierarchicalStore } from './hierarchical-store.js';
 import { cosineSimilarity, sortBySimilarity } from './utils.js';
 
@@ -234,19 +234,39 @@ export class SmallToBigRetriever {
   }
 
   /**
-   * 6.4: Expand small chunk results to parent chunks
+   * 6.4: Expand small chunk results to parent chunks with context window extraction
    */
   private expandToParents(
     results: HierarchicalRetrievalResult[]
   ): HierarchicalRetrievalResult[] {
+    const contextWindowConfig = this.config.contextWindow ?? DEFAULT_CONTEXT_WINDOW_CONFIG;
+
     return results.map(result => {
       const parent = this.store.getParentChunk(result.smallChunkId);
 
       if (parent) {
+        // Extract context window around the matched small chunk
+        const { contextWindow, windowStart, windowEnd } = this.extractContextWindow(
+          parent.content,
+          result.smallChunkContent,
+          contextWindowConfig
+        );
+
+        // Log window extraction for debugging
+        console.log(
+          '[SmallToBigRetriever] Context window extracted',
+          '| window length:', contextWindow.length,
+          '| parent length:', parent.content.length,
+          '| position:', windowStart, '-', windowEnd
+        );
+
         return {
           ...result,
           parentChunkId: parent.id,
-          parentChunkContent: parent.content,
+          parentChunkContent: parent.content, // Keep full parent for backward compatibility
+          contextWindow,
+          windowStart,
+          windowEnd,
         };
       }
 
@@ -254,8 +274,108 @@ export class SmallToBigRetriever {
       return {
         ...result,
         parentChunkContent: result.smallChunkContent,
+        contextWindow: result.smallChunkContent,
+        windowStart: 0,
+        windowEnd: result.smallChunkContent.length,
       };
     });
+  }
+
+  /**
+   * Extract context window around matched small chunk content
+   */
+  private extractContextWindow(
+    parentContent: string,
+    smallChunkContent: string,
+    config: ContextWindowConfig
+  ): { contextWindow: string; windowStart: number; windowEnd: number } {
+    // Find the position of small chunk in parent
+    const matchPosition = this.findSmallChunkPosition(parentContent, smallChunkContent);
+
+    if (matchPosition === -1) {
+      // Small chunk not found in parent - return small chunk itself
+      console.warn('[SmallToBigRetriever] Small chunk not found in parent, using small chunk as window');
+      return {
+        contextWindow: smallChunkContent,
+        windowStart: 0,
+        windowEnd: smallChunkContent.length,
+      };
+    }
+
+    // Calculate window boundaries
+    let windowStart = Math.max(0, matchPosition - config.beforeChars);
+    let windowEnd = Math.min(parentContent.length, matchPosition + smallChunkContent.length + config.afterChars);
+
+    // Apply sentence boundary respect if enabled
+    if (config.respectSentenceBoundary) {
+      windowStart = this.findSentenceBoundary(parentContent, windowStart, 'backward');
+      windowEnd = this.findSentenceBoundary(parentContent, windowEnd, 'forward');
+    }
+
+    const contextWindow = parentContent.substring(windowStart, windowEnd);
+
+    return { contextWindow, windowStart, windowEnd };
+  }
+
+  /**
+   * Find the position of small chunk content in parent content
+   */
+  private findSmallChunkPosition(parentContent: string, smallChunkContent: string): number {
+    // Direct match
+    let position = parentContent.indexOf(smallChunkContent);
+    if (position !== -1) {
+      return position;
+    }
+
+    // Try normalized match (trim whitespace variations)
+    const normalizedSmall = smallChunkContent.trim();
+    const normalizedParent = parentContent;
+
+    position = normalizedParent.indexOf(normalizedSmall);
+    if (position !== -1) {
+      return position;
+    }
+
+    // Try to find by first significant line
+    const firstLine = smallChunkContent.split('\n')[0]?.trim();
+    if (firstLine && firstLine.length > 20) {
+      position = parentContent.indexOf(firstLine);
+      if (position !== -1) {
+        return position;
+      }
+    }
+
+    // Not found
+    return -1;
+  }
+
+  /**
+   * Find nearest sentence boundary in given direction
+   */
+  private findSentenceBoundary(
+    content: string,
+    position: number,
+    direction: 'forward' | 'backward'
+  ): number {
+    const sentenceEnders = ['.', '!', '?', '。', '！', '？', '\n\n'];
+
+    if (direction === 'forward') {
+      // Find next sentence end after position
+      for (let i = position; i < Math.min(position + 100, content.length); i++) {
+        if (sentenceEnders.includes(content[i] ?? '')) {
+          return i + 1;
+        }
+      }
+      return position;
+    } else {
+      // Find previous sentence start before position
+      for (let i = position; i > Math.max(0, position - 100); i--) {
+        if (sentenceEnders.includes(content[i] ?? '')) {
+          return i + 1;
+        }
+      }
+      return position;
+    }
   }
 
   /**
@@ -352,10 +472,20 @@ export class SmallToBigRetriever {
 
   /**
    * Generate synthetic embedding for testing
-   * Uses the configured embedding dimension (default 384 for multilingual-e5-small)
+   * Uses the same dimension as stored chunks for compatibility
    */
   private syntheticEmbedding(text: string): number[] {
-    const dimension = 384; // Match multilingual-e5-small dimension
+    // Get dimension from stored chunks to match
+    const smallChunks = this.store.getAllSmallChunks();
+    let dimension = 384; // Default to multilingual-e5-small dimension
+
+    if (smallChunks.length > 0) {
+      const firstChunk = smallChunks[0];
+      if (firstChunk && firstChunk.embedding && firstChunk.embedding.length > 0) {
+        dimension = firstChunk.embedding.length;
+      }
+    }
+
     const embedding: number[] = new Array(dimension).fill(0);
 
     for (let i = 0; i < text.length; i++) {

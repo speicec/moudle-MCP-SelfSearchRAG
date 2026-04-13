@@ -11,6 +11,8 @@ A powerful RAG (Retrieval-Augmented Generation) system with multimodal support a
 - **Hybrid Search**: Combine semantic and keyword search with configurable weights
 - **Semantic Chunking**: Embedding-based chunk boundaries using cosine similarity cliff detection
 - **Hierarchical Retrieval**: Small-to-Big retrieval strategy with parent-child chunk structure
+- **Context Window Extraction**: Returns focused context around matched content, not entire parent chunks
+- **Structure Boundary Detection**: Respects chapter/section boundaries when creating parent chunks
 - **Web Dashboard**: React frontend for document management, chat queries, and pipeline visualization
 - **Local Embedding**: Zero-cost, offline-capable multilingual embeddings using transformers.js
 - **Multilingual Support**: Chinese, English, and 100+ languages for semantic search
@@ -246,6 +248,24 @@ List all indexed documents.
 4. **Embed**: Generate vector embeddings (local or API)
 5. **Index**: Store in hierarchical structure (small + parent chunks)
 
+### Retrieval Strategy: Small-to-Big
+
+The system uses a two-phase retrieval strategy:
+
+1. **Small Chunk Search**: Find precise matches in small chunks (100-300 tokens)
+2. **Parent Expansion**: Expand to parent chunks for context
+3. **Context Window**: Extract focused content around the match (configurable window size)
+
+**Context Window Extraction** returns only the relevant portion of the parent chunk:
+- Default: 300 characters before + 500 characters after the match
+- Respects sentence boundaries for clean truncation
+- Reduces noise and improves LLM response quality
+
+**Structure Boundary Detection** ensures parent chunks don't cross semantic boundaries:
+- Detects Chinese chapter headings (第一章, 第二章)
+- Detects numbered lists (1., 一、, A.)
+- Prevents merging unrelated sections into single parent chunks
+
 ### WebSocket Events
 
 | Event Type | Description |
@@ -294,6 +314,37 @@ npm run build
 | POST | `/api/chat/query` | Submit query for retrieval |
 | GET | `/api/chat/history` | Get chat history |
 | DELETE | `/api/chat/history` | Clear chat history |
+
+#### Query Response Fields
+
+The `/api/chat/query` endpoint returns:
+
+```json
+{
+  "query": "string",
+  "results": [
+    {
+      "smallChunkId": "string",
+      "parentChunkId": "string",
+      "parentChunkContent": "string (full parent)",
+      "contextWindow": "string (focused context)",
+      "windowStart": 0,
+      "windowEnd": 300,
+      "similarityScore": 0.85,
+      "sourceDocumentId": "string"
+    }
+  ],
+  "assembledContext": {
+    "content": "string",
+    "tokenCount": 500,
+    "truncated": false
+  }
+}
+```
+
+**Key Fields**:
+- `contextWindow`: Extracted text around the matched small chunk (recommended)
+- `parentChunkContent`: Full parent chunk for reference (backward compatible)
 
 ### Health
 

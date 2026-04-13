@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import type { ChatQueryRequest, ChatQueryResponse, RetrievalResultItem, PipelineEvent } from '../types.js';
+import type { ChatQueryRequest, ChatQueryResponse, RetrievalResultItem, PipelineEvent, RetrievalMatchData } from '../types.js';
 import { SmallToBigRetriever } from '../../chunking/small-to-big-retriever.js';
 import type { HierarchicalStore } from '../../chunking/hierarchical-store.js';
 import type { TextEmbeddingService } from '../../embedding/embedding-service.js';
+import { PipelineEmitter } from '../pipeline-emitter.js';
 
 /**
  * Chat routes as Fastify plugin
@@ -21,16 +22,21 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post('/query', async (request: FastifyRequest<{ Body: ChatQueryRequest }>, reply: FastifyReply) => {
     const { query, topK = 5, similarityThreshold = 0.0, maxContextTokens = 4000 } = request.body;
 
+    console.log(`[ChatRoute] Query received: "${query}"`);
+
     if (!query || query.trim().length === 0) {
       return reply.status(400).send({ error: 'Query is required' });
     }
 
     // Check if store has any data
     if (!hierarchicalStore) {
+      console.error('[ChatRoute] Document store not initialized');
       return reply.status(503).send({ error: 'Document store not initialized' });
     }
 
     const chunkCount = hierarchicalStore.getChunkCount();
+    console.log(`[ChatRoute] Store has ${chunkCount.small} small chunks, ${chunkCount.parent} parent chunks`);
+
     if (chunkCount.small === 0) {
       // No documents indexed yet
       return reply.status(200).send({
@@ -54,6 +60,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
 
     // Set embedding generator for semantic similarity calculation
     if (embeddingService) {
+      console.log(`[ChatRoute] Embedding service available, dimension: ${embeddingService.getDimension()}`);
       retriever.setEmbeddingGenerator((text: string) => embeddingService.embedText(text));
 
       // Validate embedding dimension matches stored chunks
@@ -63,6 +70,8 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         if (sampleChunk && sampleChunk.embedding.length > 0) {
           const storedDim = sampleChunk.embedding.length;
           const serviceDim = embeddingService.getDimension();
+          console.log(`[ChatRoute] Dimension check - stored: ${storedDim}, service: ${serviceDim}`);
+
           if (storedDim !== serviceDim) {
             fastify.log.error({
               storedDim,
@@ -76,11 +85,39 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           }
         }
       }
+    } else {
+      console.warn('[ChatRoute] No embedding service available - using synthetic embeddings (not recommended for production)');
     }
+
+    // Create emitter for retrieval events
+    const wsHandler = fastify.wsHandler;
+    const emitter = wsHandler ? new PipelineEmitter('retrieval', wsHandler) : null;
+
+    // Emit retrieval:start event
+    if (emitter) {
+      emitter.emitRetrievalStart(query);
+    }
+
+    const startTime = Date.now();
 
     try {
       // Execute retrieval
+      console.log(`[ChatRoute] Executing retrieval...`);
       const { results, context } = await retriever.retrieveWithMetadata(query);
+
+      console.log(`[ChatRoute] Retrieval complete: ${results.length} results, context length: ${context.content.length}`);
+
+      // Emit retrieval:match events for each result
+      if (emitter) {
+        results.forEach((r, index) => {
+          const matchData: RetrievalMatchData = {
+            smallChunkId: r.smallChunkId,
+            similarityScore: r.similarityScore,
+            rank: index + 1,
+          };
+          emitter.emitRetrievalMatch(query, matchData);
+        });
+      }
 
       // Map results to response format
       const mappedResults: RetrievalResultItem[] = results.map(r => ({
@@ -89,7 +126,18 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         parentChunkContent: r.parentChunkContent,
         similarityScore: r.similarityScore,
         sourceDocumentId: r.sourceDocumentId,
+        // Context window fields
+        contextWindow: r.contextWindow,
+        windowStart: r.windowStart,
+        windowEnd: r.windowEnd,
       }));
+
+      const duration = Date.now() - startTime;
+
+      // Emit retrieval:complete event
+      if (emitter) {
+        emitter.emitRetrievalComplete(query, mappedResults, duration);
+      }
 
       const response: ChatQueryResponse = {
         query,

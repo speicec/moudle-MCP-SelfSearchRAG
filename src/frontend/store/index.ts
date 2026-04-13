@@ -1,5 +1,11 @@
 import { create } from 'zustand';
 
+// Re-export from new store files
+export { useTimelineStore, type TimelineStage, type StageMetrics, type TimelineState } from './timelineStore';
+export { useChunkStore, type ChunkItem, type ChunkCreatedEvent, type ChunkFilterOptions, type PaginationState, type ChunkState } from './chunkStore';
+export { useStatsStore, type StatsUpdateEvent, type PipelineStats, type RetrievalStats, type ChunkStats, type StageTimeDistribution, type PerformanceIndicator, type StatsState } from './statsStore';
+export { useRetrievalStore, type RetrievalMatch, type RetrievalResult, type RetrievalFlowState } from './retrievalStore';
+
 // Types
 export interface Document {
   id: string;
@@ -33,6 +39,9 @@ export interface RetrievalResult {
   sourceDocumentId: string;
 }
 
+/**
+ * Extended PipelineEvent type for WebSocket events
+ */
 export interface PipelineEvent {
   type: string;
   stage?: string;
@@ -40,11 +49,26 @@ export interface PipelineEvent {
   message?: string;
   timestamp: number;
   documentId?: string;
+  // New fields for extended events
+  metrics?: StageMetrics;
+  chunk?: ChunkCreatedEvent;
+  totalChunks?: number;
+  query?: string;
+  match?: RetrievalMatch;
+  results?: RetrievalResult[];
+  duration?: number;
+  stats?: StatsUpdateEvent;
   error?: {
     message: string;
     stack?: string;
   };
 }
+
+// Import types for PipelineEvent
+import type { StageMetrics } from './timelineStore';
+import type { ChunkCreatedEvent } from './chunkStore';
+import type { StatsUpdateEvent } from './statsStore';
+import type { RetrievalMatch } from './retrievalStore';
 
 // Document store
 interface DocumentState {

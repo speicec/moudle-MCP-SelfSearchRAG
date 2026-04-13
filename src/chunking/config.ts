@@ -21,6 +21,8 @@ export interface SemanticChunkerConfig {
   parentChunkMaxTokens: number;  // maximum tokens for parent chunk
   fallbackChunkSize: number;     // fallback chunk size when no cliffs detected
   embeddingBatchSize: number;    // batch size for embedding API calls
+  respectStructureBoundaries: boolean; // whether to respect structure boundaries when grouping
+  structureBoundaryConfig?: StructureBoundaryConfig; // structure boundary detection config
 }
 
 /**
@@ -43,6 +45,24 @@ export interface QualityDimensionWeights {
 }
 
 /**
+ * Context window extraction configuration
+ */
+export interface ContextWindowConfig {
+  beforeChars: number;          // characters to include before match
+  afterChars: number;           // characters to include after match
+  respectSentenceBoundary: boolean; // truncate at sentence boundaries
+}
+
+/**
+ * Structure boundary detection configuration
+ */
+export interface StructureBoundaryConfig {
+  enabled: boolean;             // whether to detect structure boundaries
+  minConfidence: number;        // minimum confidence threshold (0-1)
+  customPatterns?: RegExp[];    // additional custom patterns
+}
+
+/**
  * Small-to-Big retrieval configuration
  */
 export interface SmallToBigRetrievalConfig {
@@ -51,6 +71,7 @@ export interface SmallToBigRetrievalConfig {
   maxContextTokens: number;      // maximum tokens in assembled context
   enableFallback: boolean;       // enable fallback to direct parent search
   fallbackThreshold: number;     // confidence threshold for fallback trigger
+  contextWindow?: ContextWindowConfig; // context window extraction config
 }
 
 /**
@@ -74,6 +95,23 @@ export const DEFAULT_CLIFF_DETECTION_CONFIG: CliffDetectionConfig = {
 };
 
 /**
+ * Default context window configuration
+ */
+export const DEFAULT_CONTEXT_WINDOW_CONFIG: ContextWindowConfig = {
+  beforeChars: 300,
+  afterChars: 500,
+  respectSentenceBoundary: true,
+};
+
+/**
+ * Default structure boundary configuration
+ */
+export const DEFAULT_STRUCTURE_BOUNDARY_CONFIG: StructureBoundaryConfig = {
+  enabled: true,
+  minConfidence: 0.7,
+};
+
+/**
  * Default semantic chunker configuration
  */
 export const DEFAULT_SEMANTIC_CHUNKER_CONFIG: SemanticChunkerConfig = {
@@ -84,6 +122,7 @@ export const DEFAULT_SEMANTIC_CHUNKER_CONFIG: SemanticChunkerConfig = {
   parentChunkMaxTokens: 1500,
   fallbackChunkSize: 256,
   embeddingBatchSize: 50,
+  respectStructureBoundaries: true,
 };
 
 /**
@@ -109,6 +148,7 @@ export const DEFAULT_RETRIEVAL_CONFIG: SmallToBigRetrievalConfig = {
   maxContextTokens: 4000,
   enableFallback: true,
   fallbackThreshold: 0.4,
+  contextWindow: DEFAULT_CONTEXT_WINDOW_CONFIG,
 };
 
 /**
