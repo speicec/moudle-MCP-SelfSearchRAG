@@ -1,12 +1,17 @@
 import { createDefaultPipeline } from './integration/pipeline-builder.js';
 import { DocumentStorage } from './core/storage.js';
-import { createRetrievalService } from './retrieval/index-stage.js';
-import { TextEmbeddingService } from './embedding/embedding-service.js';
 import { createMcpServer } from './mcp/server.js';
-import { InMemoryVectorStore } from './retrieval/vector-store.js';
+import { createMcpRetrievalService } from './mcp/mcp-retrieval-service.js';
+import { HierarchicalStore } from './chunking/hierarchical-store.js';
+import { getEmbeddingFactory } from './embedding/embedding-factory.js';
 import type { Harness } from './core/harness.js';
-import type { RetrievalService } from './retrieval/index-stage.js';
+import type { McpRetrievalService } from './mcp/mcp-retrieval-service.js';
 import type { McpServer } from './mcp/server.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Application configuration
@@ -67,20 +72,29 @@ export class Application {
   private config: AppConfig;
   private pipeline: Harness;
   private storage: DocumentStorage;
-  private retrieval: RetrievalService;
+  private retrieval: McpRetrievalService;
   private server: McpServer;
-  private textEmbedder: TextEmbeddingService;
+  private hierarchicalStore: HierarchicalStore;
 
   private constructor(config: AppConfig) {
     this.config = config;
     this.pipeline = createDefaultPipeline();
     this.storage = new DocumentStorage(config.storage);
-    this.textEmbedder = new TextEmbeddingService();
-    const vectorStore = new InMemoryVectorStore();
-    this.retrieval = createRetrievalService(
-      vectorStore,
-      (text) => this.textEmbedder.embedText(text)
+
+    // Initialize HierarchicalStore with persistence
+    this.hierarchicalStore = new HierarchicalStore();
+    const storeDataPath = path.resolve(__dirname, '../data/store');
+
+    // Create embedding service using factory
+    const embeddingFactory = getEmbeddingFactory();
+    const embeddingService = embeddingFactory.createTextEmbeddingService();
+
+    // Create MCP RetrievalService with HierarchicalStore
+    this.retrieval = createMcpRetrievalService(
+      this.hierarchicalStore,
+      (text: string) => embeddingService.embedText(text)
     );
+
     this.server = createMcpServer(
       this.pipeline,
       this.storage,
@@ -94,7 +108,13 @@ export class Application {
    */
   static async create(config: Partial<AppConfig> = {}): Promise<Application> {
     const fullConfig = { ...DEFAULT_CONFIG, ...config };
-    return new Application(fullConfig);
+    const app = new Application(fullConfig);
+
+    // Enable persistence for HierarchicalStore (async)
+    const storeDataPath = path.resolve(__dirname, '../data/store');
+    await app.hierarchicalStore.enablePersistence(storeDataPath, true);
+
+    return app;
   }
 
   /**
@@ -109,8 +129,9 @@ export class Application {
    */
   getPipeline(): Harness { return this.pipeline; }
   getStorage(): DocumentStorage { return this.storage; }
-  getRetrieval(): RetrievalService { return this.retrieval; }
+  getRetrieval(): McpRetrievalService { return this.retrieval; }
   getServer(): McpServer { return this.server; }
+  getHierarchicalStore(): HierarchicalStore { return this.hierarchicalStore; }
 }
 
 /**

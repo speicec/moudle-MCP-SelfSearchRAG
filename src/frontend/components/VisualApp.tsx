@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import DocumentManager from './DocumentManager';
 import ChatWindow from './ChatWindow';
 import PipelineTimeline from './PipelineTimeline';
 import ChunkExplorer from './ChunkExplorer';
@@ -88,51 +87,6 @@ const QuickUpload: React.FC = () => {
 };
 
 /**
- * Quick query component
- */
-const QuickQuery: React.FC = () => {
-  const [query, setQuery] = useState('');
-  const { submitQuery, isLoading } = useDocumentStore();
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (query.trim()) {
-      await submitQuery(query.trim());
-      setQuery('');
-    }
-  };
-
-  return (
-    <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-800">
-      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-        快速查询
-      </h3>
-      <form onSubmit={handleSubmit} className="flex gap-2">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="输入查询..."
-          disabled={isLoading}
-          className="flex-1 px-3 py-1.5 text-sm rounded border border-gray-300 dark:border-gray-600
-            bg-white dark:bg-gray-700 text-gray-900 dark:text-white
-            focus:outline-none focus:ring-2 focus:ring-blue-500
-            disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={isLoading || !query.trim()}
-          className="px-3 py-1.5 text-sm font-medium rounded bg-blue-600 text-white
-            hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          查询
-        </button>
-      </form>
-    </div>
-  );
-};
-
-/**
  * Document list component (compact)
  */
 const DocumentList: React.FC = () => {
@@ -211,7 +165,9 @@ const VisualApp: React.FC = () => {
           {/* Left panel */}
           <div className="col-span-3 space-y-4">
             <QuickUpload />
-            <QuickQuery />
+            <div className="rounded-lg bg-gray-50 dark:bg-gray-800 overflow-hidden">
+              <ChatWindow />
+            </div>
             <DocumentList />
           </div>
 

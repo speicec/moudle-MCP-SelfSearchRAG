@@ -9,7 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { Harness } from '../core/harness.js';
 import type { DocumentStorage } from '../core/storage.js';
-import type { RetrievalService } from '../retrieval/index-stage.js';
+import type { McpRetrievalService, McpRetrievalResult } from './mcp-retrieval-service.js';
 
 /**
  * MCP server configuration
@@ -34,13 +34,13 @@ export class McpServer {
   private server: Server;
   private pipeline: Harness;
   private storage: DocumentStorage;
-  private retrieval: RetrievalService;
+  private retrieval: McpRetrievalService;
   private config: McpServerConfig;
 
   constructor(
     pipeline: Harness,
     storage: DocumentStorage,
-    retrieval: RetrievalService,
+    retrieval: McpRetrievalService,
     config?: Partial<McpServerConfig>
   ) {
     this.config = {
@@ -87,21 +87,21 @@ export class McpServer {
           },
           {
             name: 'query',
-            description: 'Query the RAG system for relevant content',
+            description: 'Query the RAG system for relevant content using Small-to-Big retrieval. Returns results with parentChunkContent (full context), contextWindow (extracted window around match), and similarityScore (0.0-1.0). Each result includes the matched small chunk and its expanded parent for richer context.',
             inputSchema: {
               type: 'object',
               properties: {
                 query_text: {
                   type: 'string',
-                  description: 'The search query',
+                  description: 'The search query (supports Chinese and English)',
                 },
                 top_k: {
                   type: 'number',
                   description: 'Number of results to return (default: 5)',
                 },
-                filters: {
-                  type: 'object',
-                  description: 'Optional filters for the query',
+                threshold: {
+                  type: 'number',
+                  description: 'Minimum similarity score threshold (0.0-1.0, default: 0.0)',
                 },
               },
               required: ['query_text'],
@@ -203,11 +203,33 @@ export class McpServer {
    */
   private async handleQuery(args: QueryArgs): Promise<CallToolResult> {
     try {
+      // Check if store has data
+      const stats = this.retrieval.getStats();
+      if (stats.smallChunks === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                query: args.query_text,
+                results: [],
+                message: 'No documents have been indexed. Upload documents first.',
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
       const results = await this.retrieval.query(args.query_text, {
         topK: args.top_k ?? 5,
+        threshold: args.threshold ?? 0.0,
       });
 
-      const responseText = JSON.stringify(results, null, 2);
+      const responseText = JSON.stringify({
+        query: args.query_text,
+        results,
+        totalResults: results.length,
+      }, null, 2);
 
       return {
         content: [
@@ -328,7 +350,7 @@ interface IngestDocumentArgs {
 interface QueryArgs {
   query_text: string;
   top_k?: number;
-  filters?: Record<string, unknown>;
+  threshold?: number;
 }
 
 interface GetDocumentArgs {
@@ -346,7 +368,7 @@ interface ListDocumentsArgs {
 export function createMcpServer(
   pipeline: Harness,
   storage: DocumentStorage,
-  retrieval: RetrievalService,
+  retrieval: McpRetrievalService,
   config?: Partial<McpServerConfig>
 ): McpServer {
   return new McpServer(pipeline, storage, retrieval, config);
