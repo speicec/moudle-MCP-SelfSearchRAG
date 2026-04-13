@@ -48,6 +48,7 @@ export class WebSocketHandler {
    */
   private addClient(socket: WebSocket): void {
     this.clients.add(socket);
+    console.log(`[WS Debug] Client connected. Total clients: ${this.clients.size}`);
     socket.send(JSON.stringify({
       type: 'connected',
       message: 'Connected to pipeline event stream',
@@ -60,6 +61,7 @@ export class WebSocketHandler {
    */
   private removeClient(socket: WebSocket): void {
     this.clients.delete(socket);
+    console.log(`[WS Debug] Client disconnected. Total clients: ${this.clients.size}`);
     // Remove from all document subscriptions
     for (const [docId, subscribers] of this.documentSubscriptions) {
       subscribers.delete(socket);
@@ -102,6 +104,11 @@ export class WebSocketHandler {
    * Broadcast event to all connected clients
    */
   broadcast(event: PipelineEvent): void {
+    // Debug: Log broadcast details for generation events
+    if (event.type.startsWith('generation:')) {
+      console.log(`[WS Debug] Broadcasting ${event.type} to ${this.clients.size} clients`);
+    }
+
     const message = JSON.stringify(event);
 
     // Broadcast to all clients

@@ -24,7 +24,8 @@
       "Bash(curl -s http://localhost:3001/api/health)",
       "Bash(node -e ':*)",
       "Bash(node:*)",
-      "Bash(wmic process:*)"
+      "Bash(wmic process:*)",
+      "Bash(taskkill:*)"
     ]
   }
 }

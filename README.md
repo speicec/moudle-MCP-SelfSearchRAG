@@ -1,6 +1,6 @@
 # Enhanced RAG MCP Server
 
-A powerful RAG (Retrieval-Augmented Generation) system with multimodal support and advanced PDF parsing, exposed via MCP (Model Context Protocol) server.
+A powerful RAG (Retrieval-Augmented Generation) system with multimodal support, advanced PDF parsing, and LLM-based intelligent answer generation, exposed via MCP (Model Context Protocol) server.
 
 ## Features
 
@@ -13,6 +13,8 @@ A powerful RAG (Retrieval-Augmented Generation) system with multimodal support a
 - **Hierarchical Retrieval**: Small-to-Big retrieval strategy with parent-child chunk structure
 - **Context Window Extraction**: Returns focused context around matched content, not entire parent chunks
 - **Structure Boundary Detection**: Respects chapter/section boundaries when creating parent chunks
+- **LLM Integration**: DeepSeek integration for intelligent answer generation with thinking chain visualization
+- **Thinking Chain Display**: Real-time visualization of LLM reasoning process
 - **Web Dashboard**: React frontend for document management, chat queries, and pipeline visualization
 - **Local Embedding**: Zero-cost, offline-capable multilingual embeddings using transformers.js
 - **Multilingual Support**: Chinese, English, and 100+ languages for semantic search
@@ -105,6 +107,30 @@ With the CLIP model, you can:
 - **Text-to-Image Search**: Query "加班表格" to find table screenshots
 - **Image-to-Text Search**: Upload an image to find related text descriptions
 - **Image-to-Image Search**: Find similar images
+
+### LLM Generation Configuration
+
+Configure DeepSeek API for intelligent answer generation:
+
+```bash
+# DeepSeek API Key (required for LLM generation)
+DEEPSEEK_API_KEY=your-deepseek-api-key-here
+
+# DeepSeek API Base URL (optional, default shown)
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# Model selection (optional)
+# deepseek-reasoner: Native thinking chain support
+# deepseek-chat: Standard chat without thinking chain
+DEEPSEEK_MODEL=deepseek-reasoner
+```
+
+Get your API key at: https://platform.deepseek.com/
+
+When configured, the Chat Tab will:
+1. Retrieve relevant document chunks (Phase 1)
+2. Generate intelligent answers using DeepSeek (Phase 2)
+3. Display thinking chain visualization during generation
 
 ### Supported Image Formats
 
@@ -275,6 +301,14 @@ The system uses a two-phase retrieval strategy:
 | `stage:progress` | Stage progress update (0-100%) |
 | `stage:complete` | Pipeline stage completed |
 | `pipeline:complete` | All stages finished |
+| `retrieval:start` | Retrieval phase started |
+| `retrieval:match` | Individual match found |
+| `retrieval:complete` | Retrieval finished with results |
+| `generation:start` | LLM generation started |
+| `generation:thinking` | Thinking content chunk received |
+| `generation:answer` | Answer content chunk received |
+| `generation:complete` | LLM generation finished |
+| `generation:error` | LLM generation error |
 | `error` | Processing error occurred |
 
 ## Development
@@ -311,11 +345,15 @@ npm run build
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/chat/query` | Submit query for retrieval |
+| POST | `/api/chat/query` | Submit query for retrieval only |
+| POST | `/api/chat/generate` | Submit query for RAG + LLM generation |
 | GET | `/api/chat/history` | Get chat history |
 | DELETE | `/api/chat/history` | Clear chat history |
+| GET | `/api/chat/status` | Get retrieval system status |
 
-#### Query Response Fields
+#### Query Response Fields (Retrieval Only)
+
+The `/api/chat/query` endpoint returns:
 
 The `/api/chat/query` endpoint returns:
 
@@ -345,6 +383,24 @@ The `/api/chat/query` endpoint returns:
 **Key Fields**:
 - `contextWindow`: Extracted text around the matched small chunk (recommended)
 - `parentChunkContent`: Full parent chunk for reference (backward compatible)
+
+#### Generate Response Fields (RAG + LLM)
+
+The `/api/chat/generate` endpoint returns:
+
+```json
+{
+  "query": "string",
+  "results": [...],  // Same structure as query endpoint
+  "thinking": "string (LLM reasoning content)",
+  "answer": "string (LLM generated answer)",
+  "duration": 1234   // Total processing time in ms
+}
+```
+
+**Additional Fields**:
+- `thinking`: The reasoning process from deepseek-reasoner model
+- `answer`: The final generated answer based on retrieved context
 
 ### Health
 

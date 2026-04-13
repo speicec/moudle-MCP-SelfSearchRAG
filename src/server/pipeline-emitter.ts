@@ -145,6 +145,63 @@ export class PipelineEmitter {
       timestamp: Date.now(),
     });
   }
+
+  // Generation event methods
+
+  emitGenerationStart(query: string, sourcesCount: number): void {
+    this.emit({
+      type: 'generation:start',
+      documentId: this.documentId,
+      query,
+      sourcesCount,
+      message: `Generation started for query with ${sourcesCount} sources`,
+      timestamp: Date.now(),
+    });
+  }
+
+  emitGenerationThinking(thinkingContent: string): void {
+    this.emit({
+      type: 'generation:thinking',
+      documentId: this.documentId,
+      phase: 'reasoning',
+      thinkingContent,
+      message: 'Thinking content received',
+      timestamp: Date.now(),
+    });
+  }
+
+  emitGenerationAnswer(answerContent: string): void {
+    this.emit({
+      type: 'generation:answer',
+      documentId: this.documentId,
+      phase: 'answer',
+      answerContent,
+      message: 'Answer content received',
+      timestamp: Date.now(),
+    });
+  }
+
+  emitGenerationComplete(thinkingTokens: number, answerTokens: number, totalDuration: number): void {
+    this.emit({
+      type: 'generation:complete',
+      documentId: this.documentId,
+      thinkingTokens,
+      answerTokens,
+      totalDuration,
+      message: `Generation complete: ${thinkingTokens} thinking tokens, ${answerTokens} answer tokens in ${totalDuration}ms`,
+      timestamp: Date.now(),
+    });
+  }
+
+  emitGenerationError(error: string): void {
+    this.emit({
+      type: 'generation:error',
+      documentId: this.documentId,
+      error: { message: error },
+      message: `Generation error: ${error}`,
+      timestamp: Date.now(),
+    });
+  }
 }
 
 /**

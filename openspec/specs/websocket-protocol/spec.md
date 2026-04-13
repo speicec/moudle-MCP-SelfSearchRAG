@@ -70,3 +70,96 @@ The system SHALL maintain WebSocket connection from frontend to backend.
 #### Scenario: Connection status indicator
 - **WHEN** WebSocket connection status changes
 - **THEN** frontend displays connection status indicator (connected/disconnected/reconnecting)
+
+## Requirement: WebSocket supports generation phase events
+The system SHALL support WebSocket events for LLM generation phase.
+
+### Scenario: generation:start event
+- **WHEN** LLM generation begins
+- **THEN** WebSocket broadcasts generation:start event with query and retrieved chunks count
+
+### Scenario: generation:thinking event
+- **WHEN** DeepSeek returns reasoning_content in SSE stream
+- **THEN** WebSocket broadcasts generation:thinking event with thinking content fragment
+
+### Scenario: generation:answer event
+- **WHEN** DeepSeek returns content in SSE stream
+- **THEN** WebSocket broadcasts generation:answer event with answer content fragment
+
+### Scenario: generation:complete event
+- **WHEN** LLM generation finishes
+- **THEN** WebSocket broadcasts generation:complete event with token counts and duration
+
+## Requirement: Generation events include metadata
+The system SHALL include relevant metadata in generation phase events.
+
+### Scenario: Thinking event includes phase indicator
+- **WHEN** generation:thinking event is broadcast
+- **THEN** event includes phase field indicating "reasoning"
+
+### Scenario: Complete event includes token counts
+- **WHEN** generation:complete event is broadcast
+- **THEN** event includes thinkingTokens, answerTokens, and totalDuration fields
+
+## Requirement: WebSocket preserves existing retrieval events
+The system SHALL continue supporting existing retrieval events unchanged.
+
+### Scenario: retrieval:start event preserved
+- **WHEN** retrieval phase starts
+- **THEN** WebSocket broadcasts retrieval:start event as before
+
+### Scenario: retrieval:match event preserved
+- **WHEN** retrieval finds a match
+- **THEN** WebSocket broadcasts retrieval:match event as before
+
+### Scenario: retrieval:complete event preserved
+- **WHEN** retrieval phase completes
+- **THEN** WebSocket broadcasts retrieval:complete event as before
+
+### Requirement: WebSocket protocol supports stage metrics events
+The system SHALL support stage metrics event for detailed processing statistics.
+
+#### Scenario: stage:metrics event emission
+- **WHEN** pipeline stage completes with metrics
+- **THEN** system emits event with type "stage:metrics", stage name, metrics object, and timestamp
+
+#### Scenario: Metrics object structure
+- **WHEN** stage:metrics event is emitted
+- **THEN** metrics object contains stage-specific data (fileSizeBytes, pagesExtracted, tokensExtracted, embeddingDimension, chunksCreated, etc.)
+
+### Requirement: WebSocket protocol supports chunk creation events
+The system SHALL support chunk creation events for real-time chunk tracking.
+
+#### Scenario: chunk:created event emission
+- **WHEN** a new chunk is created during indexing
+- **THEN** system emits event with type "chunk:created", chunk data, document ID, total chunk count, and timestamp
+
+#### Scenario: Chunk data structure
+- **WHEN** chunk:created event is emitted
+- **THEN** chunk data contains id, level (small/parent), content preview, token count, quality score, position, and metadata
+
+### Requirement: WebSocket protocol supports retrieval process events
+The system SHALL support retrieval process events for search visualization.
+
+#### Scenario: retrieval:start event emission
+- **WHEN** retrieval query is submitted
+- **THEN** system emits event with type "retrieval:start", query text, and timestamp
+
+#### Scenario: retrieval:match event emission
+- **WHEN** a similarity match is found during search
+- **THEN** system emits event with type "retrieval:match", match data (smallChunkId, similarityScore, rank), query, and timestamp
+
+#### Scenario: retrieval:complete event emission
+- **WHEN** retrieval process completes
+- **THEN** system emits event with type "retrieval:complete", query, results array, duration, and timestamp
+
+### Requirement: WebSocket protocol supports statistics update events
+The system SHALL support statistics update events for dashboard refresh.
+
+#### Scenario: stats:update event emission
+- **WHEN** system statistics change significantly
+- **THEN** system emits event with type "stats:update", statistics object, and timestamp
+
+#### Scenario: Statistics object structure
+- **WHEN** stats:update event is emitted
+- **THEN** statistics object contains pipelineStats, retrievalStats, chunkStats, and stageTimeDistribution

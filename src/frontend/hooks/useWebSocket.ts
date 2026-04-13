@@ -1,153 +1,137 @@
-import { useEffect, useRef, useCallback } from 'react';
-import { useConnectionStore, usePipelineStore, useTimelineStore, useChunkStore, useStatsStore, useRetrievalStore, type PipelineEvent } from '../store';
+import { useEffect, useCallback, useRef } from 'react';
+import { useConnectionStore, usePipelineStore, useTimelineStore, useChunkStore, useStatsStore, useRetrievalStore, useChatStore, type PipelineEvent } from '../store';
+import { getWebSocketSingleton } from '../lib/websocket-singleton';
 
-const WS_URL = `ws://${window.location.host}/ws`;
-const RECONNECT_DELAY_BASE = 1000;
-const MAX_RECONNECT_DELAY = 30000;
+/**
+ * Create a stable event handler that uses getState() to avoid store object dependencies
+ * This function is defined outside hooks to ensure stability
+ */
+function createEventHandler() {
+  return (event: PipelineEvent) => {
+    // Debug: Log generation events
+    if (event.type.startsWith('generation:')) {
+      console.log(`[EventHandler] Received: ${event.type}, thinkingContent: "${event.thinkingContent?.slice(0, 30)}..."`);
+    }
 
-export function useWebSocket() {
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    // Handle legacy pipeline events using getState()
+    usePipelineStore.getState().handleEvent(event);
 
-  const { setStatus } = useConnectionStore();
-  const { handleEvent } = usePipelineStore();
-  const timelineStore = useTimelineStore();
-  const chunkStore = useChunkStore();
-  const statsStore = useStatsStore();
-  const retrievalStore = useRetrievalStore();
-
-  /**
-   * Handle all WebSocket events including new event types
-   */
-  const handleAllEvents = useCallback((event: PipelineEvent) => {
-    // Handle legacy pipeline events
-    handleEvent(event);
-
-    // Handle new timeline events
+    // Handle timeline events
     if (event.type === 'pipeline:start' && event.documentId) {
-      timelineStore.handlePipelineStart(event.documentId, event.timestamp);
+      useTimelineStore.getState().handlePipelineStart(event.documentId, event.timestamp);
     } else if (event.type === 'stage:start' && event.stage) {
-      timelineStore.handleStageStart(event.stage, event.timestamp);
+      useTimelineStore.getState().handleStageStart(event.stage, event.timestamp);
     } else if (event.type === 'stage:progress' && event.stage) {
-      timelineStore.handleStageProgress(event.stage, event.progress ?? 0);
+      useTimelineStore.getState().handleStageProgress(event.stage, event.progress ?? 0);
     } else if (event.type === 'stage:complete' && event.stage) {
-      timelineStore.handleStageComplete(event.stage, event.timestamp);
+      useTimelineStore.getState().handleStageComplete(event.stage, event.timestamp);
     } else if (event.type === 'stage:metrics' && event.stage && event.metrics) {
-      timelineStore.handleStageMetrics(event.stage, event.metrics);
+      useTimelineStore.getState().handleStageMetrics(event.stage, event.metrics);
     } else if (event.type === 'pipeline:complete') {
-      timelineStore.handlePipelineComplete(event.timestamp);
+      useTimelineStore.getState().handlePipelineComplete(event.timestamp);
     } else if (event.type === 'error' && event.stage && event.error) {
-      timelineStore.handleError(event.stage, event.error.message);
+      useTimelineStore.getState().handleError(event.stage, event.error.message);
     }
 
     // Handle chunk creation events
     if (event.type === 'chunk:created' && event.chunk && event.documentId) {
-      chunkStore.handleChunkCreated(event.chunk, event.documentId);
+      useChunkStore.getState().handleChunkCreated(event.chunk, event.documentId);
     }
 
     // Handle stats update events
     if (event.type === 'stats:update' && event.stats) {
-      statsStore.handleStatsUpdate(event.stats);
+      useStatsStore.getState().handleStatsUpdate(event.stats);
     }
 
     // Handle retrieval events
     if (event.type === 'retrieval:start' && event.query) {
-      retrievalStore.handleRetrievalStart(event.query, event.timestamp);
+      useRetrievalStore.getState().handleRetrievalStart(event.query, event.timestamp);
     } else if (event.type === 'retrieval:match' && event.query && event.match) {
-      retrievalStore.handleRetrievalMatch(event.match);
+      useRetrievalStore.getState().handleRetrievalMatch(event.match);
     } else if (event.type === 'retrieval:complete' && event.query && event.results && event.duration) {
-      retrievalStore.handleRetrievalComplete(event.results, event.duration, event.timestamp);
+      useRetrievalStore.getState().handleRetrievalComplete(event.results, event.duration, event.timestamp);
+      useChatStore.getState().setCurrentSources(event.results);
     }
-  }, [handleEvent, timelineStore, chunkStore, statsStore, retrievalStore]);
 
+    // Handle generation events
+    if (event.type === 'generation:start' && event.query) {
+      useChatStore.getState().handleGenerationStart(event.query, event.sourcesCount ?? 0);
+    } else if (event.type === 'generation:thinking' && event.thinkingContent) {
+      useChatStore.getState().handleGenerationThinking(event.thinkingContent);
+    } else if (event.type === 'generation:answer' && event.answerContent) {
+      useChatStore.getState().handleGenerationAnswer(event.answerContent);
+    } else if (event.type === 'generation:complete') {
+      console.log('[EventHandler] generation:complete received');
+      useChatStore.getState().handleGenerationComplete(
+        event.thinkingTokens ?? 0,
+        event.answerTokens ?? 0,
+        event.totalDuration ?? 0
+      );
+    } else if (event.type === 'generation:error' && event.error) {
+      useChatStore.getState().handleGenerationError(event.error.message);
+    }
+  };
+}
+
+// Global stable handler - created once and reused
+let globalEventHandler: ((event: PipelineEvent) => void) | null = null;
+
+/**
+ * Hook to access WebSocket singleton and register event handlers
+ */
+export function useWebSocket() {
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      return;
-    }
-
-    try {
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log('WebSocket connected');
-        setStatus('connected');
-        reconnectAttemptsRef.current = 0;
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const message: PipelineEvent = JSON.parse(event.data);
-          handleAllEvents(message);
-        } catch (error) {
-          console.error('Failed to parse WebSocket message:', error);
-        }
-      };
-
-      ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        setStatus('disconnected');
-        wsRef.current = null;
-
-        // Attempt reconnection with exponential backoff
-        const delay = Math.min(
-          RECONNECT_DELAY_BASE * Math.pow(2, reconnectAttemptsRef.current),
-          MAX_RECONNECT_DELAY
-        );
-        reconnectAttemptsRef.current++;
-
-        console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
-        setStatus('reconnecting');
-
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connect();
-        }, delay);
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-      };
-    } catch (error) {
-      console.error('Failed to create WebSocket:', error);
-      setStatus('disconnected');
-    }
-  }, [setStatus, handleAllEvents]);
+    const wsSingleton = getWebSocketSingleton();
+    wsSingleton.connect();
+  }, []);
 
   const disconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    setStatus('disconnected');
-  }, [setStatus]);
+    const wsSingleton = getWebSocketSingleton();
+    wsSingleton.disconnect();
+  }, []);
 
   const subscribe = useCallback((documentId: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'subscribe', documentId }));
-    }
+    const wsSingleton = getWebSocketSingleton();
+    wsSingleton.send({ type: 'subscribe', documentId });
   }, []);
 
   const unsubscribe = useCallback((documentId: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'unsubscribe', documentId }));
-    }
+    const wsSingleton = getWebSocketSingleton();
+    wsSingleton.send({ type: 'unsubscribe', documentId });
   }, []);
 
   return { connect, disconnect, subscribe, unsubscribe };
 }
 
-// Auto-connect hook
+// Auto-connect hook - registers handlers ONCE and connects
 export function useWebSocketConnection() {
-  const { connect, disconnect } = useWebSocket();
+  const { connect } = useWebSocket();
+
+  // Use ref to track registration status (survives StrictMode re-renders)
+  const registeredRef = useRef(false);
 
   useEffect(() => {
+    const wsSingleton = getWebSocketSingleton();
+
+    // Register handlers ONCE only
+    if (!registeredRef.current) {
+      // Create stable handler once
+      if (!globalEventHandler) {
+        globalEventHandler = createEventHandler();
+      }
+
+      wsSingleton.setEventHandler(globalEventHandler);
+      wsSingleton.setStatusHandler(useConnectionStore.getState().setStatus);
+      registeredRef.current = true;
+      console.log('[useWebSocketConnection] Handlers registered (once)');
+    }
+
+    // Connect (singleton will check if already connected)
     connect();
+
     return () => {
-      disconnect();
+      // Don't disconnect or clear handlers - singleton persists
+      console.log('[useWebSocketConnection] Cleanup - singleton persists');
     };
-  }, [connect, disconnect]);
+  }, [connect]); // Minimal dependency
 }

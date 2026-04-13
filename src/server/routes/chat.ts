@@ -4,6 +4,7 @@ import { SmallToBigRetriever } from '../../chunking/small-to-big-retriever.js';
 import type { HierarchicalStore } from '../../chunking/hierarchical-store.js';
 import type { TextEmbeddingService } from '../../embedding/embedding-service.js';
 import { PipelineEmitter } from '../pipeline-emitter.js';
+import { llmGenerationService, type GenerationEvent } from '../services/LLMGenerationService.js';
 
 /**
  * Chat routes as Fastify plugin
@@ -204,5 +205,178 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       valid: validation.valid,
       errors: validation.errors,
     });
+  });
+
+  /**
+   * POST /generate - Submit query for RAG + LLM generation with streaming
+   * Two-phase flow: retrieval → generation
+   * Results broadcast via WebSocket events
+   */
+  fastify.post('/generate', async (request: FastifyRequest<{ Body: ChatQueryRequest }>, reply: FastifyReply) => {
+    const { query, topK = 5, similarityThreshold = 0.0, maxContextTokens = 4000 } = request.body;
+
+    console.log(`[ChatRoute:Generate] Query received: "${query}"`);
+
+    if (!query || query.trim().length === 0) {
+      return reply.status(400).send({ error: 'Query is required' });
+    }
+
+    // Check if store has any data
+    if (!hierarchicalStore) {
+      console.error('[ChatRoute:Generate] Document store not initialized');
+      return reply.status(503).send({ error: 'Document store not initialized' });
+    }
+
+    const chunkCount = hierarchicalStore.getChunkCount();
+    if (chunkCount.small === 0) {
+      return reply.status(200).send({
+        query,
+        results: [],
+        thinking: '',
+        answer: 'No documents have been processed. Upload documents first.',
+        message: 'No documents indexed',
+      });
+    }
+
+    // Create retriever
+    const retriever = new SmallToBigRetriever(hierarchicalStore, {
+      topK,
+      similarityThreshold,
+      maxContextTokens,
+    });
+
+    if (embeddingService) {
+      retriever.setEmbeddingGenerator((text: string) => embeddingService.embedText(text));
+    }
+
+    // WebSocket broadcast helper
+    const wsHandler = fastify.wsHandler;
+    const broadcastGeneration = (event: GenerationEvent) => {
+      if (wsHandler) {
+        // Build PipelineEvent with only defined properties
+        const pipelineEvent: PipelineEvent = {
+          type: event.type,
+          timestamp: event.timestamp,
+        };
+
+        // Only add optional properties if they have defined values
+        if (event.phase) pipelineEvent.phase = event.phase;
+        if (event.query) pipelineEvent.query = event.query;
+        if (event.sourcesCount !== undefined) pipelineEvent.sourcesCount = event.sourcesCount;
+        if (event.thinkingContent) pipelineEvent.thinkingContent = event.thinkingContent;
+        if (event.answerContent) pipelineEvent.answerContent = event.answerContent;
+        if (event.thinkingTokens !== undefined) pipelineEvent.thinkingTokens = event.thinkingTokens;
+        if (event.answerTokens !== undefined) pipelineEvent.answerTokens = event.answerTokens;
+        if (event.totalDuration !== undefined) pipelineEvent.totalDuration = event.totalDuration;
+        if (event.error) pipelineEvent.error = { message: event.error };
+
+        wsHandler.broadcast(pipelineEvent);
+      }
+    };
+
+    // Create emitter for retrieval events
+    const emitter = wsHandler ? new PipelineEmitter('retrieval', wsHandler) : null;
+
+    // Emit retrieval:start event
+    if (emitter) {
+      emitter.emitRetrievalStart(query);
+    }
+
+    const startTime = Date.now();
+
+    try {
+      // Phase 1: Retrieval
+      console.log(`[ChatRoute:Generate] Executing retrieval...`);
+      const { results, context } = await retriever.retrieveWithMetadata(query);
+
+      // Emit retrieval:match events
+      if (emitter) {
+        results.forEach((r, index) => {
+          const matchData: RetrievalMatchData = {
+            smallChunkId: r.smallChunkId,
+            similarityScore: r.similarityScore,
+            rank: index + 1,
+          };
+          emitter.emitRetrievalMatch(query, matchData);
+        });
+      }
+
+      // Map results
+      const mappedResults: RetrievalResultItem[] = results.map(r => ({
+        smallChunkId: r.smallChunkId,
+        parentChunkId: r.parentChunkId,
+        parentChunkContent: r.parentChunkContent,
+        similarityScore: r.similarityScore,
+        sourceDocumentId: r.sourceDocumentId,
+        contextWindow: r.contextWindow,
+        windowStart: r.windowStart,
+        windowEnd: r.windowEnd,
+      }));
+
+      // Emit retrieval:complete event
+      if (emitter) {
+        emitter.emitRetrievalComplete(query, mappedResults, Date.now() - startTime);
+      }
+
+      // Phase 2: LLM Generation (if enabled)
+      if (llmGenerationService.isEnabled()) {
+        console.log(`[ChatRoute:Generate] Executing LLM generation with ${results.length} sources...`);
+
+        // Prepare generation request
+        const generationRequest = {
+          query,
+          context: context.content,
+          sources: mappedResults.map(r => ({
+            content: r.parentChunkContent,
+            similarityScore: r.similarityScore,
+            sourceId: r.sourceDocumentId,
+          })),
+        };
+
+        // Execute streaming generation
+        const generationResult = await llmGenerationService.generateWithStreaming(
+          generationRequest,
+          broadcastGeneration
+        );
+
+        return reply.status(200).send({
+          query,
+          results: mappedResults,
+          thinking: generationResult.thinking,
+          answer: generationResult.answer,
+          duration: Date.now() - startTime,
+        });
+      } else {
+        // LLM disabled - return retrieval results only
+        console.log('[ChatRoute:Generate] LLM generation disabled - returning retrieval results only');
+
+        broadcastGeneration({
+          type: 'generation:error',
+          error: 'LLM generation not configured - returning retrieval results only',
+          timestamp: Date.now(),
+        });
+
+        return reply.status(200).send({
+          query,
+          results: mappedResults,
+          thinking: '',
+          answer: 'LLM generation not configured. Configure DEEPSEEK_API_KEY to enable.',
+          context: context.content,
+          duration: Date.now() - startTime,
+        });
+      }
+
+    } catch (error) {
+      fastify.log.error({ query, error }, 'Generate failed');
+      broadcastGeneration({
+        type: 'generation:error',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: Date.now(),
+      });
+      return reply.status(500).send({
+        error: 'Generation failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
   });
 }

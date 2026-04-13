@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ChatWindow from './ChatWindow';
+import ThinkingChainDisplay, { ThinkingChainIndicator } from './ThinkingChainDisplay';
 import PipelineTimeline from './PipelineTimeline';
 import ChunkExplorer from './ChunkExplorer';
 import RetrievalFlow from './RetrievalFlow';
 import StatsDashboard from './StatsDashboard';
-import { useConnectionStore, useDocumentStore } from '../store';
+import { useConnectionStore, useDocumentStore, useChatStore } from '../store';
 import { useWebSocketConnection } from '../hooks/useWebSocket';
 
-type MainTab = 'timeline' | 'chunks' | 'retrieval' | 'stats';
+type MainTab = 'chat' | 'timeline' | 'chunks' | 'retrieval' | 'stats';
 
 const mainTabs: Array<{ id: MainTab; label: string }> = [
+  { id: 'chat', label: 'Chat' },
   { id: 'timeline', label: '处理进度' },
   { id: 'chunks', label: '分块结构' },
   { id: 'retrieval', label: '检索过程' },
@@ -133,9 +135,9 @@ const DocumentList: React.FC = () => {
  */
 const VisualApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<MainTab>(() => {
-    // Restore from localStorage
+    // Restore from localStorage, default to 'chat'
     const saved = localStorage.getItem('visualApp:activeTab');
-    return (saved as MainTab) ?? 'timeline';
+    return (saved as MainTab) ?? 'chat';
   });
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
 
@@ -161,58 +163,72 @@ const VisualApp: React.FC = () => {
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 py-6">
-        <div className="grid grid-cols-12 gap-6">
-          {/* Left panel */}
-          <div className="col-span-3 space-y-4">
-            <QuickUpload />
-            <div className="rounded-lg bg-gray-50 dark:bg-gray-800 overflow-hidden">
-              <ChatWindow />
-            </div>
-            <DocumentList />
-          </div>
-
-          {/* Right panel - Main tabs */}
-          <div className="col-span-9">
-            {/* Tabs */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-              <div className="border-b border-gray-200 dark:border-gray-700">
-                <nav className="flex -mb-px">
-                  {mainTabs.map((tab) => (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`px-4 py-3 font-medium text-sm transition-colors ${
-                        activeTab === tab.id
-                          ? 'text-blue-600 border-b-2 border-blue-600 dark:text-blue-400 dark:border-blue-400'
-                          : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </nav>
-              </div>
-
-              {/* Tab content */}
-              <div className="p-4">
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={activeTab}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    {activeTab === 'timeline' && <PipelineTimeline />}
-                    {activeTab === 'chunks' && <ChunkExplorer documentId={selectedDocumentId ?? undefined} />}
-                    {activeTab === 'retrieval' && <RetrievalFlow />}
-                    {activeTab === 'stats' && <StatsDashboard />}
-                  </motion.div>
-                </AnimatePresence>
-              </div>
-            </div>
+        {/* Tabs */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow mb-4">
+          <div className="border-b border-gray-200 dark:border-gray-700">
+            <nav className="flex -mb-px">
+              {mainTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`px-4 py-3 font-medium text-sm transition-colors ${
+                    activeTab === tab.id
+                      ? 'text-blue-600 border-b-2 border-blue-600 dark:text-blue-400 dark:border-blue-400'
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
           </div>
         </div>
+
+        {/* Split View layout for Chat tab */}
+        {activeTab === 'chat' ? (
+          <div className="grid grid-cols-12 gap-6">
+            {/* Chat area - left */}
+            <div className="col-span-8">
+              <ChatWindow />
+            </div>
+            {/* Analysis area - right */}
+            <div className="col-span-4 space-y-4">
+              <QuickUpload />
+              <DocumentList />
+            </div>
+          </div>
+        ) : (
+          /* Other tabs layout */
+          <div className="grid grid-cols-12 gap-6">
+            {/* Left panel */}
+            <div className="col-span-3 space-y-4">
+              <QuickUpload />
+              <DocumentList />
+            </div>
+
+            {/* Right panel - Main tabs */}
+            <div className="col-span-9">
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+                <div className="p-4">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={activeTab}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      {activeTab === 'timeline' && <PipelineTimeline />}
+                      {activeTab === 'chunks' && <ChunkExplorer documentId={selectedDocumentId ?? undefined} />}
+                      {activeTab === 'retrieval' && <RetrievalFlow />}
+                      {activeTab === 'stats' && <StatsDashboard />}
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

@@ -29,6 +29,7 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   results?: RetrievalResult[];
+  thinking?: string; // LLM thinking chain content
 }
 
 export interface RetrievalResult {
@@ -140,14 +141,36 @@ interface ChatState {
   messages: ChatMessage[];
   isLoading: boolean;
   error: string | null;
+  // Generation state fields
+  isGenerating: boolean;
+  generationPhase: 'idle' | 'analysis' | 'retrieval' | 'reasoning' | 'answer' | 'complete' | 'error';
+  currentThinking: string;
+  currentAnswer: string;
+  currentSources: RetrievalResult[];
+  // Prevent duplicate completion handling
+  lastCompleteTimestamp: number | null;
   submitQuery: (query: string) => Promise<void>;
   clearHistory: () => Promise<void>;
+  // Generation event handlers
+  handleGenerationStart: (query: string, sourcesCount: number) => void;
+  handleGenerationThinking: (content: string) => void;
+  handleGenerationAnswer: (content: string) => void;
+  handleGenerationComplete: (thinkingTokens: number, answerTokens: number, duration: number) => void;
+  handleGenerationError: (error: string) => void;
+  // Additional method
+  setCurrentSources: (sources: RetrievalResult[]) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
   messages: [],
   isLoading: false,
   error: null,
+  isGenerating: false,
+  generationPhase: 'idle',
+  currentThinking: '',
+  currentAnswer: '',
+  currentSources: [],
+  lastCompleteTimestamp: null,
   submitQuery: async (query: string) => {
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -159,39 +182,134 @@ export const useChatStore = create<ChatState>((set) => ({
       messages: [...state.messages, userMessage],
       isLoading: true,
       error: null,
+      isGenerating: true,
+      generationPhase: 'analysis',
+      currentThinking: '',
+      currentAnswer: '',
+      currentSources: [],
+      lastCompleteTimestamp: null, // Reset for new query
     }));
 
     try {
-      const response = await fetch('/api/chat/query', {
+      // Send HTTP request to trigger backend processing
+      // The actual assistant message will be added via WebSocket streaming events
+      // (generation:start → generation:thinking → generation:answer → generation:complete)
+      const response = await fetch('/api/chat/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),
       });
-      const data = await response.json();
 
-      const assistantMessage: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: data.assembledContext?.content || 'No results found',
-        timestamp: Date.now(),
-        results: data.results,
-      };
+      // Check for errors but don't add assistant message here
+      // WebSocket events handle the streaming display and final message addition
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Generation request failed');
+      }
 
-      set((state) => ({
-        messages: [...state.messages, assistantMessage],
-        isLoading: false,
-      }));
+      // Request successful - streaming will proceed via WebSocket
+      // No need to process response data here, WebSocket handles it
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({
+        error: (error as Error).message,
+        isLoading: false,
+        isGenerating: false,
+        generationPhase: 'error',
+      });
     }
   },
   clearHistory: async () => {
     try {
       await fetch('/api/chat/history', { method: 'DELETE' });
-      set({ messages: [] });
+      set({
+        messages: [],
+        currentThinking: '',
+        currentAnswer: '',
+        currentSources: [],
+        generationPhase: 'idle',
+      });
     } catch (error) {
       set({ error: (error as Error).message });
     }
+  },
+  // Generation event handlers
+  handleGenerationStart: (query: string, sourcesCount: number) => {
+    set((state) => ({
+      isGenerating: true,
+      generationPhase: 'retrieval',
+      currentThinking: '',
+      currentAnswer: '',
+      // Keep currentSources - they were set during retrieval:complete
+      // Don't clear them here!
+      lastCompleteTimestamp: null, // Reset for new query
+      error: null,
+    }));
+  },
+  handleGenerationThinking: (content: string) => {
+    set((state) => ({
+      generationPhase: 'reasoning',
+      currentThinking: state.currentThinking + content,
+    }));
+  },
+  handleGenerationAnswer: (content: string) => {
+    set((state) => ({
+      generationPhase: 'answer',
+      currentAnswer: state.currentAnswer + content,
+    }));
+  },
+  handleGenerationComplete: (thinkingTokens: number, answerTokens: number, duration: number) => {
+    // Debug: Log when complete is called
+    console.log(`[ChatStore] handleGenerationComplete called: thinkingTokens=${thinkingTokens}, answerTokens=${answerTokens}`);
+
+    // Create assistant message from accumulated content
+    const state = useChatStore.getState();
+
+    // Prevent duplicate completion handling - check if already processed this completion
+    const completionKey = `${state.currentAnswer.slice(0, 100)}:${thinkingTokens}`;
+    const now = Date.now();
+
+    // If we recently processed a completion with the same content, skip
+    if (state.lastCompleteTimestamp && now - state.lastCompleteTimestamp < 2000) {
+      console.log(`[ChatStore] Skipping duplicate completion - last was ${now - state.lastCompleteTimestamp}ms ago`);
+      return;
+    }
+
+    // Debug: Check current state before adding message
+    console.log(`[ChatStore] Before adding: messages.length=${state.messages.length}, currentAnswer="${state.currentAnswer.slice(0, 50)}..."`);
+
+    const assistantMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: state.currentAnswer,
+      timestamp: Date.now(),
+      results: state.currentSources,
+      thinking: state.currentThinking, // Include thinking chain
+    };
+
+    set((prevState) => ({
+      messages: [...prevState.messages, assistantMessage],
+      isGenerating: false,
+      generationPhase: 'complete',
+      isLoading: false,
+      lastCompleteTimestamp: now,
+      // Keep thinking for display, but clear current answer for next query
+      currentAnswer: '',
+    }));
+
+    // Debug: Log after state update
+    console.log(`[ChatStore] After adding: messages.length=${useChatStore.getState().messages.length}`);
+  },
+  handleGenerationError: (error: string) => {
+    set({
+      error,
+      isGenerating: false,
+      generationPhase: 'error',
+      isLoading: false,
+    });
+  },
+  // Additional method to set sources from retrieval
+  setCurrentSources: (sources: RetrievalResult[]) => {
+    set({ currentSources: sources });
   },
 }));
 

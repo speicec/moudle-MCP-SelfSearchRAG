@@ -17,6 +17,11 @@ export type PipelineEventType =
   | 'retrieval:match'
   | 'retrieval:complete'
   | 'stats:update'
+  | 'generation:start'
+  | 'generation:thinking'
+  | 'generation:answer'
+  | 'generation:complete'
+  | 'generation:error'
   | 'error';
 
 /**
@@ -112,6 +117,14 @@ export interface PipelineEvent {
     message: string;
     stack?: string;
   };
+  // Generation event fields
+  phase?: 'analysis' | 'retrieval' | 'reasoning' | 'answer';
+  sourcesCount?: number;
+  thinkingContent?: string;
+  answerContent?: string;
+  thinkingTokens?: number;
+  answerTokens?: number;
+  totalDuration?: number;
 }
 
 /**
