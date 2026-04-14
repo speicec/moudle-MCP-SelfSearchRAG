@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Check, Loader2, ChevronRight, ChevronDown, BookOpen } from 'lucide-react';
 
 /**
  * Phase status type
@@ -36,28 +37,23 @@ interface ThinkingChainDisplayProps {
 const PhaseIndicator: React.FC<{ status: PhaseStatus }> = ({ status }) => {
   if (status === 'completed') {
     return (
-      <span className="text-green-500 text-lg">
-        ✓
-      </span>
+      <Check className="w-4 h-4 text-green-500" />
     );
   }
 
   if (status === 'running') {
     return (
-      <motion.span
-        animate={{ opacity: [0.4, 1, 0.4] }}
-        transition={{ duration: 1, repeat: Infinity }}
-        className="text-blue-500 text-lg"
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
       >
-        ○
-      </motion.span>
+        <Loader2 className="w-4 h-4 text-blue-500" />
+      </motion.div>
     );
   }
 
   return (
-    <span className="text-gray-400 text-lg">
-      ○
-    </span>
+    <div className="w-4 h-4 rounded-full border-2 border-gray-300 dark:border-gray-600" />
   );
 };
 
@@ -101,9 +97,10 @@ const ThinkingChainDisplay: React.FC<ThinkingChainDisplayProps> = ({
         </div>
         <button
           onClick={onToggleExpand}
-          className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+          className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
         >
-          {isExpanded ? '收起 ▼' : '展开 ▶'}
+          <span>{isExpanded ? '收起' : '展开'}</span>
+          {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         </button>
       </div>
 
@@ -154,8 +151,9 @@ const ThinkingChainDisplay: React.FC<ThinkingChainDisplayProps> = ({
             {/* Sources preview */}
             {sourcesCount > 0 && (
               <div className="mb-3">
-                <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                  📚 参考资料: {sourcesCount}个片段
+                <div className="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  <BookOpen className="w-3 h-3" />
+                  <span>参考资料: {sourcesCount}个片段</span>
                 </div>
               </div>
             )}
@@ -203,13 +201,7 @@ export const ThinkingChainIndicator: React.FC<{
 
   return (
     <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
-      <motion.span
-        animate={{ rotate: 360 }}
-        transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-        className="inline-block"
-      >
-        ⏳
-      </motion.span>
+      <Loader2 className="w-4 h-4 animate-spin" />
       <span>{phaseLabels[phase || 'analysis']}</span>
     </div>
   );

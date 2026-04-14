@@ -1,23 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ChatWindow from './ChatWindow';
-import ThinkingChainDisplay, { ThinkingChainIndicator } from './ThinkingChainDisplay';
+import DocumentManager from './DocumentManager';
 import PipelineTimeline from './PipelineTimeline';
 import ChunkExplorer from './ChunkExplorer';
 import RetrievalFlow from './RetrievalFlow';
 import StatsDashboard from './StatsDashboard';
-import { useConnectionStore, useDocumentStore, useChatStore } from '../store';
+import RetrievalResultPanel from './RetrievalResultPanel';
+import { useConnectionStore, useAppStore } from '../store';
 import { useWebSocketConnection } from '../hooks/useWebSocket';
 
-type MainTab = 'chat' | 'timeline' | 'chunks' | 'retrieval' | 'stats';
+type MainTab = 'documents' | 'chat' | 'timeline' | 'chunks' | 'retrieval' | 'stats';
 
 const mainTabs: Array<{ id: MainTab; label: string }> = [
-  { id: 'chat', label: 'Chat' },
+  { id: 'documents', label: '文档管理' },
+  { id: 'chat', label: '智能问答' },
   { id: 'timeline', label: '处理进度' },
   { id: 'chunks', label: '分块结构' },
   { id: 'retrieval', label: '检索过程' },
   { id: 'stats', label: '系统统计' },
 ];
+
+// Document type for selector
+interface Document {
+  id: string;
+  filename: string;
+  status: 'pending' | 'processing' | 'indexed' | 'error';
+}
 
 /**
  * Connection status indicator
@@ -48,81 +57,79 @@ const ConnectionIndicator: React.FC = () => {
 };
 
 /**
- * Quick upload component
+ * Document selector component for Chunks tab
  */
-const QuickUpload: React.FC = () => {
-  const { uploadDocument, isLoading } = useDocumentStore();
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+const DocumentSelector: React.FC<{
+  onNavigateToDocuments: () => void;
+}> = ({ onNavigateToDocuments }) => {
+  const { selectedDocumentId, setSelectedDocumentId } = useAppStore();
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      await uploadDocument(file);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+  useEffect(() => {
+    const loadDocuments = async () => {
+      try {
+        const response = await fetch('/api/documents');
+        const docs: Document[] = await response.json();
+        setDocuments(docs);
+      } catch {
+        // Error handling
+      } finally {
+        setIsLoading(false);
       }
-    }
+    };
+    loadDocuments();
+  }, []);
+
+  const statusLabels = {
+    pending: '等待中',
+    processing: '处理中',
+    indexed: '已索引',
+    error: '错误',
   };
 
   return (
-    <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-800">
-      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-        快速上传
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+        选择文档查看分块
       </h3>
-      <label className="block">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pdf,.txt,.md"
-          onChange={handleFileChange}
-          disabled={isLoading}
-          className="block w-full text-sm text-gray-500 dark:text-gray-400
-            file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0
-            file:text-xs file:font-medium
-            file:bg-blue-50 dark:file:bg-blue-900 file:text-blue-700 dark:file:text-blue-300
-            hover:file:bg-blue-100 dark:hover:file:bg-blue-800
-            disabled:opacity-50"
-        />
-      </label>
-    </div>
-  );
-};
-
-/**
- * Document list component (compact)
- */
-const DocumentList: React.FC = () => {
-  const { documents, fetchDocuments, isLoading } = useDocumentStore();
-
-  useEffect(() => {
-    fetchDocuments();
-  }, [fetchDocuments]);
-
-  return (
-    <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-800">
-      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-        文档列表 ({documents.length})
-      </h3>
-      <div className="space-y-1 max-h-40 overflow-y-auto">
-        {documents.slice(0, 5).map((doc) => (
-          <div key={doc.id} className="flex items-center justify-between text-xs p-1.5 rounded bg-white dark:bg-gray-700">
-            <span className="text-gray-900 dark:text-white truncate flex-1">
-              {doc.filename}
-            </span>
-            <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${
-              doc.status === 'indexed' ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' :
-              doc.status === 'processing' ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' :
-              doc.status === 'error' ? 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300' :
-              'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300'
-            }`}>
-              {doc.status}
-            </span>
+      <div className="space-y-2 max-h-96 overflow-y-auto">
+        {isLoading ? (
+          <div className="text-center py-4 text-gray-500 dark:text-gray-400">
+            加载中...
           </div>
-        ))}
-        {documents.length === 0 && (
-          <p className="text-xs text-gray-500 dark:text-gray-400 text-center py-2">
-            暂无文档
-          </p>
+        ) : documents.length === 0 ? (
+          <div className="text-center py-4 text-gray-500 dark:text-gray-400">
+            <p className="mb-2">暂无文档</p>
+            <button
+              onClick={onNavigateToDocuments}
+              className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400"
+            >
+              前往文档管理上传
+            </button>
+          </div>
+        ) : (
+          documents.map((doc) => (
+            <button
+              key={doc.id}
+              onClick={() => setSelectedDocumentId(doc.id)}
+              className={`w-full flex items-center justify-between p-2 rounded text-sm transition-colors ${
+                selectedDocumentId === doc.id
+                  ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
+                  : 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-900 dark:text-white'
+              }`}
+            >
+              <span className="truncate flex-1">{doc.filename}</span>
+              <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${
+                doc.status === 'indexed' ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' :
+                doc.status === 'processing' ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' :
+                doc.status === 'error' ? 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300' :
+                'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300'
+              }`}>
+                {statusLabels[doc.status]}
+              </span>
+            </button>
+          ))
         )}
       </div>
     </div>
@@ -131,7 +138,7 @@ const DocumentList: React.FC = () => {
 
 /**
  * VisualApp component
- * Main application with tab layout and left panel
+ * Main application with tab layout
  */
 const VisualApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<MainTab>(() => {
@@ -139,7 +146,8 @@ const VisualApp: React.FC = () => {
     const saved = localStorage.getItem('visualApp:activeTab');
     return (saved as MainTab) ?? 'chat';
   });
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+
+  const selectedDocumentId = useAppStore((state) => state.selectedDocumentId);
 
   // Connect WebSocket
   useWebSocketConnection();
@@ -148,6 +156,13 @@ const VisualApp: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('visualApp:activeTab', activeTab);
   }, [activeTab]);
+
+  // Tab animation variants
+  const tabVariants = {
+    initial: { opacity: 0, x: 20 },
+    animate: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: -20 },
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
@@ -166,12 +181,16 @@ const VisualApp: React.FC = () => {
         {/* Tabs */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow mb-4">
           <div className="border-b border-gray-200 dark:border-gray-700">
-            <nav className="flex -mb-px">
+            <nav className="flex -mb-px" role="tablist" aria-label="主导航">
               {mainTabs.map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`px-4 py-3 font-medium text-sm transition-colors ${
+                  role="tab"
+                  aria-selected={activeTab === tab.id}
+                  aria-controls={`tabpanel-${tab.id}`}
+                  tabIndex={activeTab === tab.id ? 0 : -1}
+                  className={`px-4 py-3 font-medium text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
                     activeTab === tab.id
                       ? 'text-blue-600 border-b-2 border-blue-600 dark:text-blue-400 dark:border-blue-400'
                       : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
@@ -184,51 +203,74 @@ const VisualApp: React.FC = () => {
           </div>
         </div>
 
-        {/* Split View layout for Chat tab */}
-        {activeTab === 'chat' ? (
-          <div className="grid grid-cols-12 gap-6">
-            {/* Chat area - left */}
-            <div className="col-span-8">
-              <ChatWindow />
-            </div>
-            {/* Analysis area - right */}
-            <div className="col-span-4 space-y-4">
-              <QuickUpload />
-              <DocumentList />
-            </div>
-          </div>
-        ) : (
-          /* Other tabs layout */
-          <div className="grid grid-cols-12 gap-6">
-            {/* Left panel */}
-            <div className="col-span-3 space-y-4">
-              <QuickUpload />
-              <DocumentList />
-            </div>
+        {/* Tab content */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            id={`tabpanel-${activeTab}`}
+            role="tabpanel"
+            aria-labelledby={activeTab}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            variants={tabVariants}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+          >
+            {/* Documents Tab - full width */}
+            {activeTab === 'documents' && (
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                <DocumentManager onNavigateToChunks={(docId) => setActiveTab('chunks')} />
+              </div>
+            )}
 
-            {/* Right panel - Main tabs */}
-            <div className="col-span-9">
-              <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-                <div className="p-4">
-                  <AnimatePresence mode="wait">
-                    <motion.div
-                      key={activeTab}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      {activeTab === 'timeline' && <PipelineTimeline />}
-                      {activeTab === 'chunks' && <ChunkExplorer documentId={selectedDocumentId ?? undefined} />}
-                      {activeTab === 'retrieval' && <RetrievalFlow />}
-                      {activeTab === 'stats' && <StatsDashboard />}
-                    </motion.div>
-                  </AnimatePresence>
+            {/* Chat Tab - Split View: Chat left, Retrieval results right */}
+            {activeTab === 'chat' && (
+              <div className="grid grid-cols-12 gap-6">
+                <div className="col-span-8">
+                  <ChatWindow />
+                </div>
+                <div className="col-span-4">
+                  <RetrievalResultPanel />
                 </div>
               </div>
-            </div>
-          </div>
-        )}
+            )}
+
+            {/* Timeline Tab - full width */}
+            {activeTab === 'timeline' && (
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                <PipelineTimeline />
+              </div>
+            )}
+
+            {/* Chunks Tab - Split View: Document list left, Chunks right */}
+            {activeTab === 'chunks' && (
+              <div className="grid grid-cols-12 gap-6">
+                <div className="col-span-4">
+                  <DocumentSelector onNavigateToDocuments={() => setActiveTab('documents')} />
+                </div>
+                <div className="col-span-8">
+                  <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                    <ChunkExplorer documentId={selectedDocumentId ?? undefined} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Retrieval Tab - full width */}
+            {activeTab === 'retrieval' && (
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                <RetrievalFlow />
+              </div>
+            )}
+
+            {/* Stats Tab - full width */}
+            {activeTab === 'stats' && (
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                <StatsDashboard />
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
       </main>
     </div>
   );

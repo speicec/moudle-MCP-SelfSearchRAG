@@ -410,3 +410,14 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
   disconnect: () => set({ status: 'disconnected' }),
   setStatus: (status: ConnectionStatus) => set({ status }),
 }));
+
+// App store for global UI state
+interface AppState {
+  selectedDocumentId: string | null;
+  setSelectedDocumentId: (id: string | null) => void;
+}
+
+export const useAppStore = create<AppState>((set) => ({
+  selectedDocumentId: null,
+  setSelectedDocumentId: (id) => set({ selectedDocumentId: id }),
+}));

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore, type RetrievalResult } from '../store';
 import ThinkingChainDisplay from './ThinkingChainDisplay';
+import { Brain, BookOpen, Loader2, ChevronRight, ChevronDown } from 'lucide-react';
 
 /**
  * Source card component - displays individual retrieval result
@@ -26,7 +27,9 @@ const SourceCard: React.FC<{
             {(result.similarityScore * 100).toFixed(0)}% 相似
           </span>
         </div>
-        <span className="text-xs text-gray-400">{expanded ? '▼' : '▶'}</span>
+        <span className="text-xs text-gray-400">
+        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+      </span>
       </div>
       {expanded && (
         <div className="mt-2 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto bg-gray-50 dark:bg-gray-800 p-2 rounded">
@@ -62,7 +65,7 @@ const StreamingIndicator: React.FC<{
       animate={{ opacity: 1 }}
       className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 mb-4"
     >
-      <span>⏳</span>
+      <Loader2 className="w-4 h-4 animate-spin" />
       <span>{phaseLabels[phase]}</span>
     </motion.div>
   );
@@ -117,7 +120,7 @@ const ChatWindow: React.FC = () => {
       <div className="p-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Chat
+            智能问答
           </h2>
           <button
             onClick={clearHistory}
@@ -129,7 +132,12 @@ const ChatWindow: React.FC = () => {
       </div>
 
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4 min-h-[300px]">
+      <div
+        className="flex-1 overflow-y-auto p-4 min-h-[300px] max-h-[700px]"
+        role="log"
+        aria-label="对话历史"
+        aria-live="polite"
+      >
         {messages.length === 0 && !isGenerating ? (
           <div className="text-center text-gray-500 dark:text-gray-400 py-8">
             <p className="mb-2">开始对话，询问关于文档的问题。</p>
@@ -159,8 +167,9 @@ const ChatWindow: React.FC = () => {
                             onClick={() => setThinkingExpanded(!thinkingExpanded)}
                             className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-2"
                           >
-                            <span>🧠 思考过程</span>
-                            <span className="text-xs">{thinkingExpanded ? '▼' : '▶'}</span>
+                            <Brain className="w-4 h-4" />
+                            <span>思考过程</span>
+                            <span className="text-xs">{thinkingExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}</span>
                           </button>
                           <AnimatePresence>
                             {thinkingExpanded && (
@@ -191,8 +200,9 @@ const ChatWindow: React.FC = () => {
                             onClick={() => setSourcesExpanded(!sourcesExpanded)}
                             className="flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-400"
                           >
-                            <span>📚 参考资料: {message.results.length}个片段</span>
-                            <span className="text-xs">{sourcesExpanded ? '▼' : '▶'}</span>
+                            <BookOpen className="w-4 h-4" />
+                            <span>参考资料: {message.results.length}个片段</span>
+                            <span className="text-xs">{sourcesExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}</span>
                           </button>
 
                           <AnimatePresence>
@@ -234,11 +244,12 @@ const ChatWindow: React.FC = () => {
                         onClick={() => setThinkingExpanded(!thinkingExpanded)}
                         className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-2"
                       >
-                        <span>🧠 思考过程</span>
+                        <Brain className="w-4 h-4" />
+                        <span>思考过程</span>
                         <span className="text-xs text-blue-500 font-medium">
                             实时
                           </span>
-                        <span className="text-xs">{thinkingExpanded ? '▼' : '▶'}</span>
+                        <span className="text-xs">{thinkingExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}</span>
                       </button>
                       <AnimatePresence>
                         {thinkingExpanded && (
@@ -248,12 +259,13 @@ const ChatWindow: React.FC = () => {
                             className="overflow-hidden"
                           >
                             <div className="bg-gray-50 dark:bg-gray-600 p-3 rounded text-sm text-gray-600 dark:text-gray-300 font-mono whitespace-pre-wrap">
-                              {currentThinking}
-                              <motion.span
-                                animate={{ opacity: [0, 1, 0] }}
-                                transition={{ duration: 0.5, repeat: Infinity }}
-                                className="inline-block w-1.5 h-3 bg-blue-500 ml-1"
-                              />
+                              // Streaming cursor animation - smooth gradient effect
+                      {currentThinking}
+                      <motion.span
+                        animate={{ opacity: [0.3, 1, 0.3] }}
+                        transition={{ duration: 0.8, repeat: Infinity, ease: 'easeInOut' }}
+                        className="inline-block w-1.5 h-3 bg-blue-500 ml-1 rounded-sm"
+                      />
                             </div>
                           </motion.div>
                         )}
@@ -264,11 +276,12 @@ const ChatWindow: React.FC = () => {
                   {/* Answer (real-time) */}
                   {(generationPhase === 'answer' || currentAnswer) && (
                     <div className="text-gray-900 dark:text-white whitespace-pre-wrap">
+                      // Streaming cursor animation for answer
                       {currentAnswer}
                       <motion.span
-                        animate={{ opacity: [0, 1, 0] }}
-                        transition={{ duration: 0.5, repeat: Infinity }}
-                        className="inline-block w-1.5 h-3 bg-blue-500 ml-1"
+                        animate={{ opacity: [0.3, 1, 0.3] }}
+                        transition={{ duration: 0.8, repeat: Infinity, ease: 'easeInOut' }}
+                        className="inline-block w-1.5 h-3 bg-blue-500 ml-1 rounded-sm"
                       />
                     </div>
                   )}
@@ -276,8 +289,9 @@ const ChatWindow: React.FC = () => {
                   {/* Sources (real-time) */}
                   {currentSources.length > 0 && (
                     <div className="mt-3 pt-2 border-t border-gray-200 dark:border-gray-500">
-                      <div className="text-sm text-gray-500 dark:text-gray-400">
-                        📚 已检索: {currentSources.length}个片段
+                      <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                        <BookOpen className="w-4 h-4" />
+                        <span>已检索: {currentSources.length}个片段</span>
                       </div>
                     </div>
                   )}
@@ -305,13 +319,15 @@ const ChatWindow: React.FC = () => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="输入问题..."
+            aria-label="问题输入框"
             className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
             disabled={isLoading}
           />
           <button
             type="submit"
             disabled={isLoading || !input.trim()}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="发送问题"
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
             发送
           </button>

@@ -1,6 +1,8 @@
 import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { useStatsStore, useStatsStore as statsStore, type PerformanceIndicator } from '../store';
+import { useStatsStore, type PerformanceIndicator } from '../store';
+import { Check, Lightbulb, BarChart3, Database, Zap, FileText, Search, Clock } from 'lucide-react';
+import Skeleton, { SkeletonGroup } from './ui/Skeleton';
 
 /**
  * Performance indicator badge
@@ -79,7 +81,7 @@ const QualityDistributionChart: React.FC<{
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium text-gray-900 dark:text-white">Quality Distribution</h3>
+      <h3 className="text-sm font-medium text-gray-900 dark:text-white">质量分布</h3>
 
       {/* Bar chart */}
       <div className="flex items-center gap-1 h-8 rounded-lg overflow-hidden">
@@ -114,17 +116,17 @@ const QualityDistributionChart: React.FC<{
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1">
             <div className="w-3 h-3 rounded bg-green-500" />
-            <span className="text-gray-600 dark:text-gray-400">High (≥80%)</span>
+            <span className="text-gray-600 dark:text-gray-400">高 (≥80%)</span>
             <span className="font-medium text-gray-900 dark:text-white">{distribution.high}</span>
           </div>
           <div className="flex items-center gap-1">
             <div className="w-3 h-3 rounded bg-yellow-500" />
-            <span className="text-gray-600 dark:text-gray-400">Medium</span>
+            <span className="text-gray-600 dark:text-gray-400">中</span>
             <span className="font-medium text-gray-900 dark:text-white">{distribution.medium}</span>
           </div>
           <div className="flex items-center gap-1">
             <div className="w-3 h-3 rounded bg-red-500" />
-            <span className="text-gray-600 dark:text-gray-400">Low (&lt;50%)</span>
+            <span className="text-gray-600 dark:text-gray-400">低 (&lt;50%)</span>
             <span className="font-medium text-gray-900 dark:text-white">{distribution.low}</span>
           </div>
         </div>
@@ -141,17 +143,17 @@ const StageTimeChart: React.FC<{
 }> = ({ distribution }) => {
   const total = distribution.ingest + distribution.parse + distribution.embed + distribution.index;
   const stages = [
-    { name: 'Ingest', value: distribution.ingest, color: 'bg-amber-500' },
-    { name: 'Parse', value: distribution.parse, color: 'bg-violet-500' },
-    { name: 'Embed', value: distribution.embed, color: 'bg-blue-500' },
-    { name: 'Index', value: distribution.index, color: 'bg-green-500' },
+    { name: '导入', value: distribution.ingest, color: 'bg-amber-500' },
+    { name: '解析', value: distribution.parse, color: 'bg-violet-500' },
+    { name: '嵌入', value: distribution.embed, color: 'bg-blue-500' },
+    { name: '索引', value: distribution.index, color: 'bg-green-500' },
   ];
 
   const maxValue = Math.max(...stages.map(s => s.value));
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium text-gray-900 dark:text-white">Stage Time Distribution</h3>
+      <h3 className="text-sm font-medium text-gray-900 dark:text-white">阶段耗时分布</h3>
 
       {/* Bar chart */}
       <div className="space-y-2">
@@ -177,13 +179,22 @@ const StageTimeChart: React.FC<{
       {total > 0 && (
         <div className="p-2 rounded bg-gray-50 dark:bg-gray-800 text-xs text-gray-600 dark:text-gray-400">
           {distribution.embed > total * 0.5 && (
-            <span>💡 Embedding stage takes most time. Consider using a faster embedding model or caching.</span>
+            <span className="flex items-center gap-1">
+              <Lightbulb className="w-3 h-3" />
+              嵌入阶段耗时最长，建议使用更快的嵌入模型或启用缓存。
+            </span>
           )}
           {distribution.parse > total * 0.5 && (
-            <span>💡 Parsing takes most time. Consider optimizing document size or using batch processing.</span>
+            <span className="flex items-center gap-1">
+              <Lightbulb className="w-3 h-3" />
+              解析阶段耗时最长，建议优化文档大小或使用批量处理。
+            </span>
           )}
           {total > 0 && distribution.embed <= total * 0.5 && distribution.parse <= total * 0.5 && (
-            <span>✓ Stage times are well-balanced.</span>
+            <span className="flex items-center gap-1">
+              <Check className="w-3 h-3 text-green-500" />
+              各阶段耗时均衡，运行状态良好。
+            </span>
           )}
         </div>
       )}
@@ -219,12 +230,30 @@ const StatsDashboard: React.FC = () => {
 
   if (isLoading && lastUpdate === null) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-          className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full"
-        />
+      <div className="space-y-6">
+        {/* Header skeleton */}
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-6 w-24" />
+          <Skeleton className="h-4 w-32" />
+        </div>
+        {/* Pipeline stats skeleton */}
+        <div className="grid grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonGroup key={i} type="stat-card" />
+          ))}
+        </div>
+        {/* Retrieval stats skeleton */}
+        <div className="grid grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonGroup key={i} type="stat-card" />
+          ))}
+        </div>
+        {/* Chunk stats skeleton */}
+        <div className="grid grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <SkeletonGroup key={i} type="stat-card" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -242,91 +271,102 @@ const StatsDashboard: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-          System Statistics
+          系统统计
         </h2>
         {lastUpdate && (
           <span className="text-xs text-gray-500 dark:text-gray-400">
-            Last updated: {new Date(lastUpdate).toLocaleTimeString()}
+            最后更新：{new Date(lastUpdate).toLocaleTimeString('zh-CN')}
           </span>
         )}
       </div>
 
       {/* Pipeline Stats */}
       <div>
-        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Pipeline Performance</h3>
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">管线性能</h3>
         <div className="grid grid-cols-4 gap-4">
           <StatCard
-            title="Documents Processed"
+            title="已处理文档"
             value={pipelineStats.totalDocumentsProcessed}
-            subtitle="Total processed"
+            subtitle="总处理数"
+            icon={<FileText className="w-4 h-4 text-gray-500" />}
           />
           <StatCard
-            title="Avg. Processing Time"
+            title="平均处理时间"
             value={`${(pipelineStats.averageProcessingTimeMs / 1000).toFixed(2)}s`}
-            subtitle="Per document"
+            subtitle="每个文档"
             indicator={pipelinePerformance}
+            icon={<Clock className="w-4 h-4 text-gray-500" />}
           />
           <StatCard
-            title="Total Chunks"
+            title="总分块数"
             value={pipelineStats.totalChunksCreated}
-            subtitle="All documents"
+            subtitle="所有文档"
+            icon={<Database className="w-4 h-4 text-gray-500" />}
           />
           <StatCard
-            title="Avg. Chunks/Doc"
+            title="平均分块/文档"
             value={pipelineStats.averageChunksPerDocument.toFixed(1)}
-            subtitle="Per document"
+            subtitle="每个文档"
+            icon={<BarChart3 className="w-4 h-4 text-gray-500" />}
           />
         </div>
       </div>
 
       {/* Retrieval Stats */}
       <div>
-        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Retrieval Performance</h3>
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">检索性能</h3>
         <div className="grid grid-cols-4 gap-4">
           <StatCard
-            title="Total Queries"
+            title="总查询数"
             value={retrievalStats.totalQueries}
-            subtitle="All time"
+            subtitle="累计"
+            icon={<Search className="w-4 h-4 text-gray-500" />}
           />
           <StatCard
-            title="Avg. Latency"
+            title="平均延迟"
             value={`${retrievalStats.averageRetrievalTimeMs.toFixed(0)}ms`}
-            subtitle="Per query"
+            subtitle="每次查询"
             indicator={retrievalPerformance}
+            icon={<Clock className="w-4 h-4 text-gray-500" />}
           />
           <StatCard
-            title="Avg. Results"
+            title="平均结果数"
             value={retrievalStats.averageResultsPerQuery.toFixed(1)}
-            subtitle="Per query"
+            subtitle="每次查询"
+            icon={<Database className="w-4 h-4 text-gray-500" />}
           />
           <StatCard
-            title="Success Rate"
+            title="成功率"
             value={`${(retrievalStats.successRate * 100).toFixed(0)}%`}
-            subtitle="Successful queries"
+            subtitle="成功查询"
             indicator={retrievalPerformance}
+            icon={<Check className="w-4 h-4 text-gray-500" />}
           />
         </div>
       </div>
 
       {/* Chunk Stats */}
       <div>
-        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Chunk Statistics</h3>
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">分块统计</h3>
         <div className="grid grid-cols-3 gap-4">
           <StatCard
-            title="Small Chunks"
+            title="小块数量"
             value={chunkStats.totalSmallChunks}
-            subtitle="For precise retrieval"
+            subtitle="精确检索用"
+            icon={<Zap className="w-4 h-4 text-gray-500" />}
           />
           <StatCard
-            title="Parent Chunks"
+            title="父块数量"
             value={chunkStats.totalParentChunks}
-            subtitle="For full context"
+            subtitle="完整上下文"
+            icon={<Database className="w-4 h-4 text-gray-500" />}
           />
           <StatCard
-            title="Avg. Quality Score"
+            title="平均质量评分"
             value={`${(chunkStats.averageQualityScore * 100).toFixed(0)}%`}
-            subtitle="All chunks"
+            subtitle="所有分块"
             indicator={chunkQualityPerformance}
+            icon={<BarChart3 className="w-4 h-4 text-gray-500" />}
           />
         </div>
       </div>

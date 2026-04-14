@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChunkStore, type ChunkItem } from '../store';
 import ChunkDetailModal from './ChunkDetailModal';
+import { ChevronRight, ChevronDown, Grid, List, ArrowUp, ArrowDown, ChevronLeft } from 'lucide-react';
+import Skeleton, { SkeletonGroup } from './ui/Skeleton';
 
 type ViewMode = 'tree' | 'grid';
 type SortBy = 'position' | 'qualityScore' | 'tokenCount';
@@ -21,7 +23,8 @@ const ChunkCard: React.FC<{
       initial={isNew ? { opacity: 0, scale: 0.9 } : false}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3 }}
-      whileHover={{ scale: 1.02 }}
+      whileHover={{ scale: 1.02, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+      whileTap={{ scale: 0.98 }}
       className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
         chunk.level === 'parent'
           ? 'border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/30'
@@ -36,10 +39,10 @@ const ChunkCard: React.FC<{
             ? 'bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
             : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
         }`}>
-          {chunk.level === 'parent' ? 'Parent' : 'Small'}
+          {chunk.level === 'parent' ? '父块' : '小块'}
         </span>
         <span className="text-xs text-gray-500 dark:text-gray-400">
-          {chunk.tokenCount} tokens
+          {chunk.tokenCount} 词
         </span>
       </div>
 
@@ -51,7 +54,7 @@ const ChunkCard: React.FC<{
       {/* Quality score */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-gray-500 dark:text-gray-400">
-          Quality: {(chunk.qualityScore * 100).toFixed(0)}%
+          质量：{(chunk.qualityScore * 100).toFixed(0)}%
         </span>
         <div className="w-20 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full">
           <div
@@ -90,15 +93,12 @@ const TreeNode: React.FC<{
       >
         {/* Expand/collapse icon */}
         {hasChildren && (
-          <motion.svg
+          <motion.div
             animate={{ rotate: isExpanded ? 90 : 0 }}
             className="w-4 h-4 text-gray-500"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </motion.svg>
+            <ChevronRight className="w-4 h-4" />
+          </motion.div>
         )}
         {!hasChildren && (
           <div className="w-4 h-4 flex items-center justify-center">
@@ -233,33 +233,49 @@ const ChunkExplorer: React.FC<{
     setSelectedChunk(chunk);
   }, []);
 
+  // Empty state - no document selected
+  if (!documentId) {
+    return (
+      <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+        <p className="mb-4">请在左侧选择一个文档查看分块结构</p>
+        <p className="text-sm">如果左侧列表为空，请先在「文档管理」Tab上传文档</p>
+      </div>
+    );
+  }
+
+  // Empty state - document selected but no chunks
+  if (chunks.length === 0 && !isLoading) {
+    return (
+      <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+        <p className="mb-4">该文档暂无分块数据</p>
+        <p className="text-sm">文档可能正在处理中，请稍后刷新</p>
+      </div>
+    );
+  }
+
   // Loading state
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-          className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full"
-        />
-      </div>
-    );
-  }
-
-  // Error state
-  if (error) {
-    return (
-      <div className="p-4 rounded-lg bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700">
-        <p className="text-red-600 dark:text-red-400">{error}</p>
-      </div>
-    );
-  }
-
-  // Empty state
-  if (chunks.length === 0) {
-    return (
-      <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-        No chunks available. Upload a document to see chunks.
+      <div className="space-y-4">
+        {/* Toolbar skeleton */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-8 w-20" />
+            <Skeleton className="h-8 w-20" />
+          </div>
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-8 w-8" />
+          </div>
+        </div>
+        {/* Stats skeleton */}
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-4 w-32" />
+        </div>
+        {/* Grid skeleton */}
+        <SkeletonGroup type="chunk-grid" count={8} />
       </div>
     );
   }
@@ -272,23 +288,25 @@ const ChunkExplorer: React.FC<{
         <div className="flex items-center gap-2">
           <button
             onClick={() => setViewMode('grid')}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium ${
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium ${
               viewMode === 'grid'
                 ? 'bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
                 : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
             }`}
           >
-            Grid
+            <Grid className="w-4 h-4" />
+            网格
           </button>
           <button
             onClick={() => setViewMode('tree')}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium ${
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium ${
               viewMode === 'tree'
                 ? 'bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
                 : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
             }`}
           >
-            Tree
+            <List className="w-4 h-4" />
+            树状
           </button>
         </div>
 
@@ -300,9 +318,9 @@ const ChunkExplorer: React.FC<{
             onChange={(e) => setLevelFilter(e.target.value as LevelFilter)}
             className="px-2 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
           >
-            <option value="all">All Levels</option>
-            <option value="small">Small Only</option>
-            <option value="parent">Parent Only</option>
+            <option value="all">全部层级</option>
+            <option value="small">小块</option>
+            <option value="parent">父块</option>
           </select>
 
           {/* Sort by */}
@@ -311,25 +329,25 @@ const ChunkExplorer: React.FC<{
             onChange={(e) => setSortBy(e.target.value as SortBy)}
             className="px-2 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
           >
-            <option value="position">Position</option>
-            <option value="qualityScore">Quality</option>
-            <option value="tokenCount">Tokens</option>
+            <option value="position">位置</option>
+            <option value="qualityScore">质量</option>
+            <option value="tokenCount">词数</option>
           </select>
 
           {/* Sort order */}
           <button
             onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-            className="px-2 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
           >
-            {sortOrder === 'asc' ? '↑ Asc' : '↓ Desc'}
+            {sortOrder === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
           </button>
         </div>
       </div>
 
       {/* Stats */}
       <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
-        <span>{pagination.total} chunks total</span>
-        <span>Page {pagination.page} of {pagination.totalPages}</span>
+        <span>共 {pagination.total} 个分块</span>
+        <span>第 {pagination.page} 页，共 {pagination.totalPages} 页</span>
       </div>
 
       {/* Content */}
@@ -342,13 +360,19 @@ const ChunkExplorer: React.FC<{
             exit={{ opacity: 0 }}
             className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
           >
-            {chunks.map((chunk) => (
-              <ChunkCard
+            {chunks.map((chunk, index) => (
+              <motion.div
                 key={chunk.id}
-                chunk={chunk}
-                onViewDetails={handleViewDetails}
-                isNew={newChunks.some(c => c.id === chunk.id)}
-              />
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.05, duration: 0.2 }}
+              >
+                <ChunkCard
+                  chunk={chunk}
+                  onViewDetails={handleViewDetails}
+                  isNew={newChunks.some(c => c.id === chunk.id)}
+                />
+              </motion.div>
             ))}
           </motion.div>
         ) : (
@@ -390,19 +414,21 @@ const ChunkExplorer: React.FC<{
         <button
           onClick={() => setPage(pagination.page - 1)}
           disabled={pagination.page <= 1}
-          className="px-3 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50"
+          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50"
         >
-          Previous
+          <ChevronLeft className="w-4 h-4" />
+          上一页
         </button>
         <span className="text-sm text-gray-700 dark:text-gray-300">
-          {pagination.page}
+          {pagination.page} / {pagination.totalPages}
         </span>
         <button
           onClick={() => setPage(pagination.page + 1)}
           disabled={pagination.page >= pagination.totalPages}
-          className="px-3 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50"
+          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50"
         >
-          Next
+          下一页
+          <ChevronRight className="w-4 h-4" />
         </button>
       </div>
 

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRetrievalStore, useChatStore } from '../store';
+import { Check, Loader2, ArrowDown, ArrowRight } from 'lucide-react';
+import Skeleton from './ui/Skeleton';
 
 /**
  * Step card component for retrieval flow visualization
@@ -31,16 +33,10 @@ const StepCard: React.FC<{
             : 'bg-gray-300 dark:bg-gray-600 text-gray-500'
         }`}>
           {status === 'completed' && (
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
+            <Check className="w-4 h-4" />
           )}
           {status === 'active' && (
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-              className="w-3 h-3 border-2 border-white border-t-transparent rounded-full"
-            />
+            <Loader2 className="w-4 h-4 animate-spin" />
           )}
         </div>
         <h3 className="font-medium text-gray-900 dark:text-white">{title}</h3>
@@ -62,22 +58,18 @@ const QueryEmbedding: React.FC<{
     <div className="space-y-3">
       {/* Original query */}
       <div className="p-2 rounded bg-gray-100 dark:bg-gray-800 text-sm">
-        <span className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Query Text</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400 block mb-1">查询文本</span>
         <span className="text-gray-900 dark:text-white">{query}</span>
       </div>
 
       {/* Arrow */}
       <div className="flex justify-center">
-        <motion.svg
+        <motion.div
           animate={isActive ? { y: [0, 5, 0] } : {}}
           transition={{ duration: 0.5, repeat: isActive ? Infinity : 0 }}
-          className="w-6 h-6 text-gray-400"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-        </motion.svg>
+          <ArrowDown className="w-6 h-6 text-gray-400" />
+        </motion.div>
       </div>
 
       {/* Embedding process */}
@@ -99,7 +91,7 @@ const QueryEmbedding: React.FC<{
           animate={{ opacity: 1, y: 0 }}
           className="p-2 rounded bg-blue-100 dark:bg-blue-900/50 text-sm"
         >
-          <span className="text-xs text-blue-600 dark:text-blue-400 block mb-1">Vector (768-dim)</span>
+          <span className="text-xs text-blue-600 dark:text-blue-400 block mb-1">向量 (768维)</span>
           <span className="font-mono text-xs text-blue-900 dark:text-blue-100">
             [0.23, -0.45, 0.12, ...]
           </span>
@@ -238,20 +230,17 @@ const ParentExpansion: React.FC<{
           </div>
 
           {/* Arrow */}
-          <motion.svg
+          <motion.div
             animate={isActive ? { x: [0, 5, 0] } : {}}
             transition={{ duration: 0.5, repeat: isActive ? Infinity : 0 }}
-            className="w-5 h-5 text-blue-500 mt-2"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+            className="mt-2"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-          </motion.svg>
+            <ArrowRight className="w-5 h-5 text-blue-500" />
+          </motion.div>
 
           {/* Parent chunk */}
           <div className="flex-1 px-2 py-1 rounded text-xs bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700">
-            Parent: {parentId.slice(0, 8)}...
+            父块: {parentId.slice(0, 8)}...
           </div>
         </motion.div>
       ))}
@@ -280,7 +269,7 @@ const RetrievalFlow: React.FC = () => {
   if (!currentQuery && messages.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-        Submit a query to see the retrieval flow visualization.
+        发送问题后查看检索流程可视化。
       </div>
     );
   }
@@ -293,18 +282,18 @@ const RetrievalFlow: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-          Retrieval Flow
+          检索流程
         </h2>
         {duration && (
           <span className="text-sm text-gray-500 dark:text-gray-400">
-            Completed in {duration}ms
+            完成耗时 {duration}ms
           </span>
         )}
       </div>
 
       {/* Query display */}
       <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
-        <span className="text-sm text-gray-500 dark:text-gray-400 block mb-1">Current Query</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400 block mb-1">当前查询</span>
         <p className="text-gray-900 dark:text-white font-medium">{displayQuery}</p>
       </div>
 
@@ -312,7 +301,7 @@ const RetrievalFlow: React.FC = () => {
       <div className="space-y-4">
         {/* Step 1: Embedding */}
         <StepCard
-          title="1. Query Embedding"
+          title="1. 查询向量化"
           status={
             currentStep === 'embedding' ? 'active' :
             currentStep === 'searching' || currentStep === 'expanding' || currentStep === 'complete' ? 'completed' : 'pending'
@@ -327,7 +316,7 @@ const RetrievalFlow: React.FC = () => {
 
         {/* Step 2: Similarity Search */}
         <StepCard
-          title="2. Similarity Search"
+          title="2. 相似度搜索"
           status={
             currentStep === 'searching' ? 'active' :
             currentStep === 'expanding' || currentStep === 'complete' ? 'completed' : 'pending'
@@ -341,7 +330,7 @@ const RetrievalFlow: React.FC = () => {
 
         {/* Step 3: Parent Expansion */}
         <StepCard
-          title="3. Parent Expansion"
+          title="3. 父块展开"
           status={
             currentStep === 'expanding' ? 'active' :
             currentStep === 'complete' ? 'completed' : 'pending'
@@ -363,7 +352,7 @@ const RetrievalFlow: React.FC = () => {
             className="space-y-2"
           >
             <h3 className="text-sm font-medium text-gray-900 dark:text-white">
-              Retrieved Results ({results.length})
+              检索结果 ({results.length}个)
             </h3>
             <div className="space-y-2">
               {results.map((result, index) => (
@@ -379,7 +368,7 @@ const RetrievalFlow: React.FC = () => {
                     <span className={`text-xs font-medium ${
                       result.similarityScore >= 0.8 ? 'text-green-600' : result.similarityScore >= 0.5 ? 'text-yellow-600' : 'text-red-600'
                     }`}>
-                      {(result.similarityScore * 100).toFixed(0)}% similar
+                      {(result.similarityScore * 100).toFixed(0)}% 相似度
                     </span>
                   </div>
                   <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-2">
