@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 data/
+data/store
+data/documents
+
+
 # IDE
 .vscode/
 .idea/
