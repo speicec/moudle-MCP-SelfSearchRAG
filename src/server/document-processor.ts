@@ -12,6 +12,7 @@ import { PipelineEmitter } from './pipeline-emitter.js';
 import { WebSocketHandler } from './websocket-handler.js';
 import { HierarchicalStore } from '../chunking/hierarchical-store.js';
 import { createHierarchicalChunk, createDefaultQualityScore } from '../chunking/types.js';
+import { ChunkQualityFilter, createChunkQualityFilter, aggregateEmbeddings } from '../chunking/index.js';
 import type { Harness } from '../core/harness.js';
 import { PluginRegistry } from '../core/plugin.js';
 import type { TextChunk, EmbeddingResult } from '../core/context.js';
@@ -191,8 +192,38 @@ async function storeInHierarchical(
   store: HierarchicalStore,
   emitter: PipelineEmitter
 ): Promise<void> {
+  // Create quality filter with default config
+  const qualityFilter = createChunkQualityFilter();
+
+  // Collect all chunk embeddings before creating hierarchical chunks
+  const allEmbeddings: number[][] = [];
+  for (const chunk of chunks) {
+    if (!chunk) continue;
+    const matchingEmbedding = embeddings.find(e => e.chunkId === chunk.id);
+    if (matchingEmbedding?.vector && matchingEmbedding.vector.length > 0) {
+      allEmbeddings.push(matchingEmbedding.vector);
+    }
+  }
+
+  // Aggregate embeddings to compute document embedding
+  const docEmbedding = aggregateEmbeddings(allEmbeddings);
+
+  // Log document embedding computation
+  console.log(`[QualityFilter] Document ${documentId}: computed embedding (dimension: ${docEmbedding.length})`);
+
+  // Set document embedding for relevance calculation
+  qualityFilter.setDocumentEmbedding(documentId, docEmbedding);
+
   const hierarchicalChunks: import('../chunking/types.js').HierarchicalChunk[] = [];
   const BATCH_SIZE = 10;
+
+  // Quality statistics tracking
+  let totalComposite = 0;
+  let totalInfoDensity = 0;
+  let totalRepRatio = 0;
+  let totalSemantic = 0;
+  let totalRelevance = 0;
+  let evaluatedCount = 0;
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
@@ -201,7 +232,7 @@ async function storeInHierarchical(
     const matchingEmbedding = embeddings.find(e => e.chunkId === chunk.id);
     const embeddingVector = matchingEmbedding?.vector ?? [];
 
-    // Create a small hierarchical chunk
+    // Create a small hierarchical chunk with placeholder score
     const hierarchicalChunk = createHierarchicalChunk(
       chunk.text,
       embeddingVector,
@@ -220,6 +251,18 @@ async function storeInHierarchical(
       hierarchicalChunk.metadata.pageNumber = chunk.pageNumber;
     }
 
+    // Evaluate quality score with the quality filter
+    const evaluatedScore = qualityFilter.evaluate(hierarchicalChunk);
+    hierarchicalChunk.qualityScore = evaluatedScore;
+
+    // Track statistics
+    totalComposite += evaluatedScore.composite;
+    totalInfoDensity += evaluatedScore.dimensions.informationDensity;
+    totalRepRatio += evaluatedScore.dimensions.repetitionRatio;
+    totalSemantic += evaluatedScore.dimensions.semanticCompleteness;
+    totalRelevance += evaluatedScore.dimensions.documentRelevance;
+    evaluatedCount++;
+
     hierarchicalChunks.push(hierarchicalChunk);
     store.addChunk(hierarchicalChunk);
 
@@ -236,6 +279,21 @@ async function storeInHierarchical(
       };
       emitter.emitChunkCreated(chunkData, i + 1);
     }
+  }
+
+  // Log quality evaluation results
+  if (evaluatedCount > 0) {
+    const avgComposite = totalComposite / evaluatedCount;
+    const avgInfoDensity = totalInfoDensity / evaluatedCount;
+    const avgRepRatio = totalRepRatio / evaluatedCount;
+    const avgSemantic = totalSemantic / evaluatedCount;
+    const avgRelevance = totalRelevance / evaluatedCount;
+    console.log(`[QualityFilter] Document ${documentId}: evaluated ${evaluatedCount} chunks`);
+    console.log(`[QualityFilter]   avg composite: ${avgComposite.toFixed(3)}`);
+    console.log(`[QualityFilter]   avg infoDensity: ${avgInfoDensity.toFixed(3)}`);
+    console.log(`[QualityFilter]   avg repRatio: ${avgRepRatio.toFixed(3)}`);
+    console.log(`[QualityFilter]   avg semantic: ${avgSemantic.toFixed(3)}`);
+    console.log(`[QualityFilter]   avg relevance: ${avgRelevance.toFixed(3)}`);
   }
 
   // Build hierarchy from small chunks

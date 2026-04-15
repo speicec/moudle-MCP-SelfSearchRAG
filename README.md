@@ -132,6 +132,29 @@ When configured, the Chat Tab will:
 2. Generate intelligent answers using DeepSeek (Phase 2)
 3. Display thinking chain visualization during generation
 
+### Image PDF Processing
+
+The system can process **pure image PDFs** (scanned documents without text layers) using OCR:
+
+```bash
+# OCR Service URL (required for image PDFs)
+OCR_SERVICE_URL=http://localhost:8080
+
+# VLM Enhancement (optional - for deep understanding of tables/charts)
+DASHSCOPE_API_KEY=your-dashscope-api-key-here
+```
+
+**Setup:**
+1. Install OCR dependencies: `pip install paddlepaddle paddleocr fastapi uvicorn python-multipart pillow numpy`
+2. Start OCR service: `python scripts/ocr_service.py --host 0.0.0.0 --port 8080`
+3. Set `OCR_SERVICE_URL` in your `.env` file
+
+When enabled:
+- Pure image PDFs are automatically detected and processed via OCR
+- OCR outputs include layout analysis (bbox coordinates preserved)
+- Tables, charts, and formulas can be enhanced with VLM understanding
+- See [docs/image-pdf-config.md](docs/image-pdf-config.md) for details
+
 ### Supported Image Formats
 
 - PNG

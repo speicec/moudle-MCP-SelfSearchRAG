@@ -25,7 +25,15 @@
       "Bash(node -e ':*)",
       "Bash(node:*)",
       "Bash(wmic process:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(npm search:*)",
+      "Bash(ls -la openspec/)",
+      "Bash(mkdir -p openspec)",
+      "Bash(ls -la dist/parsers/*.js)",
+      "Bash(ls -la dist/server/services/*.js)",
+      "Bash(pip list:*)",
+      "Bash(uv pip:*)",
+      "Bash(ls -la D:/WebstormProjects/RAG/MY-RAG-MCP-SERVER/src/parsers/*.test.ts)"
     ]
   }
 }

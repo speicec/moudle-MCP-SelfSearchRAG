@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { vlmEnhancementService, type VlmEnhanceRequest, type VlmStreamEvent } from './VlmEnhancementService.js';
 
 /**
  * LLM Generation Service configuration
@@ -19,6 +20,18 @@ export interface GenerationRequest {
     content: string;
     similarityScore: number;
     sourceId: string;
+  }>;
+}
+
+/**
+ * 多模态生成请求（扩展）
+ */
+export interface MultimodalGenerationRequest extends GenerationRequest {
+  imageContexts?: Array<{
+    base64: string;
+    blockType: 'table' | 'figure' | 'formula' | 'mixed';
+    sourcePage: number;
+    ocrText?: string;         // OCR已识别的文本
   }>;
 }
 
@@ -363,6 +376,132 @@ ${referenceSection}
         answer: error instanceof Error ? error.message : 'Unknown error',
       };
     }
+  }
+
+  /**
+   * 构建多模态上下文
+   */
+  private buildMultimodalContext(
+    textContext: string,
+    imageContexts: string[]
+  ): string {
+    let context = textContext;
+
+    if (imageContexts.length > 0) {
+      context += '\n\n--- 图片内容理解 ---\n\n';
+      context += imageContexts.join('\n\n');
+    }
+
+    return context;
+  }
+
+  /**
+   * 构建多模态Prompt
+   */
+  private constructMultimodalPrompt(
+    request: MultimodalGenerationRequest,
+    fullContext: string
+  ): string {
+    const { query } = request;
+
+    const prompt = `用户问题: ${query}
+
+参考资料（包含文本和图片理解）:
+${fullContext}
+
+请综合文本资料和图片理解结果回答用户问题。
+- 如果问题涉及图片内容，请结合图片理解结果回答
+- 如果参考资料中没有相关信息，请说明无法回答
+- 回答要准确、简洁、有条理
+- 可以引用来源页码`;
+
+    return prompt;
+  }
+
+  /**
+   * 多模态生成答案（文本 + 图片）
+   */
+  async generateMultimodalAnswer(
+    request: MultimodalGenerationRequest,
+    broadcast: (event: GenerationEvent) => void
+  ): Promise<{ thinking: string; answer: string; duration: number }> {
+    if (!this.enabled || !this.config) {
+      broadcast({
+        type: 'generation:error',
+        error: 'LLM generation not configured - missing DEEPSEEK_API_KEY',
+        timestamp: Date.now(),
+      });
+      return { thinking: '', answer: '', duration: 0 };
+    }
+
+    const startTime = Date.now();
+
+    // Step 1: 处理图片上下文（如果VLM可用）
+    const enhancedImageContexts: string[] = [];
+
+    if (request.imageContexts?.length && vlmEnhancementService.isEnabled()) {
+      broadcast({
+        type: 'generation:start',
+        phase: 'analysis',
+        query: request.query,
+        sourcesCount: request.sources.length,
+        timestamp: startTime,
+      });
+
+      // 对每个图片块进行VLM增强
+      for (const imgCtx of request.imageContexts) {
+        const vlmRequest: VlmEnhanceRequest = {
+          imageBase64: imgCtx.base64,
+          blockType: imgCtx.blockType,
+          userQuery: request.query,
+          ...(imgCtx.ocrText ? { contextText: imgCtx.ocrText } : {}),
+        };
+
+        const vlmResult = await vlmEnhancementService.enhanceWithStreaming(
+          vlmRequest,
+          (event: VlmStreamEvent) => {
+            // 将VLM事件转换为GenerationEvent
+            if (event.type === 'vlm:thinking') {
+              broadcast({
+                type: 'generation:thinking',
+                phase: 'analysis',
+                thinkingContent: event.content ?? '',
+                timestamp: event.timestamp,
+              });
+            } else if (event.type === 'vlm:answer') {
+              broadcast({
+                type: 'generation:answer',
+                phase: 'analysis',
+                answerContent: `[图片理解] ${event.content ?? ''}`,
+                timestamp: event.timestamp,
+              });
+            }
+          }
+        );
+
+        if (vlmResult.answer && !vlmResult.answer.includes('VLM enhancement failed')) {
+          enhancedImageContexts.push(
+            `[第${imgCtx.sourcePage}页 ${imgCtx.blockType}]\n${vlmResult.answer}`
+          );
+        }
+      }
+    }
+
+    // Step 2: 整合文本上下文和图片理解结果
+    const fullContext = this.buildMultimodalContext(
+      request.context,
+      enhancedImageContexts
+    );
+
+    // Step 3: 使用DeepSeek生成最终答案
+    const enhancedRequest: GenerationRequest = {
+      query: request.query,
+      context: fullContext,
+      sources: request.sources,
+    };
+
+    // 调用原有的generateWithStreaming方法
+    return this.generateWithStreaming(enhancedRequest, broadcast);
   }
 }
 

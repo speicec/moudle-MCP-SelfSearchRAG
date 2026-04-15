@@ -8,6 +8,7 @@ import { PDFImageExtractor, createImageExtractor } from './image-extractor.js';
 import { PDFFormulaExtractor, createFormulaExtractor } from './formula-extractor.js';
 import { PDFLayoutAnalyzer, createLayoutAnalyzer } from './layout-analyzer.js';
 import { PageSegmenter, createPageSegmenter } from './page-segmenter.js';
+import { ImagePdfProcessor, createImagePdfProcessor, DEFAULT_IMAGE_PDF_CONFIG } from './image-pdf-processor.js';
 import { ProcessingState as State } from '../core/context.js';
 
 /**
@@ -20,6 +21,7 @@ export class ParsePlugin extends BasePlugin {
   private formulaExtractor: PDFFormulaExtractor;
   private layoutAnalyzer: PDFLayoutAnalyzer;
   private pageSegmenter: PageSegmenter;
+  private imagePdfProcessor: ImagePdfProcessor | null = null;
 
   constructor() {
     super('parse');
@@ -29,6 +31,29 @@ export class ParsePlugin extends BasePlugin {
     this.formulaExtractor = createFormulaExtractor();
     this.layoutAnalyzer = createLayoutAnalyzer();
     this.pageSegmenter = createPageSegmenter();
+
+    // 初始化图片PDF处理器（如果OCR服务已配置）
+    this.initImagePdfProcessor();
+  }
+
+  /**
+   * 初始化图片PDF处理器
+   */
+  private initImagePdfProcessor(): void {
+    const ocrServiceUrl = process.env.OCR_SERVICE_URL;
+
+    if (ocrServiceUrl) {
+      console.log(`[ParsePlugin] Image PDF processor enabled, OCR service: ${ocrServiceUrl}`);
+      // 使用默认配置，仅覆盖OCR服务URL
+      this.imagePdfProcessor = createImagePdfProcessor({
+        ocr: {
+          ...DEFAULT_IMAGE_PDF_CONFIG.ocr,
+          serviceUrl: ocrServiceUrl,
+        },
+      });
+    } else {
+      console.log('[ParsePlugin] Image PDF processor disabled (OCR_SERVICE_URL not set)');
+    }
   }
 
   /**
@@ -130,15 +155,46 @@ export class ParsePlugin extends BasePlugin {
       const totalText = textResults.reduce((sum, r) => sum + r.totalCharacters, 0);
       console.log(`[ParsePlugin] Total text extracted: ${(totalText / 1024).toFixed(2)} KB`);
 
+      // ========================================
+      // 检测纯图片PDF：使用OCR流程处理
+      // ========================================
       if (totalText === 0) {
-        console.warn('[ParsePlugin] No text extracted from PDF. The document may be image-based or encrypted.');
-        ctx.addError({
-          stage: 'parse',
-          plugin: this.name,
-          message: 'No text could be extracted from the PDF. The document may be image-based, encrypted, or corrupted.',
-          recoverable: false,
-        });
-        return ctx;
+        console.warn('[ParsePlugin] No text extracted from PDF. The document appears to be image-based.');
+
+        // 尝试使用图片PDF处理器
+        if (this.imagePdfProcessor) {
+          console.log('[ParsePlugin] Attempting image-based PDF processing with OCR...');
+
+          try {
+            const parsedContent = await this.imagePdfProcessor.process(content);
+            ctx.set('parsedContent', parsedContent);
+            ctx.setState(State.PARSING);
+
+            console.log(`[ParsePlugin] Image-based PDF processing successful: ${parsedContent.pages.length} pages`);
+            return ctx;
+
+          } catch (ocrError) {
+            const errorMsg = ocrError instanceof Error ? ocrError.message : 'OCR processing failed';
+            console.error(`[ParsePlugin] Image-based PDF processing failed: ${errorMsg}`);
+
+            ctx.addError({
+              stage: 'parse',
+              plugin: this.name,
+              message: `Image-based PDF processing failed: ${errorMsg}. Document may be encrypted or corrupted.`,
+              recoverable: false,
+            });
+            return ctx;
+          }
+        } else {
+          // OCR服务未配置
+          ctx.addError({
+            stage: 'parse',
+            plugin: this.name,
+            message: 'No text could be extracted from the PDF. The document appears to be image-based, but OCR service is not configured. Please set OCR_SERVICE_URL environment variable.',
+            recoverable: false,
+          });
+          return ctx;
+        }
       }
 
       // Build page contents
