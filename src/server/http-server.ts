@@ -11,6 +11,7 @@ import { chatRoutes } from './routes/chat.js';
 import { statsRoutes } from './routes/stats.js';
 import { WebSocketHandler } from './websocket-handler.js';
 import { HierarchicalStore } from '../chunking/hierarchical-store.js';
+import { ImageStore, createImageStore } from '../chunking/image-store.js';
 import { getEmbeddingFactory, getEmbeddingMode } from '../embedding/embedding-factory.js';
 import { TextEmbeddingService } from '../embedding/embedding-service.js';
 import { StatsAggregationService, createStatsAggregationService } from './stats-aggregation-service.js';
@@ -57,6 +58,11 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
   const storeDataPath = path.resolve(__dirname, '../../data/store');
   await hierarchicalStore.enablePersistence(storeDataPath, true);
 
+  // Create ImageStore for storing image blocks from VLM processing
+  const imageStore = createImageStore();
+  await imageStore.enablePersistence(storeDataPath, true);
+  fastify.log.info('ImageStore initialized with persistence');
+
   // Create embedding service using factory
   const embeddingFactory = getEmbeddingFactory();
   const embeddingService = embeddingFactory.createTextEmbeddingService();
@@ -75,6 +81,7 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
   fastify.decorate('documentStoragePath', finalConfig.documentStoragePath);
   fastify.decorate('wsHandler', wsHandler);
   fastify.decorate('hierarchicalStore', hierarchicalStore);
+  fastify.decorate('imageStore', imageStore);
   // Store embeddingService as any to avoid type issues with Fastify's decorate
   fastify.decorate('embeddingService', embeddingService as unknown as TextEmbeddingService);
 
@@ -117,19 +124,32 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
     };
   });
 
-  return { fastify, wsHandler, hierarchicalStore, statsService };
+  return { fastify, wsHandler, hierarchicalStore, imageStore, statsService };
 }
 
 /**
  * Start HTTP server
  */
 export async function startHttpServer(config: Partial<HttpServerConfig> = {}): Promise<void> {
-  const { fastify, wsHandler, hierarchicalStore, statsService } = await createHttpServer(config);
+  const { fastify, wsHandler, hierarchicalStore, imageStore, statsService } = await createHttpServer(config);
   const finalConfig = { ...DEFAULT_HTTP_SERVER_CONFIG, ...config };
 
-  // Store wsHandler and hierarchicalStore globally for pipeline emitter access
-  (globalThis as unknown as { wsHandler: WebSocketHandler; hierarchicalStore: HierarchicalStore }).wsHandler = wsHandler;
-  (globalThis as unknown as { wsHandler: WebSocketHandler; hierarchicalStore: HierarchicalStore }).hierarchicalStore = hierarchicalStore;
+  // Store wsHandler, hierarchicalStore, and imageStore globally for pipeline emitter access
+  (globalThis as unknown as {
+    wsHandler: WebSocketHandler;
+    hierarchicalStore: HierarchicalStore;
+    imageStore: ImageStore;
+  }).wsHandler = wsHandler;
+  (globalThis as unknown as {
+    wsHandler: WebSocketHandler;
+    hierarchicalStore: HierarchicalStore;
+    imageStore: ImageStore;
+  }).hierarchicalStore = hierarchicalStore;
+  (globalThis as unknown as {
+    wsHandler: WebSocketHandler;
+    hierarchicalStore: HierarchicalStore;
+    imageStore: ImageStore;
+  }).imageStore = imageStore;
 
   try {
     await fastify.listen({ port: finalConfig.port, host: finalConfig.host });

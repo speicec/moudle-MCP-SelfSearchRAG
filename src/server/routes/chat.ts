@@ -2,9 +2,10 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChatQueryRequest, ChatQueryResponse, RetrievalResultItem, PipelineEvent, RetrievalMatchData } from '../types.js';
 import { SmallToBigRetriever } from '../../chunking/small-to-big-retriever.js';
 import type { HierarchicalStore } from '../../chunking/hierarchical-store.js';
+import type { ImageStore } from '../../chunking/image-store.js';
 import type { TextEmbeddingService } from '../../embedding/embedding-service.js';
 import { PipelineEmitter } from '../pipeline-emitter.js';
-import { llmGenerationService, type GenerationEvent } from '../services/LLMGenerationService.js';
+import { llmGenerationService, type GenerationEvent, type MultimodalGenerationRequest } from '../services/LLMGenerationService.js';
 
 /**
  * Chat routes as Fastify plugin
@@ -322,8 +323,50 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       if (llmGenerationService.isEnabled()) {
         console.log(`[ChatRoute:Generate] Executing LLM generation with ${results.length} sources...`);
 
-        // Prepare generation request
-        const generationRequest = {
+        // ✨ Extract image contexts from results
+        const imageStore = fastify.imageStore as ImageStore | undefined;
+        const imageContexts: MultimodalGenerationRequest['imageContexts'] = [];
+
+        if (imageStore && results.length > 0) {
+          // Get document ID and page numbers from results
+          const docId = results[0]?.sourceDocumentId;
+          const imagePages = results
+            .filter(r => r.metadata.contentType !== 'text')
+            .map(r => r.metadata.pageNumber ?? 0)
+            .filter(p => p > 0);
+
+          // Also extract pages from chunks that might have nearby images
+          const allPages = results.map(r => r.metadata.pageNumber ?? 0).filter(p => p > 0);
+
+          if (docId && allPages.length > 0) {
+            const images = imageStore.getVlmEligibleImages(docId, allPages);
+
+            for (const img of images) {
+              // Filter out 'image' type as VLM only handles table/figure/formula
+              const vlmBlockType = img.blockType === 'image' ? 'mixed' : img.blockType;
+
+              // Create imageContext with optional ocrText using spread
+              const imageContext: {
+                base64: string;
+                blockType: 'table' | 'figure' | 'formula' | 'mixed';
+                sourcePage: number;
+                ocrText?: string;
+              } = {
+                base64: img.imageBuffer.toString('base64'),
+                blockType: vlmBlockType as 'table' | 'figure' | 'formula' | 'mixed',
+                sourcePage: img.pageNumber,
+                ...(img.ocrText ? { ocrText: img.ocrText } : {}),
+              };
+
+              imageContexts.push(imageContext);
+            }
+
+            console.log(`[ChatRoute:Generate] Extracted ${imageContexts.length} image contexts`);
+          }
+        }
+
+        // Prepare generation request - only include imageContexts if present
+        const generationRequest: MultimodalGenerationRequest = {
           query,
           context: context.content,
           sources: mappedResults.map(r => ({
@@ -331,13 +374,13 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
             similarityScore: r.similarityScore,
             sourceId: r.sourceDocumentId,
           })),
+          ...(imageContexts.length > 0 ? { imageContexts } : {}),
         };
 
-        // Execute streaming generation
-        const generationResult = await llmGenerationService.generateWithStreaming(
-          generationRequest,
-          broadcastGeneration
-        );
+        // Execute streaming generation - use multimodal if images present
+        const generationResult = imageContexts.length > 0
+          ? await llmGenerationService.generateMultimodalAnswer(generationRequest, broadcastGeneration)
+          : await llmGenerationService.generateWithStreaming(generationRequest, broadcastGeneration);
 
         return reply.status(200).send({
           query,
@@ -345,6 +388,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           thinking: generationResult.thinking,
           answer: generationResult.answer,
           duration: Date.now() - startTime,
+          imageCount: imageContexts.length,
         });
       } else {
         // LLM disabled - return retrieval results only

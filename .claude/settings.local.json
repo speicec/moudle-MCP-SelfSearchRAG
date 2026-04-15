@@ -33,7 +33,9 @@
       "Bash(ls -la dist/server/services/*.js)",
       "Bash(pip list:*)",
       "Bash(uv pip:*)",
-      "Bash(ls -la D:/WebstormProjects/RAG/MY-RAG-MCP-SERVER/src/parsers/*.test.ts)"
+      "Bash(ls -la D:/WebstormProjects/RAG/MY-RAG-MCP-SERVER/src/parsers/*.test.ts)",
+      "Bash(uv run *)",
+      "Bash(.venv/Scripts/python ocr_service.py --host 0.0.0.0 --port 8080)"
     ]
   }
 }

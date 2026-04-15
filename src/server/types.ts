@@ -215,6 +215,7 @@ declare module 'fastify' {
     documentStoragePath?: string;
     wsHandler?: import('./websocket-handler.js').WebSocketHandler;
     hierarchicalStore?: import('../chunking/hierarchical-store.js').HierarchicalStore;
+    imageStore?: import('../chunking/image-store.js').ImageStore;
     embeddingService?: import('../embedding/embedding-service.js').TextEmbeddingService;
     statsService?: import('./stats-aggregation-service.js').StatsAggregationService;
   }

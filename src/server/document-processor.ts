@@ -11,11 +11,14 @@ import { createIndexStage } from '../retrieval/index-stage.js';
 import { PipelineEmitter } from './pipeline-emitter.js';
 import { WebSocketHandler } from './websocket-handler.js';
 import { HierarchicalStore } from '../chunking/hierarchical-store.js';
+import { ImageStore, type ImageBlockRecord, type ImageBlockType } from '../chunking/image-store.js';
 import { createHierarchicalChunk, createDefaultQualityScore } from '../chunking/types.js';
 import { ChunkQualityFilter, createChunkQualityFilter, aggregateEmbeddings } from '../chunking/index.js';
 import type { Harness } from '../core/harness.js';
 import { PluginRegistry } from '../core/plugin.js';
 import type { TextChunk, EmbeddingResult } from '../core/context.js';
+import type { ParsedContent } from '../core/types.js';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * Processing options
@@ -62,7 +65,8 @@ async function updateMetadata(
 function buildPipeline(
   documentId: string,
   wsHandler: WebSocketHandler,
-  hierarchicalStore: HierarchicalStore
+  hierarchicalStore: HierarchicalStore,
+  imageStore?: ImageStore
 ): Harness {
   const registry = new PluginRegistry();
   const emitter = new PipelineEmitter(documentId, wsHandler);
@@ -150,7 +154,11 @@ function buildPipeline(
       postExecution: [
         async (result) => {
           if (result.status === 'success') {
-            const ctx = result.context as unknown as { getChunks?: () => TextChunk[]; getEmbeddings?: () => EmbeddingResult[] };
+            const ctx = result.context as unknown as {
+              getChunks?: () => TextChunk[];
+              getEmbeddings?: () => EmbeddingResult[];
+              get?: (key: string) => unknown;
+            };
             const chunks = ctx?.getChunks?.();
             const embeddings = ctx?.getEmbeddings?.();
             const totalDuration = Date.now() - pipelineStartTime;
@@ -158,6 +166,14 @@ function buildPipeline(
             // Store chunks in hierarchical store and emit chunk events
             if (chunks && embeddings) {
               await storeInHierarchical(chunks, embeddings, documentId, hierarchicalStore, emitter);
+            }
+
+            // ✨ Store images in ImageStore
+            if (imageStore) {
+              const parsedContent = ctx?.get?.('parsedContent') as ParsedContent | undefined;
+              if (parsedContent) {
+                await storeImagesInImageStore(parsedContent, documentId, imageStore);
+              }
             }
 
             // Record in stats service if available
@@ -303,6 +319,99 @@ async function storeInHierarchical(
 }
 
 /**
+ * Store images from parsedContent in ImageStore
+ */
+async function storeImagesInImageStore(
+  parsedContent: ParsedContent,
+  documentId: string,
+  imageStore: ImageStore
+): Promise<void> {
+  let imageCount = 0;
+
+  for (const page of parsedContent.pages) {
+    for (const image of page.images) {
+      // Check if image has Buffer content
+      if (image.content instanceof Buffer && image.content.length > 0) {
+        const record: ImageBlockRecord = {
+          id: uuidv4(),
+          documentId,
+          pageNumber: page.pageNumber,
+          imageBuffer: image.content,
+          format: (image.metadata.format as 'png' | 'jpeg') ?? 'png',
+          width: image.metadata.width ?? 0,
+          height: image.metadata.height ?? 0,
+          blockType: (image.metadata.blockType as ImageBlockType) ?? 'image',
+          confidence: image.metadata.confidence ?? 0.8,
+          position: image.position,
+          bboxPx: [0, 0, image.metadata.width ?? 0, image.metadata.height ?? 0],  // Fallback bbox
+          scale: 1,
+          createdAt: new Date(),
+        };
+
+        // Only add ocrText if it exists
+        if (image.metadata.vlmText) {
+          record.ocrText = image.metadata.vlmText;
+        }
+
+        imageStore.addImage(record);
+        imageCount++;
+      }
+    }
+
+    // Also extract image buffers from tables and formulas
+    for (const table of page.tables) {
+      if (table.metadata.imageBuffer instanceof Buffer && table.metadata.imageBuffer.length > 0) {
+        const record: ImageBlockRecord = {
+          id: uuidv4(),
+          documentId,
+          pageNumber: page.pageNumber,
+          imageBuffer: table.metadata.imageBuffer,
+          format: 'png',
+          width: table.position.width,
+          height: table.position.height,
+          blockType: 'table',
+          ocrText: table.content,  // VLM result stored as content
+          confidence: table.metadata.confidence ?? 0.85,
+          position: table.position,
+          bboxPx: [0, 0, table.position.width, table.position.height],
+          scale: 1,
+          createdAt: new Date(),
+        };
+
+        imageStore.addImage(record);
+        imageCount++;
+      }
+    }
+
+    for (const formula of page.formulas) {
+      if (formula.metadata.imageBuffer instanceof Buffer && formula.metadata.imageBuffer.length > 0) {
+        const record: ImageBlockRecord = {
+          id: uuidv4(),
+          documentId,
+          pageNumber: page.pageNumber,
+          imageBuffer: formula.metadata.imageBuffer,
+          format: 'png',
+          width: formula.position.width,
+          height: formula.position.height,
+          blockType: 'formula',
+          ocrText: formula.content,  // VLM result stored as content
+          confidence: formula.metadata.confidence ?? 0.85,
+          position: formula.position,
+          bboxPx: [0, 0, formula.position.width, formula.position.height],
+          scale: 1,
+          createdAt: new Date(),
+        };
+
+        imageStore.addImage(record);
+        imageCount++;
+      }
+    }
+  }
+
+  console.log(`[ImageStore] Stored ${imageCount} images for document ${documentId}`);
+}
+
+/**
  * Estimate total tokens from chunks
  */
 function estimateTotalTokens(chunks: TextChunk[] | undefined): number {
@@ -320,6 +429,7 @@ export async function processDocumentAsync(options: ProcessOptions): Promise<voi
   const { documentId, filePath, fastify, storagePath } = options;
   const wsHandler = fastify.wsHandler;
   const hierarchicalStore = fastify.hierarchicalStore;
+  const imageStore = fastify.imageStore as ImageStore | undefined;
 
   if (!wsHandler || !hierarchicalStore) {
     fastify.log.error({ documentId }, 'Missing wsHandler or hierarchicalStore');
@@ -341,7 +451,7 @@ export async function processDocumentAsync(options: ProcessOptions): Promise<voi
     document.id = documentId;
 
     // Build and execute pipeline
-    const pipeline = buildPipeline(documentId, wsHandler, hierarchicalStore);
+    const pipeline = buildPipeline(documentId, wsHandler, hierarchicalStore, imageStore);
     const result = await pipeline.run(document);
 
     // Update status based on result

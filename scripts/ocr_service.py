@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-PaddleOCR PP-Structure HTTP Service
+PaddleOCR PP-StructureV3 HTTP Service
 支持版面分析的OCR服务，输出结构化结果
 
 依赖安装：
-  pip install paddlepaddle paddleocr fastapi uvicorn python-multipart pillow numpy
+  pip install paddlepaddle paddleocr paddlex[ocr] fastapi uvicorn python-multipart pillow numpy opencv-python-headless
 
 启动：
   python scripts/ocr_service.py --host 0.0.0.0 --port 8080 --use-gpu false
@@ -20,7 +20,7 @@ import json
 import base64
 import time
 import os
-from typing import List, Optional
+from typing import List, Optional, Generator, Any
 from pathlib import Path
 
 import numpy as np
@@ -30,8 +30,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
-# PaddleOCR导入 - 使用兼容的2.x API
-from paddleocr import PPStructure, PaddleOCR
+# Disable oneDNN on Windows due to compatibility issues
+os.environ['FLAGS_USE_MKLDNN'] = '0'
+os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
+
+# PaddleOCR导入 - PPStructureV3是新版本
+from paddleocr import PPStructureV3
 
 # ========================================
 # 配置
@@ -41,13 +45,8 @@ class OcrConfig:
     """OCR服务配置"""
     def __init__(self):
         self.use_gpu = os.getenv('OCR_USE_GPU', 'false').lower() == 'true'
-        self.use_mkldnn = not self.use_gpu  # CPU加速
         self.show_log = False
         self.lang = 'ch'        # 中文
-        self.det_db_thresh = 0.3
-        self.det_db_box_thresh = 0.5
-        self.table_max_len = 500
-        self.merge_no_span_structure = True
 
 # ========================================
 # 响应数据结构
@@ -78,27 +77,35 @@ class BatchOcrResult(BaseModel):
 # OCR引擎初始化
 # ========================================
 
-def create_ocr_engine(config: OcrConfig) -> PPStructure:
-    """创建PP-Structure引擎（兼容2.x API）"""
-    print(f"[OCR] Initializing PP-Structure engine (GPU: {config.use_gpu})")
+def create_ocr_engine(config: OcrConfig):
+    """创建PP-StructureV3引擎"""
+    print(f"[OCR] Initializing PP-StructureV3 engine (GPU: {config.use_gpu})")
 
-    # 使用兼容的PPStructure API
-    engine = PPStructure(
-        show_log=config.show_log,
-        use_gpu=config.use_gpu,
+    # PPStructureV3 API 参数
+    # 注意：Windows上禁用MKL-DNN避免oneDNN兼容性问题
+    engine = PPStructureV3(
+        # 禁用表格识别（由VLM处理）
+        use_table_recognition=False,
+        # 禁用公式识别（由VLM处理）
+        use_formula_recognition=False,
+        # 禁用印章识别
+        use_seal_recognition=False,
+        # 禁用图表识别（由VLM处理）
+        use_chart_recognition=False,
+        # 语言
         lang=config.lang,
-        table=False,  # 禁用表格识别（避免兼容性问题）
-        ocr=True,     # 启用OCR
-        layout=True,  # 启用版面分析
-        structure_version='PP-StructureV2',  # 使用V2版本
+        # 设备：GPU 或 CPU
+        device='gpu' if config.use_gpu else 'cpu',
+        # Windows兼容：禁用MKL-DNN
+        enable_mkldnn=False,
     )
 
     # 预热：处理一个空白图片，确保模型加载
     print("[OCR] Preheating engine...")
     dummy_image = np.zeros((100, 100, 3), dtype=np.uint8)
     try:
-        result = engine(dummy_image)
-        print(f"[OCR] Engine ready (preheat result: {len(result)} blocks)")
+        result = list(engine.predict(dummy_image))
+        print(f"[OCR] Engine ready (preheat complete)")
     except Exception as e:
         print(f"[OCR] Preheat warning: {e}")
         print("[OCR] Engine initialized (may need first call to fully load)")
@@ -109,94 +116,61 @@ def create_ocr_engine(config: OcrConfig) -> PPStructure:
 # 结果转换函数
 # ========================================
 
-def format_table_cells(table_res: List) -> List[dict]:
-    """格式化表格单元格"""
-    cells = []
-    for cell in table_res:
-        cell_data = {
-            'row': cell.get('row', 0),
-            'col': cell.get('col', 0),
-            'text': cell.get('text', ''),
-            'bbox': cell.get('bbox', []),
-        }
-        cells.append(cell_data)
-    return cells
-
-def format_table_text(cells: List[dict]) -> str:
-    """将表格单元格转换为Markdown表格文本"""
-    if not cells:
-        return ''
-
-    # 按行列组织
-    rows_dict = {}
-    max_col = 0
-    for cell in cells:
-        r = cell['row']
-        c = cell['col']
-        if r not in rows_dict:
-            rows_dict[r] = {}
-        rows_dict[r][c] = cell['text']
-        max_col = max(max_col, c)
-
-    # 生成Markdown表格
-    lines = []
-    for r in sorted(rows_dict.keys()):
-        row_cells = rows_dict[r]
-        line_parts = []
-        for c in range(max_col + 1):
-            line_parts.append(row_cells.get(c, ''))
-        line = '| ' + ' | '.join(line_parts) + ' |'
-        lines.append(line)
-
-        # 第一行后添加分隔符
-        if r == 0:
-            separator = '| ' + ' | '.join(['---'] * (max_col + 1)) + ' |'
-            lines.append(separator)
-
-    return '\n'.join(lines)
-
-def process_ocr_result(result: List, image_width: int, image_height: int) -> List[OcrBlock]:
-    """处理OCR原始结果，转换为结构化输出（兼容PPStructure 2.x API）"""
+def process_v3_result(result: dict, image_width: int, image_height: int) -> List[OcrBlock]:
+    """处理PPStructureV3结果，转换为结构化输出"""
     blocks = []
 
-    for item in result:
-        block_type = item.get('type', 'text')
-        bbox = item.get('bbox', [0, 0, image_width, image_height])
-        confidence = item.get('score', 0.0)
+    # 从layout_det_res提取布局块
+    layout_det_res = result.get('layout_det_res', {})
+    boxes = layout_det_res.get('boxes', [])
 
-        # 提取文本
-        text = ''
-        cells = None
+    # 从overall_ocr_res提取OCR文本
+    overall_ocr_res = result.get('overall_ocr_res', {})
+    rec_texts = overall_ocr_res.get('rec_texts', [])
+    rec_polys = overall_ocr_res.get('rec_polys', [])
+    rec_scores = overall_ocr_res.get('rec_scores', [])
 
-        if 'res' in item:
-            res = item['res']
+    # 如果有OCR文本，合并为文本块
+    if rec_texts:
+        # 合并所有识别文本
+        full_text = '\n'.join(rec_texts)
+        avg_score = sum(rec_scores) / len(rec_scores) if rec_scores else 0.0
 
-            if isinstance(res, list):
-                # OCR结果列表 - 每个元素是一行文字
-                text_lines = []
-                for line in res:
-                    if isinstance(line, dict):
-                        line_text = line.get('text', '')
-                        if line_text:
-                            text_lines.append(line_text)
-                    elif isinstance(line, (list, tuple)) and len(line) >= 1:
-                        # 旧格式: [[bbox], (text, confidence)]
-                        if len(line) >= 2 and isinstance(line[1], (list, tuple)):
-                            line_text = line[1][0] if len(line[1]) > 0 else ''
-                            text_lines.append(line_text)
-                text = '\n'.join(text_lines)
-            elif isinstance(res, dict):
-                # 文本块
-                text = res.get('text', '')
+        blocks.append(OcrBlock(
+            type='text',
+            bbox=[0, 0, image_width, image_height],
+            text=full_text,
+            confidence=avg_score,
+            cells=None,
+        ))
 
-        block = OcrBlock(
+    # 从布局检测结果提取块
+    for box in boxes:
+        label = box.get('label', 'text')
+        score = box.get('score', 0.0)
+        coord = box.get('coordinate', [0, 0, image_width, image_height])
+
+        # 转换坐标为整数
+        bbox = [int(c) if hasattr(c, '__int__') else int(float(c)) for c in coord]
+
+        # 映射label到block type
+        block_type = label
+        if label in ('image', 'chart', 'figure'):
+            block_type = 'figure'
+        elif label == 'table':
+            block_type = 'table'
+        elif label in ('title', 'text', 'header', 'footer'):
+            block_type = label
+        else:
+            block_type = 'text'
+
+        blocks.append(OcrBlock(
             type=block_type,
             bbox=bbox,
-            text=text,
-            confidence=confidence,
-            cells=cells,
-        )
-        blocks.append(block)
+            text='',  # 文本在overall_ocr_res中
+            confidence=score,
+            cells=None,
+        ))
 
     # 按bbox的y1排序（从上到下的阅读顺序）
     blocks.sort(key=lambda b: b.bbox[1])
@@ -214,7 +188,7 @@ app = FastAPI(
 )
 
 # 全局OCR引擎（服务启动时初始化）
-ocr_engine: Optional[PPStructure] = None
+ocr_engine = None
 ocr_config: OcrConfig = OcrConfig()
 
 @app.on_event("startup")
@@ -252,11 +226,13 @@ async def layout_ocr(
 
     img_array = np.array(image)
 
-    # 执行OCR
-    result = ocr_engine(img_array)
-
-    # 转换结果
-    blocks = process_ocr_result(result, image.width, image.height)
+    # 执行OCR - V3使用predict()方法，返回generator
+    results = list(ocr_engine.predict(img_array))
+    if len(results) == 0:
+        blocks = []
+    else:
+        # 取第一个结果（单页）
+        blocks = process_v3_result(results[0], image.width, image.height)
 
     processing_time = (time.time() - start_time) * 1000
 
@@ -289,8 +265,12 @@ async def batch_ocr(files: List[UploadFile] = File(...)):
 
         img_array = np.array(image)
 
-        result = ocr_engine(img_array)
-        blocks = process_ocr_result(result, image.width, image.height)
+        # 执行OCR - V3使用predict()方法
+        page_results = list(ocr_engine.predict(img_array))
+        if len(page_results) > 0:
+            blocks = process_v3_result(page_results[0], image.width, image.height)
+        else:
+            blocks = []
 
         results.append(OcrResult(
             page_number=i + 1,
@@ -333,9 +313,12 @@ async def base64_ocr(
 
     img_array = np.array(image)
 
-    # 执行OCR
-    result = ocr_engine(img_array)
-    blocks = process_ocr_result(result, image.width, image.height)
+    # 执行OCR - V3使用predict()方法
+    results = list(ocr_engine.predict(img_array))
+    if len(results) > 0:
+        blocks = process_v3_result(results[0], image.width, image.height)
+    else:
+        blocks = []
 
     processing_time = (time.time() - start_time) * 1000
 

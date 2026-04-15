@@ -50,6 +50,9 @@ export interface TableCellValue {
 export interface TableBlockMetadata {
   hasHeaders: boolean;
   headerRow?: number | undefined;
+  // VLM增强相关字段
+  imageBuffer?: Buffer | undefined;  // 表格图片裁剪
+  confidence?: number | undefined;
 }
 
 /**
@@ -72,6 +75,10 @@ export interface ImageBlockMetadata {
   height?: number | undefined;
   colorSpace?: string | undefined;
   dataSize?: number | undefined;
+  // VLM增强相关字段
+  vlmText?: string | undefined;           // VLM理解结果
+  blockType?: 'figure' | 'table' | 'formula' | 'image' | undefined;
+  confidence?: number | undefined;
 }
 
 /**
@@ -93,6 +100,8 @@ export interface FormulaBlockMetadata {
   positionType: 'inline' | 'block' | 'equation_number';
   equationNumber?: string | undefined;
   confidence?: number | undefined;
+  // VLM增强相关字段
+  imageBuffer?: Buffer | undefined;  // 公式图片裁剪
 }
 
 /**
