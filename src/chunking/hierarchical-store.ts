@@ -606,6 +606,59 @@ export class HierarchicalStore {
   getConfig(): SemanticChunkerConfig {
     return { ...this.config };
   }
+
+  /**
+   * Get average parent chunk token length
+   * Used for DynamicTopK calculation
+   */
+  getAvgParentTokenLength(): number {
+    const parentChunks = this.getAllParentChunks();
+
+    if (parentChunks.length === 0) {
+      // Return default estimate if no parent chunks
+      return 800; // Default parent chunk size
+    }
+
+    const totalTokens = parentChunks.reduce(
+      (sum, chunk) => sum + estimateTokenCount(chunk.content),
+      0
+    );
+
+    return Math.round(totalTokens / parentChunks.length);
+  }
+
+  /**
+   * Get token statistics for both chunk levels
+   */
+  getTokenStats(): {
+    avgSmallTokens: number;
+    avgParentTokens: number;
+    minParentTokens: number;
+    maxParentTokens: number;
+    totalParentTokens: number;
+  } {
+    const smallChunks = this.getAllSmallChunks();
+    const parentChunks = this.getAllParentChunks();
+
+    const smallTokens = smallChunks.map(c => estimateTokenCount(c.content));
+    const parentTokens = parentChunks.map(c => estimateTokenCount(c.content));
+
+    return {
+      avgSmallTokens: smallTokens.length > 0
+        ? Math.round(smallTokens.reduce((a, b) => a + b, 0) / smallTokens.length)
+        : 0,
+      avgParentTokens: parentTokens.length > 0
+        ? Math.round(parentTokens.reduce((a, b) => a + b, 0) / parentTokens.length)
+        : 0,
+      minParentTokens: parentTokens.length > 0
+        ? Math.min(...parentTokens)
+        : 0,
+      maxParentTokens: parentTokens.length > 0
+        ? Math.max(...parentTokens)
+        : 0,
+      totalParentTokens: parentTokens.reduce((a, b) => a + b, 0),
+    };
+  }
 }
 
 /**

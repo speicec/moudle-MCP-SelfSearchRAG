@@ -6,6 +6,14 @@ import type { ImageStore } from '../../chunking/image-store.js';
 import type { TextEmbeddingService } from '../../embedding/embedding-service.js';
 import { PipelineEmitter } from '../pipeline-emitter.js';
 import { llmGenerationService, type GenerationEvent, type MultimodalGenerationRequest } from '../services/LLMGenerationService.js';
+import {
+  createEnhancedRetrievalPipeline,
+  type PipelineResult,
+} from '../../retrieval/enhanced-retrieval-pipeline.js';
+import type { EnhancedChatResponse } from '../../retrieval/types.js';
+import { createEnhancedLLMGenerationService } from '../services/enhanced-llm-generation-service.js';
+import type { EnhancedRetrievalConfig } from '../../retrieval/config.js';
+import { DEFAULT_ENHANCED_RETRIEVAL_CONFIG } from '../../retrieval/config.js';
 
 /**
  * Chat routes as Fastify plugin
@@ -419,6 +427,242 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       });
       return reply.status(500).send({
         error: 'Generation failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  /**
+   * POST /enhanced - Enhanced retrieval with confidence scoring
+   * Uses EnhancedRetrievalPipeline for query optimization and reranking
+   */
+  fastify.post('/enhanced', async (request: FastifyRequest<{ Body: {
+    query: string;
+    config?: Partial<EnhancedRetrievalConfig>;
+  } }>, reply: FastifyReply) => {
+    const { query, config } = request.body;
+
+    console.log(`[ChatRoute:Enhanced] Query received: "${query}"`);
+
+    if (!query || query.trim().length === 0) {
+      return reply.status(400).send({ error: 'Query is required' });
+    }
+
+    if (!hierarchicalStore) {
+      return reply.status(503).send({ error: 'Document store not initialized' });
+    }
+
+    const chunkCount = hierarchicalStore.getChunkCount();
+    if (chunkCount.small === 0) {
+      return reply.status(200).send({
+        query,
+        success: false,
+        noMatch: {
+          status: 'no_match',
+          message: 'No documents have been processed',
+          suggestions: ['Upload documents first'],
+        },
+      });
+    }
+
+    const startTime = Date.now();
+
+    try {
+      // Create retriever
+      const retriever = new SmallToBigRetriever(hierarchicalStore);
+      if (embeddingService) {
+        retriever.setEmbeddingGenerator((text: string) => embeddingService.embedText(text));
+      }
+
+      // Create enhanced pipeline
+      const pipeline = createEnhancedRetrievalPipeline(config);
+      pipeline.setRetriever(retriever);
+      pipeline.setStore(hierarchicalStore);
+
+      // Create LLM caller for query optimization (reuse llmGenerationService)
+      const llmCaller = async (prompt: string): Promise<string> => {
+        if (!llmGenerationService.isEnabled()) {
+          return ''; // Fallback to heuristic
+        }
+        try {
+          const result = await llmGenerationService.generateOnce({
+            query: prompt,
+            context: '',
+            sources: [],
+          });
+          return result.answer;
+        } catch {
+          return '';
+        }
+      };
+      pipeline.setLLMCaller(llmCaller);
+
+      await pipeline.initialize();
+
+      // Execute enhanced retrieval
+      const result = await pipeline.execute(query);
+
+      // Shutdown pipeline
+      await pipeline.shutdown();
+
+      const duration = Date.now() - startTime;
+
+      // Handle no-match case
+      if (!result.success && result.noMatch) {
+        return reply.status(200).send({
+          query,
+          success: false,
+          noMatch: result.noMatch,
+          analysis: result.analysis,
+          duration,
+        });
+      }
+
+      // Handle error case
+      if (!result.success) {
+        return reply.status(500).send({
+          error: result.error || 'Enhanced retrieval failed',
+          query,
+          duration,
+        });
+      }
+
+      // Build enhanced response
+      const enhancedLLMService = createEnhancedLLMGenerationService();
+      const prompt = enhancedLLMService.constructPromptWithConfidence(
+        query,
+        result.context?.chunks ?? []
+      );
+
+      // Execute LLM generation with enhanced prompt
+      let thinking = '';
+      let answer = '';
+
+      if (llmGenerationService.isEnabled() && result.context) {
+        const wsHandler = fastify.wsHandler;
+        const broadcastGeneration = (event: GenerationEvent) => {
+          if (wsHandler) {
+            const pipelineEvent: PipelineEvent = {
+              type: event.type,
+              timestamp: event.timestamp,
+            };
+            if (event.phase) pipelineEvent.phase = event.phase;
+            if (event.thinkingContent) pipelineEvent.thinkingContent = event.thinkingContent;
+            if (event.answerContent) pipelineEvent.answerContent = event.answerContent;
+            wsHandler.broadcast(pipelineEvent);
+          }
+        };
+
+        const generationResult = await llmGenerationService.generateWithStreaming({
+          query,
+          context: prompt,
+          sources: result.results?.map(r => ({
+            content: r.parentChunkContent,
+            similarityScore: r.confidenceScore,
+            sourceId: r.sourceDocumentId,
+          })) ?? [],
+        }, broadcastGeneration);
+
+        thinking = generationResult.thinking;
+        answer = generationResult.answer;
+      } else {
+        answer = '未找到高置信度的相关资料。请尝试使用其他关键词查询。';
+      }
+
+      // Build final enhanced response
+      const enhancedResponse: EnhancedChatResponse = {
+        query,
+        results: result.results ?? [],
+        queryAnalysis: {
+          complexity: result.analysis?.complexity ?? 'simple',
+          wasRewritten: result.optimization?.rewrittenQuery !== undefined,
+          wasDecomposed: (result.optimization?.subQueries?.length ?? 0) > 0,
+          expandedTerms: result.optimization?.expandedTerms ?? [],
+        },
+        retrievalStats: {
+          coarseTopK: result.topKConfig?.coarseTopK ?? 0,
+          refinedCount: result.results?.length ?? 0,
+          avgConfidence: result.context?.avgConfidence ?? 0,
+          truncated: result.context?.truncated ?? false,
+          method: result.stats?.method ?? 'internal-confidence',
+        },
+        context: result.context ?? { chunks: [], totalTokens: 0, truncated: false, avgConfidence: 0 },
+        answer,
+        thinking,
+      };
+
+      return reply.status(200).send({
+        ...enhancedResponse,
+        duration,
+      });
+
+    } catch (error) {
+      fastify.log.error({ query, error }, 'Enhanced retrieval failed');
+      return reply.status(500).send({
+        error: 'Enhanced retrieval failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        query,
+        duration: Date.now() - startTime,
+      });
+    }
+  });
+
+  /**
+   * GET /config - Get enhanced retrieval configuration
+   */
+  fastify.get('/config', async (_request: FastifyRequest, reply: FastifyReply) => {
+    return reply.status(200).send({
+      default: DEFAULT_ENHANCED_RETRIEVAL_CONFIG,
+      presets: {
+        light: {
+          modelContextWindow: 32000,
+          description: '轻量场景，适合快速检索',
+        },
+        standard: {
+          modelContextWindow: 64000,
+          description: '标准场景，默认配置',
+        },
+        extended: {
+          modelContextWindow: 128000,
+          description: '大上下文场景，适合复杂文档',
+        },
+      },
+      thresholds: {
+        minConfidence: DEFAULT_ENHANCED_RETRIEVAL_CONFIG.minConfidenceThreshold,
+        rerankerThreshold: DEFAULT_ENHANCED_RETRIEVAL_CONFIG.rerankerThreshold,
+      },
+      features: {
+        queryOptimization: {
+          decomposition: DEFAULT_ENHANCED_RETRIEVAL_CONFIG.enableDecomposition,
+          rewrite: DEFAULT_ENHANCED_RETRIEVAL_CONFIG.enableRewrite,
+          expansion: DEFAULT_ENHANCED_RETRIEVAL_CONFIG.enableExpansion,
+        },
+      },
+    });
+  });
+
+  /**
+   * POST /config - Update enhanced retrieval configuration
+   */
+  fastify.post('/config', async (request: FastifyRequest<{ Body: Partial<EnhancedRetrievalConfig> }>, reply: FastifyReply) => {
+    // Note: This updates runtime config, not persisted
+    // For persisted config, would need to store in database or file
+    const updates = request.body;
+
+    // Validate config updates
+    try {
+      const { validateEnhancedRetrievalConfig, mergeEnhancedRetrievalConfig } = await import('../../retrieval/config.js');
+      const mergedConfig = mergeEnhancedRetrievalConfig(updates);
+      validateEnhancedRetrievalConfig(mergedConfig);
+
+      return reply.status(200).send({
+        success: true,
+        message: 'Configuration updated (runtime)',
+        config: mergedConfig,
+      });
+    } catch (error) {
+      return reply.status(400).send({
+        error: 'Invalid configuration',
         message: error instanceof Error ? error.message : 'Unknown error',
       });
     }

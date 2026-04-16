@@ -7,6 +7,8 @@ import type { SmallToBigRetrievalConfig, ContextWindowConfig } from './config.js
 import { DEFAULT_RETRIEVAL_CONFIG, DEFAULT_CONTEXT_WINDOW_CONFIG } from './config.js';
 import { HierarchicalStore } from './hierarchical-store.js';
 import { cosineSimilarity, sortBySimilarity } from './utils.js';
+import type { ConfidenceRetrievalResult } from '../retrieval/types.js';
+import { createDefaultConfidenceResult, determineConfidenceLevel } from '../retrieval/types.js';
 
 /**
  * Query cache for embedding reuse
@@ -195,6 +197,181 @@ export class SmallToBigRetriever {
   }
 
   /**
+   * Multi-Query retrieval: execute multiple queries and merge results
+   */
+  async retrieveMultiQuery(
+    queries: string[],
+    options?: {
+      topK?: number;
+      mergeStrategy?: 'union' | 'intersection' | 'weighted';
+    }
+  ): Promise<HierarchicalRetrievalResult[]> {
+    const { topK = this.config.topK, mergeStrategy = 'union' } = options ?? {};
+
+    console.log('[SmallToBigRetriever] Multi-query retrieval:', {
+      queryCount: queries.length,
+      mergeStrategy,
+      topK,
+    });
+
+    // Execute all queries in parallel
+    const queryResults = await Promise.all(
+      queries.map(q => this.retrieve(q))
+    );
+
+    // Merge results based on strategy
+    let merged: HierarchicalRetrievalResult[];
+
+    if (mergeStrategy === 'union') {
+      merged = this.mergeUnion(queryResults);
+    } else if (mergeStrategy === 'intersection') {
+      merged = this.mergeIntersection(queryResults);
+    } else {
+      merged = this.mergeWeighted(queryResults, queries);
+    }
+
+    // Deduplicate and limit
+    const deduplicated = this.deduplicateResults(merged);
+    const limited = deduplicated.slice(0, topK);
+
+    console.log('[SmallToBigRetriever] Multi-query merged:', limited.length, 'results');
+
+    return limited;
+  }
+
+  /**
+   * Merge results using union strategy (all unique results)
+   */
+  private mergeUnion(queryResults: HierarchicalRetrievalResult[][]): HierarchicalRetrievalResult[] {
+    const allResults: HierarchicalRetrievalResult[] = [];
+
+    for (const results of queryResults) {
+      allResults.push(...results);
+    }
+
+    return allResults;
+  }
+
+  /**
+   * Merge results using intersection (results that appear in multiple queries)
+   */
+  private mergeIntersection(queryResults: HierarchicalRetrievalResult[][]): HierarchicalRetrievalResult[] {
+    if (queryResults.length < 2) {
+      return queryResults[0] ?? [];
+    }
+
+    // Count occurrences of each result
+    const occurrenceMap = new Map<string, { result: HierarchicalRetrievalResult; count: number }>();
+
+    for (const results of queryResults) {
+      for (const result of results) {
+        const key = result.parentChunkId;
+        const existing = occurrenceMap.get(key);
+        if (existing) {
+          existing.count++;
+          // Keep highest similarity score
+          if (result.similarityScore > existing.result.similarityScore) {
+            existing.result = result;
+          }
+        } else {
+          occurrenceMap.set(key, { result, count: 1 });
+        }
+      }
+    }
+
+    // Only return results that appear in at least 2 query results
+    const intersectionResults = Array.from(occurrenceMap.values())
+      .filter(entry => entry.count >= 2)
+      .map(entry => entry.result);
+
+    return intersectionResults;
+  }
+
+  /**
+   * Merge results using weighted strategy (higher weight for primary query)
+   */
+  private mergeWeighted(
+    queryResults: HierarchicalRetrievalResult[][],
+    queries: string[]
+  ): HierarchicalRetrievalResult[] {
+    // Primary query (first) gets higher weight
+    const weights = queryResults.map((_, i) =>
+      i === 0 ? 1.0 : 0.5
+    );
+
+    const weightedMap = new Map<string, HierarchicalRetrievalResult>();
+
+    for (let i = 0; i < queryResults.length; i++) {
+      const results = queryResults[i] ?? [];
+      const weight = weights[i] ?? 0.5;
+
+      for (const result of results) {
+        const key = result.parentChunkId;
+        const existing = weightedMap.get(key);
+
+        const weightedScore = result.similarityScore * weight;
+
+        if (!existing || weightedScore > existing.similarityScore) {
+          weightedMap.set(key, {
+            ...result,
+            similarityScore: weightedScore,
+          });
+        }
+      }
+    }
+
+    return Array.from(weightedMap.values());
+  }
+
+  /**
+   * Deduplicate results by parentChunkId
+   */
+  private deduplicateResults(results: HierarchicalRetrievalResult[]): HierarchicalRetrievalResult[] {
+    const seen = new Set<string>();
+    return results.filter(result => {
+      if (seen.has(result.parentChunkId)) {
+        return false;
+      }
+      seen.add(result.parentChunkId);
+      return true;
+    }).sort((a, b) => b.similarityScore - a.similarityScore);
+  }
+
+  /**
+   * Convert HierarchicalRetrievalResult to ConfidenceRetrievalResult
+   */
+  convertToConfidenceResults(
+    results: HierarchicalRetrievalResult[]
+  ): ConfidenceRetrievalResult[] {
+    return results.map(r => createDefaultConfidenceResult({
+      smallChunkId: r.smallChunkId,
+      parentChunkId: r.parentChunkId,
+      smallChunkContent: r.smallChunkContent,
+      parentChunkContent: r.parentChunkContent,
+      similarityScore: r.similarityScore,
+      sourceDocumentId: r.sourceDocumentId,
+      metadata: r.metadata,
+      expandedFromSmallChunk: r.expandedFromSmallChunk,
+      // Pass quality score for confidence calculation
+      qualityScore: r.qualityScore,
+    }));
+  }
+
+  /**
+   * Multi-query retrieval with confidence scores
+   */
+  async retrieveMultiQueryWithConfidence(
+    queries: string[],
+    options?: {
+      topK?: number;
+      mergeStrategy?: 'union' | 'intersection' | 'weighted';
+    }
+  ): Promise<ConfidenceRetrievalResult[]> {
+    const hierarchicalResults = await this.retrieveMultiQuery(queries, options);
+    return this.convertToConfidenceResults(hierarchicalResults);
+  }
+
+  /**
    * 6.2: Search in small chunks with cosine similarity
    * 4.1: Log similarity scores for debugging
    */
@@ -218,6 +395,8 @@ export class SmallToBigRetriever {
         sourceDocumentId: chunk.sourceDocumentId,
         metadata: chunk.metadata,
         expandedFromSmallChunk: true,
+        // Pass quality score from chunk for confidence calculation
+        qualityScore: chunk.qualityScore,
       });
     }
 

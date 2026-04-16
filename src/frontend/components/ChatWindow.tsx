@@ -1,17 +1,93 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore, type RetrievalResult } from '../store';
+import { useRetrievalStore, type ConfidenceLevel, type RetrievalStats } from '../store/retrievalStore';
 import ThinkingChainDisplay from './ThinkingChainDisplay';
-import { Brain, BookOpen, Loader2, ChevronRight, ChevronDown } from 'lucide-react';
+import { Brain, BookOpen, Loader2, ChevronRight, ChevronDown, Shield, ShieldAlert, ShieldCheck, Settings, Zap } from 'lucide-react';
 
 /**
- * Source card component - displays individual retrieval result
+ * Confidence badge component
+ */
+const ConfidenceBadge: React.FC<{
+  level: ConfidenceLevel;
+  score: number;
+}> = ({ level, score }) => {
+  const colors = {
+    high: 'bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-300',
+    medium: 'bg-yellow-100 dark:bg-yellow-800 text-yellow-700 dark:text-yellow-300',
+    low: 'bg-red-100 dark:bg-red-800 text-red-700 dark:text-red-300',
+  };
+
+  const icons = {
+    high: ShieldCheck,
+    medium: Shield,
+    low: ShieldAlert,
+  };
+
+  const Icon = icons[level];
+
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded flex items-center gap-1 ${colors[level]}`}>
+      <Icon className="w-3 h-3" />
+      {(score * 100).toFixed(0)}%
+    </span>
+  );
+};
+
+/**
+ * Retrieval stats panel component
+ */
+const RetrievalStatsPanel: React.FC<{
+  stats: RetrievalStats | null;
+  duration?: number;
+}> = ({ stats, duration }) => {
+  if (!stats) return null;
+
+  return (
+    <div className="bg-gray-50 dark:bg-gray-800 rounded p-2 mb-2 text-xs">
+      <div className="flex flex-wrap gap-2">
+        <span className="text-gray-500 dark:text-gray-400">
+          粗排: {stats.coarseTopK}
+        </span>
+        <span className="text-gray-500 dark:text-gray-400">
+          精排: {stats.refinedCount}
+        </span>
+        <span className="text-gray-500 dark:text-gray-400">
+          平均置信度: {(stats.avgConfidence * 100).toFixed(0)}%
+        </span>
+        {duration && (
+          <span className="text-gray-500 dark:text-gray-400">
+            耗时: {duration}ms
+          </span>
+        )}
+        <span className={`text-xs px-1 py-0.5 rounded ${
+          stats.method === 'local-reranker'
+            ? 'bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-300'
+            : 'bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+        }`}>
+          {stats.method === 'local-reranker' ? '本地模型' : '内部计算'}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Source card component - displays individual retrieval result with confidence
  */
 const SourceCard: React.FC<{
   result: RetrievalResult;
   index: number;
-}> = ({ result, index }) => {
+  confidenceScore?: number;
+  confidenceLevel?: ConfidenceLevel;
+}> = ({ result, index, confidenceScore, confidenceLevel }) => {
   const [expanded, setExpanded] = useState(false);
+
+  const effectiveLevel = confidenceLevel || (
+    result.similarityScore >= 0.7 ? 'high' :
+    result.similarityScore >= 0.5 ? 'medium' : 'low'
+  );
+  const effectiveScore = confidenceScore || result.similarityScore;
 
   return (
     <div className="bg-white dark:bg-gray-700 rounded border border-gray-200 dark:border-gray-500 p-2 mb-2">
@@ -23,13 +99,18 @@ const SourceCard: React.FC<{
           <span className="text-xs bg-blue-100 dark:bg-blue-800 px-2 py-0.5 rounded text-blue-700 dark:text-blue-300">
             #{index + 1}
           </span>
-          <span className="text-xs bg-gray-100 dark:bg-gray-600 px-2 py-0.5 rounded">
-            {(result.similarityScore * 100).toFixed(0)}% 相似
-          </span>
+          {confidenceLevel && (
+            <ConfidenceBadge level={effectiveLevel} score={effectiveScore} />
+          )}
+          {!confidenceLevel && (
+            <span className="text-xs bg-gray-100 dark:bg-gray-600 px-2 py-0.5 rounded">
+              {(result.similarityScore * 100).toFixed(0)}% 相似
+            </span>
+          )}
         </div>
         <span className="text-xs text-gray-400">
-        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-      </span>
+          {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        </span>
       </div>
       {expanded && (
         <div className="mt-2 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto bg-gray-50 dark:bg-gray-800 p-2 rounded">

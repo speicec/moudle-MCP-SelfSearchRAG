@@ -143,6 +143,8 @@ export interface HierarchicalRetrievalResult {
   contextWindow?: string;      // extracted context around matched content
   windowStart?: number;        // start position of context window in parent
   windowEnd?: number;          // end position of context window in parent
+  // Quality score from chunk (for confidence calculation)
+  qualityScore?: QualityScore; // chunk's quality evaluation result
 }
 
 /**

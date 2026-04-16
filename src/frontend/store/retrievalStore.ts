@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 
 /**
+ * Confidence level type
+ */
+export type ConfidenceLevel = 'high' | 'medium' | 'low';
+
+/**
  * Retrieval match data
  */
 export interface RetrievalMatch {
@@ -10,7 +15,7 @@ export interface RetrievalMatch {
 }
 
 /**
- * Retrieval result data
+ * Retrieval result data (basic)
  */
 export interface RetrievalResult {
   smallChunkId: string;
@@ -21,6 +26,49 @@ export interface RetrievalResult {
   contextWindow?: string;
   windowStart?: number;
   windowEnd?: number;
+}
+
+/**
+ * Enhanced retrieval result with confidence
+ */
+export interface EnhancedRetrievalResult extends RetrievalResult {
+  confidenceScore: number;
+  confidenceLevel: ConfidenceLevel;
+  keywordMatchScore?: number;
+  positionScore?: number;
+  chunkQualityScore?: number;
+}
+
+/**
+ * Query analysis data
+ */
+export interface QueryAnalysis {
+  complexity: 'simple' | 'complex' | 'structured';
+  wasRewritten: boolean;
+  wasDecomposed: boolean;
+  expandedTerms: string[];
+}
+
+/**
+ * Retrieval statistics
+ */
+export interface RetrievalStats {
+  coarseTopK: number;
+  refinedCount: number;
+  avgConfidence: number;
+  truncated: boolean;
+  method: 'local-reranker' | 'internal-confidence';
+}
+
+/**
+ * Context chunk with confidence
+ */
+export interface ContextChunk {
+  content: string;
+  confidence: number;
+  confidenceLevel: ConfidenceLevel;
+  source: string;
+  page?: number;
 }
 
 /**
@@ -37,16 +85,29 @@ export interface RetrievalFlowState {
   // Matches (for animation)
   matches: RetrievalMatch[];
   results: RetrievalResult[];
+  enhancedResults: EnhancedRetrievalResult[];
+
+  // Enhanced retrieval data
+  queryAnalysis: QueryAnalysis | null;
+  retrievalStats: RetrievalStats | null;
+  contextChunks: ContextChunk[];
 
   // Step tracking
-  currentStep: 'idle' | 'embedding' | 'searching' | 'expanding' | 'complete';
+  currentStep: 'idle' | 'embedding' | 'analyzing' | 'searching' | 'reranking' | 'expanding' | 'complete';
   embeddingProgress: number;
 
   // Actions
   handleRetrievalStart: (query: string, timestamp: number) => void;
   handleRetrievalMatch: (match: RetrievalMatch) => void;
   handleRetrievalComplete: (results: RetrievalResult[], duration: number, timestamp: number) => void;
-  setStep: (step: 'idle' | 'embedding' | 'searching' | 'expanding' | 'complete') => void;
+  handleEnhancedComplete: (data: {
+    results: EnhancedRetrievalResult[];
+    queryAnalysis: QueryAnalysis;
+    retrievalStats: RetrievalStats;
+    contextChunks: ContextChunk[];
+    duration: number;
+  }) => void;
+  setStep: (step: 'idle' | 'embedding' | 'analyzing' | 'searching' | 'reranking' | 'expanding' | 'complete') => void;
   setEmbeddingProgress: (progress: number) => void;
   reset: () => void;
 }
@@ -59,6 +120,10 @@ export const useRetrievalStore = create<RetrievalFlowState>((set) => ({
   duration: undefined,
   matches: [],
   results: [],
+  enhancedResults: [],
+  queryAnalysis: null,
+  retrievalStats: null,
+  contextChunks: [],
   currentStep: 'idle',
   embeddingProgress: 0,
 
@@ -69,10 +134,14 @@ export const useRetrievalStore = create<RetrievalFlowState>((set) => ({
       startTime: timestamp,
       matches: [],
       results: [],
-      currentStep: 'embedding',
+      enhancedResults: [],
+      currentStep: 'analyzing',
       embeddingProgress: 0,
       duration: undefined,
       endTime: undefined,
+      queryAnalysis: null,
+      retrievalStats: null,
+      contextChunks: [],
     });
   },
 
@@ -88,6 +157,18 @@ export const useRetrievalStore = create<RetrievalFlowState>((set) => ({
       results,
       duration,
       endTime: timestamp,
+      isRunning: false,
+      currentStep: 'complete',
+    });
+  },
+
+  handleEnhancedComplete: (data) => {
+    set({
+      enhancedResults: data.results,
+      queryAnalysis: data.queryAnalysis,
+      retrievalStats: data.retrievalStats,
+      contextChunks: data.contextChunks,
+      duration: data.duration,
       isRunning: false,
       currentStep: 'complete',
     });
@@ -110,8 +191,12 @@ export const useRetrievalStore = create<RetrievalFlowState>((set) => ({
       duration: undefined,
       matches: [],
       results: [],
+      enhancedResults: [],
       currentStep: 'idle',
       embeddingProgress: 0,
+      queryAnalysis: null,
+      retrievalStats: null,
+      contextChunks: [],
     });
   },
 }));

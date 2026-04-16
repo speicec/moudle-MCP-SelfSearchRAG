@@ -179,6 +179,51 @@ export interface RetrievalResultItem {
 }
 
 /**
+ * Enhanced chat response with confidence information
+ */
+export interface EnhancedChatResponse {
+  query: string;
+  results: Array<{
+    smallChunkId: string;
+    parentChunkId: string;
+    parentChunkContent: string;
+    similarityScore: number;
+    confidenceScore: number;
+    confidenceLevel: 'high' | 'medium' | 'low';
+    sourceDocumentId: string;
+    metadata: Record<string, unknown>;
+  }>;
+  queryAnalysis: {
+    complexity: 'simple' | 'complex' | 'structured';
+    wasRewritten: boolean;
+    wasDecomposed: boolean;
+    expandedTerms: string[];
+  };
+  retrievalStats: {
+    coarseTopK: number;
+    refinedCount: number;
+    avgConfidence: number;
+    truncated: boolean;
+    method: 'local-reranker' | 'internal-confidence';
+  };
+  context: {
+    chunks: Array<{
+      content: string;
+      confidence: number;
+      confidenceLevel: 'high' | 'medium' | 'low';
+      source: string;
+      page?: number;
+    }>;
+    totalTokens: number;
+    truncated: boolean;
+    avgConfidence: number;
+  };
+  answer: string;
+  thinking: string;
+  duration?: number;
+}
+
+/**
  * WebSocket message from client
  */
 export interface WebSocketClientMessage {

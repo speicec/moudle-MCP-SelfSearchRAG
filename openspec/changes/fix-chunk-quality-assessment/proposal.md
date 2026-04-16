@@ -1,38 +1,70 @@
 ## Why
 
-当前文档分块处理流程中，所有 chunk 的质量分数（`qualityScore`）都被硬编码为 0.5，而不是根据内容进行真实评估。`ChunkQualityFilter` 类及其 `evaluate()` 方法已经实现，但从未被集成到实际的处理流程中。这导致：
-1. 前端显示的质量分布图表无意义（所有块都是 0.5）
-2. 无法过滤低质量内容（如重复文本、不完整句子）
-3. "Small-to-Big" 检索的质量排序功能失效
+当前系统存在两个层级的问题导致检索质量失效：
+
+### 问题层级1（已修复）：质量评估未被调用
+文档处理流程中，`ChunkQualityFilter.evaluate()` 从未被调用，所有 chunk 的 `qualityScore` 硬编码为 0.5。
+
+### 问题层级2（核心问题）：质量分数传递链条断裂 ⚠️
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    质量分数流转断裂点                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+    HierarchicalChunk               HierarchicalRetrievalResult      ConfidenceRetrievalResult
+    (chunking/types.ts:53)          (chunking/types.ts:133)         (retrieval/types.ts:73)
+           │                              │                              │
+           ▼                              ▼                              ▼
+    ┌─────────────────┐            ┌──────────────────────┐       ┌──────────────────────┐
+    │ qualityScore:   │            │ ❌ 没有 qualityScore  │       │ chunkQualityScore:   │
+    │ QualityScore    │───────────▶│ 字段                  │──────▶│ = 0 (硬编码)         │
+    │ {               │            │                      │       │                      │
+    │   composite,    │   断裂点1  │                      │       │                      │
+    │   dimensions    │            │                      │       │                      │
+    │ }               │            │                      │       │                      │
+    └─────────────────┘            └──────────────────────┘       └──────────────────────┘
+```
+
+**后果：**
+- 置信度计算中 20% 权重（chunkQuality）完全失效
+- `ConfidenceCalculator.calculateChunkQualityScore()` 只能 fallback 到 `boundaryConfidence`
+- 高质量和低质量 chunk 获得相同置信度排序
+- 检索返回无关结果无法被质量维度过滤
 
 ## What Changes
 
-- 在 `document-processor.ts` 的 `storeInHierarchical()` 函数中集成 `ChunkQualityFilter`
-- 计算文档整体 embedding 作为质量评估的参照点
-- 对每个 chunk 执行真实质量评估，替换硬编码的 `createDefaultQualityScore()`
-- 聚合文档 embedding 并调用 `setDocumentEmbedding()` 以计算 `documentRelevance` 维度
+### Phase 1（已完成）：质量评估集成
+- 在 `document-processor.ts` 集成 `ChunkQualityFilter`
+- 对每个 chunk 执行真实质量评估
+
+### Phase 2（待实施）：质量分数传递修复
+- `HierarchicalRetrievalResult` 添加 `qualityScore?: QualityScore` 字段
+- `SmallToBigRetriever.searchSmallChunks()` 从 chunk 读取并传递
+- `createDefaultConfidenceResult()` 参数类型扩展接收 `qualityScore`
+- `ConfidenceCalculator` 正确使用 `qualityScore.composite`
 
 ## Capabilities
 
-### New Capabilities
-- `chunk-quality-evaluation`: 文档分块质量真实评估功能，包含四个维度的计算（信息密度、重复比率、语义完整性、文档相关性）
-
 ### Modified Capabilities
-- `hierarchical-chunking`: 分块存储流程需要集成质量评估步骤
+- `hierarchical-chunking`: 分块存储流程集成质量评估（已完成）
+- `small-to-big-retrieval`: 检索结果传递质量分数（待实施）
+- `confidence-calculation`: 置信度计算正确使用质量分数（待实施）
 
 ## Impact
 
 **核心修改文件：**
-- `src/server/document-processor.ts`: 集成 `ChunkQualityFilter`，修改 `storeInHierarchical()` 函数
+- `src/chunking/types.ts`: `HierarchicalRetrievalResult` 添加 qualityScore 字段
+- `src/chunking/small-to-big-retriever.ts`: `searchSmallChunks()` 传递 qualityScore
+- `src/retrieval/types.ts`: `createDefaultConfidenceResult()` 参数扩展
+- `src/retrieval/confidence-calculator.ts`: 使用传入的质量分数
 
-**依赖已有实现：**
-- `src/chunking/quality-filter.ts`: `ChunkQualityFilter.evaluate()` 方法
-- `src/chunking/utils.ts`: `aggregateEmbeddings()`, `cosineSimilarity()` 等辅助函数
-
-**前端影响：**
-- `src/frontend/components/ChunkExplorer.tsx`: 质量分数将显示真实值而非 0.5
-- `src/frontend/components/StatsDashboard.tsx`: 质量分布图表将显示真实的 high/medium/low 分布
-
-**API 影响：**
-- `/api/documents/:id/chunks`: 返回的 `qualityScore` 将反映真实评估结果
-- `/api/stats`: `qualityDistribution` 和 `avgQualityScore` 将有真实数据
+**置信度权重恢复：**
+```typescript
+confidenceWeights: {
+  similarity: 0.5,      // ✓ 正常
+  keywordMatch: 0.2,    // ✓ 正常
+  position: 0.1,        // ✓ 正常
+  chunkQuality: 0.2,    // ⚠️ 当前失效 → 修复后恢复
+}
+```
