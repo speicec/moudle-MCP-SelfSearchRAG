@@ -136,13 +136,15 @@
 
 ## 3. Data Design
 
-### 3.1 Qdrant Collection Schema
+### 3.1 Qdrant Collection Schema (三 Collection)
 
-#### text_chunks Collection
+#### text_chunks Collection (Small - Dense + Sparse)
 
 ```
 Collection: text_chunks
 ───────────────────────────────────────────────────────────────────────────────
+
+Purpose: Small Chunk 主搜索 (精确匹配单位)
 
 Vector Config:
   Dense Vector:
@@ -152,7 +154,7 @@ Vector Config:
       m: 16
       ef_construct: 100
       
-  Sparse Vector (Qdrant 1.5+):
+  Sparse Vector:
     modifier: "sparse"
     indices: keyword IDs
     values: weights
@@ -160,26 +162,58 @@ Vector Config:
 Payload Schema:
   ┌─────────────────────────────────────────────────────────────────────────┐
   │  {                                                                      │
-  │    documentId: string,          // 文档 ID                              │
-  │    chunkId: string,             // Chunk ID (主键关联)                  │
-  │    parentId: string | null,     // Small-to-Big 父 chunk                │
-  │    level: "small" | "parent",   // Chunk 层级                           │
-  │    qualityScore: float,         // 质量分数                             │
-  │    pageNumber: int | null,      // 页码                                 │
-  │    contentType: string,         // 内容类型                             │
-  │    position: {                  // 文本位置                              │
-  │      start: int,                                                        │
-  │      end: int                                                           │
-  │    }                                                                    │
+  │    documentId: string,                                                  │
+  │    chunkId: string,             // smallChunkId                         │
+  │    parentId: string,            // 关联 Parent (关键!)                  │
+  │    level: "small",              // 固定为 small                         │
+  │    qualityScore: float,                                                 │
+  │    pageNumber: int | null,                                              │
+  │    contentType: string,                                                 │
+  │    position: { start: int, end: int }                                   │
   │  }                                                                      │
   └─────────────────────────────────────────────────────────────────────────┘
+
+存储估算: 100K small chunks × ~4KB = ~400MB
 ```
 
-#### image_chunks Collection (仅 Dense)
+#### parent_chunks Collection (Parent - Sparse Only)
+
+```
+Collection: parent_chunks
+───────────────────────────────────────────────────────────────────────────────
+
+Purpose: Parent Fallback 搜索 (索引搜索，无遍历)
+
+Vector Config:
+  Dense Vector: 无                  // 节省存储，Parent 不做语义搜索
+  Sparse Vector:
+    modifier: "sparse"
+    indices: keyword IDs
+    values: weights
+
+Payload Schema:
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  {                                                                      │
+  │    documentId: string,                                                  │
+  │    chunkId: string,             // parentChunkId                        │
+  │    level: "parent",             // 固定为 parent                        │
+  │    childIds: string[],          // 子 Small Chunk IDs                   │
+  │    qualityScore: float,                                                 │
+  │    tokenCount: int,              // Parent token 长度                   │
+  │    pageNumber: int | null,                                              │
+  │  }                                                                      │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+存储估算: 20K parent chunks × ~1KB = ~20MB (Sparse 轻量)
+```
+
+#### image_chunks Collection (图像 - Dense Only)
 
 ```
 Collection: image_chunks
-───────────────────────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────────────────────
+
+Purpose: 图像语义搜索 (图像不适合 Sparse 关键词)
 
 Vector Config:
   Dense Vector:
@@ -197,6 +231,30 @@ Payload Schema:
     pageNumber: int,
     vlmText: string     // VLM 描述文本
   }
+
+存储估算: 10K images × ~2KB = ~20MB
+```
+
+### 3.2 存储对比
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  存储对比 (100K Small + 20K Parent + 10K Image)                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────┬────────────────┬─────────────────────────────────────┐
+│  Collection         │  向量类型       │  存储估算                           │
+├─────────────────────┼────────────────┼─────────────────────────────────────┤
+│  text_chunks        │  Dense+Sparse  │  ~400MB                             │
+│  parent_chunks      │  Sparse only   │  ~20MB                              │
+│  image_chunks       │  Dense only    │  ~20MB                              │
+├─────────────────────┼────────────────┼─────────────────────────────────────┤
+│  Qdrant 总计        │  -             │  ~440MB (+20% vs Small-Only)        │
+└─────────────────────┴────────────────┴─────────────────────────────────────┘
+
+HierarchicalStore (JSON): ~60MB (Small + Parent Content + Metadata)
+
+系统总内存: Qdrant ~440MB + HierarchicalStore ~60MB + bge-m3 ~500MB = ~1GB
 ```
 
 ### 3.2 Sparse Vector Storage
@@ -324,10 +382,10 @@ export interface HybridEmbeddingService {
 }
 ```
 
-### 4.2 HybridRetriever
+### 4.2 HybridSmallToBigRetriever
 
 ```typescript
-// src/retrieval/hybrid-retriever.ts
+// src/retrieval/hybrid-small-to-big-retriever.ts
 
 export interface HybridSearchOptions {
   topK: number;
@@ -335,9 +393,44 @@ export interface HybridSearchOptions {
   filter?: MetadataFilter;
   
   // Hybrid 配置
-  denseTopK?: number;     // 默认 50
-  sparseTopK?: number;    // 默认 50
-  rrfK?: number;          // 默认 60
+  denseTopK?: number;     // Small Dense 搜索 topK (默认 50)
+  sparseTopK?: number;    // Small Sparse 搜索 topK (默认 50)
+  rrfK?: number;          // RRF 参数 (默认 60)
+  
+  // Parent 配置
+  parentScoreStrategy?: 'max' | 'avg' | 'weighted';  // 默认 max
+  maxParents?: number;    // 最大 Parent 数 (默认 10)
+  
+  // Fallback 配置
+  fallbackMinResults?: number;  // 触发阈值 (默认 3)
+  fallbackSparseTopK?: number;  // Parent Sparse 搜索 topK (默认 20)
+}
+
+export interface HybridRetrievalResult {
+  parentChunkId: string;
+  parentContent: string;
+  matchedSmallChunks: SmallChunkMatch[];  // 匹配的 Small Chunks
+  score: number;                          // Parent 分数
+  source: 'hybrid_small' | 'fallback_parent_sparse';
+  qualityScore: number;
+}
+
+export interface HybridSmallToBigRetriever {
+  // Small Hybrid 搜索 + Parent 扩展
+  retrieve(query: string, options?: HybridSearchOptions): Promise<HybridRetrievalResult[]>;
+  
+  // 仅 Small Hybrid 搜索 (不扩展)
+  searchSmallChunks(query: string): Promise<SmallChunkResult[]>;
+  
+  // Parent Sparse Fallback 搜索
+  searchParentFallback(query: string): Promise<HybridRetrievalResult[]>;
+}
+
+interface SmallChunkMatch {
+  smallChunkId: string;
+  smallChunkContent: string;
+  score: number;
+  sources: ('dense' | 'sparse')[];
 }
 
 export interface HybridRetrievalResult {
@@ -362,33 +455,57 @@ export interface HybridRetriever {
 }
 ```
 
-### 4.3 QdrantAdapter Extension
+### 4.3 QdrantAdapter (三 Collection 操作)
 
 ```typescript
 // src/retrieval/qdrant-adapter.ts
 
 export interface QdrantAdapter extends VectorStoreAdapter {
-  // Dense 搜索 (已有)
-  searchDense(collection: string, query: DenseSearchQuery): Promise<SearchResult[]>;
+  // Small Chunk 操作 (Dense + Sparse)
+  upsertSmall(points: SmallChunkPoint[]): Promise<void>;
+  searchDenseSmall(query: DenseSearchQuery): Promise<SearchResult[]>;
+  searchSparseSmall(query: SparseSearchQuery): Promise<SearchResult[]>;
   
-  // Sparse 搜索 (新增)
-  searchSparse(collection: string, query: SparseSearchQuery): Promise<SearchResult[]>;
+  // Parent Chunk 操作 (Sparse Only)
+  upsertParent(points: ParentChunkPoint[]): Promise<void>;
+  searchSparseParent(query: SparseSearchQuery): Promise<SearchResult[]>;
   
-  // Hybrid Upsert (新增)
-  upsertHybrid(collection: string, points: HybridPoint[]): Promise<void>;
+  // Image Chunk 操作 (Dense Only)
+  upsertImage(points: ImageChunkPoint[]): Promise<void>;
+  searchDenseImage(query: DenseSearchQuery): Promise<SearchResult[]>;
 }
 
-export interface HybridPoint {
-  id: string;
-  denseVector: number[];
-  sparseVector: Map<string, number>;  // 或 SparseValues 格式
-  payload: Record<string, unknown>;
+export interface SmallChunkPoint {
+  id: string;                    // smallChunkId
+  denseVector: number[];         // 1024 维
+  sparseVector: Map<string, number>;  // 词权重
+  payload: {
+    parentId: string;            // 关键: Parent 关联
+    level: 'small';
+    qualityScore: number;
+    // ...
+  };
 }
 
-export interface SparseSearchQuery {
-  sparseVector: Map<string, number>;
-  topK: number;
-  filter?: MetadataFilter;
+export interface ParentChunkPoint {
+  id: string;                    // parentChunkId
+  sparseVector: Map<string, number>;  // 只有 Sparse
+  payload: {
+    childIds: string[];          // 子 Small IDs
+    level: 'parent';
+    qualityScore: number;
+    // ...
+  };
+}
+
+export interface ImageChunkPoint {
+  id: string;                    // imageId
+  denseVector: number[];         // 512 维
+  payload: {
+    blockType: 'figure' | 'table' | 'formula';
+    vlmText: string;
+    // ...
+  };
 }
 ```
 
@@ -396,61 +513,111 @@ export interface SparseSearchQuery {
 
 ## 5. Process Design
 
-### 5.1 Document Processing Flow
+### 5.1 Document Processing Flow (三 Collection)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  文档处理流程                                                                 │
+│  文档处理流程 (Small + Parent Sparse + Image)                                 │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 Step 1: PDF 解析
 ───────────────
   PDF → TextBlock[] + ImageBlock[] + TableBlock[]
   
-Step 2: Chunking
-────────────────
-  TextBlock[] → HierarchicalChunk[] (small + parent)
-  调用 ChunkQualityFilter 计算质量分数
+Step 2: Chunking (Small + Parent)
+─────────────────────────────────
+  TextBlock[] → 
+    Small Chunks (100-200 tokens) ← 精确匹配单位
+    Parent Chunks (500-1500 tokens) ← 上下文单位
   
-Step 3: Hybrid Embedding
-────────────────────────
+  建立 parentId ↔ childIds[] 关联
+
+Step 3: Hybrid Embedding (分类型处理)
+─────────────────────────────────────
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │  for each chunk:                                                        │
-  │    result = hybridEmbeddingService.embedHybrid(chunk.content)          │
+  │  // Small Chunks: Dense + Sparse                                        │
+  │  for each smallChunk:                                                   │
+  │    result = hybridEmbeddingService.embedHybrid(smallChunk.content)     │
+  │    smallDense = result.dense      // 1024 维                           │
+  │    smallSparse = result.sparse    // 词权重                             │
+  │  end                                                                    │
   │                                                                         │
-  │    denseVector = result.dense      // 1024 维                          │
-  │    sparseVector = result.sparse    // 词权重 Map                        │
+  │  // Parent Chunks: Sparse ONLY (节省存储)                               │
+  │  for each parentChunk:                                                  │
+  │    parentSparse = hybridEmbeddingService.embedSparseOnly(              │
+  │      parentChunk.content                                                │
+  │    )                                                                    │
+  │    // 无 Dense 向量！                                                   │
+  │  end                                                                    │
   │                                                                         │
-  │    // 过滤低权重词                                                       │
-  │    sparseVector = filterByWeight(sparseVector, minWeight=0.01)         │
+  │  // Image Blocks: Dense ONLY (CLIP)                                     │
+  │  for each imageBlock:                                                   │
+  │    imageDense = clipService.embedImage(imageBlock.image)               │
+  │    // 无 Sparse（图像不适合关键词）                                      │
   │  end                                                                    │
   └─────────────────────────────────────────────────────────────────────────┘
 
-Step 4: 双轨存储
-────────────────
+Step 4: 三 Collection 写入
+────────────────────────────────
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │  // 写入 Qdrant (Dense + Sparse)                                        │
-  │  qdrantAdapter.upsertHybrid('text_chunks', {                            │
-  │    id: chunkId,                                                         │
-  │    denseVector: denseVector,                                            │
-  │    sparseVector: sparseVector,                                          │
-  │    payload: { documentId, qualityScore, ... }                           │
-  │  })                                                                     │
+  │  // 1. Small Chunks → text_chunks (Dense + Sparse)                      │
+  │  qdrantAdapter.upsertSmall([                                            │
+  │    {                                                                    │
+  │      id: smallChunkId,                                                  │
+  │      denseVector: smallDense,                                           │
+  │      sparseVector: smallSparse,                                         │
+  │      payload: {                                                         │
+  │        parentId: parentChunkId,  // 关键关联!                           │
+  │        level: 'small',                                                  │
+  │        qualityScore: 0.85,                                              │
+  │      }                                                                  │
+  │    }                                                                    │
+  │  ])                                                                     │
   │                                                                         │
-  │  // 写入 HierarchicalStore (元数据)                                      │
-  │  hierarchicalStore.set(chunkId, {                                       │
-  │    content: chunk.content,                                              │
-  │    parentId,                                                            │
-  │    qualityScore                                                         │
+  │  // 2. Parent Chunks → parent_chunks (Sparse ONLY)                      │
+  │  qdrantAdapter.upsertParent([                                           │
+  │    {                                                                    │
+  │      id: parentChunkId,                                                 │
+  │      sparseVector: parentSparse,  // 只有 Sparse                        │
+  │      payload: {                                                         │
+  │        childIds: [smallChunkId1, smallChunkId2],  // 子 chunks          │
+  │        level: 'parent',                                                 │
+  │        qualityScore: 0.85,                                              │
+  │      }                                                                  │
+  │    }                                                                    │
+  │  ])                                                                     │
+  │                                                                         │
+  │  // 3. Images → image_chunks (Dense ONLY)                               │
+  │  qdrantAdapter.upsertImage([                                            │
+  │    {                                                                    │
+  │      id: imageId,                                                       │
+  │      denseVector: imageDense,                                           │
+  │      payload: {                                                         │
+  │        blockType: 'figure',                                             │
+  │        vlmText: '架构流程图...',                                         │
+  │      }                                                                  │
+  │    }                                                                    │
+  │  ])                                                                     │
+  │                                                                         │
+  │  // 4. HierarchicalStore (元数据 + Content)                             │
+  │  hierarchicalStore.setSmallChunk(smallChunkId, {                        │
+  │    content: smallChunk.content,                                         │
+  │    parentId: parentChunkId,                                             │
+  │    qualityScore: 0.85,                                                  │
+  │  })                                                                     │
+  │  hierarchicalStore.setParentChunk(parentChunkId, {                      │
+  │    content: parentChunk.content,  // 完整上下文                          │
+  │    childIds: [smallChunkId1, smallChunkId2],                            │
+  │    qualityScore: 0.85,                                                  │
   │  })                                                                     │
   └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.2 Retrieval Flow
+### 5.2 Retrieval Flow (Small Hybrid + Parent Fallback)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  检索流程                                                                     │
+│  检索流程 (三阶段)                                                            │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 Step 1: Query Embedding
@@ -462,24 +629,97 @@ Step 1: Query Embedding
   queryDense = hybridResult.dense    // [1024 floats]
   querySparse = hybridResult.sparse  // { "性能": 0.85, "优化": 0.72, ... }
 
-Step 2: Parallel Search
-────────────────────────
+Step 2: Phase 1 - Small Chunk Hybrid Search
+──────────────────────────────────────────────
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │  // 并行执行                                                             │
+  │  // 并行执行 Dense + Sparse 搜索                                         │
   │  const [denseResults, sparseResults] = await Promise.all([              │
-  │    qdrantAdapter.searchDense('text_chunks', {                           │
+  │    qdrantAdapter.searchDenseSmall({                                     │
   │      vector: queryDense,                                                │
   │      topK: 50,                                                          │
-  │      filter: { minQuality: 0.6 }                                        │
+  │      filter: { level: 'small' }                                         │
   │    }),                                                                  │
   │                                                                         │
-  │    qdrantAdapter.searchSparse('text_chunks', {                          │
+  │    qdrantAdapter.searchSparseSmall({                                    │
   │      sparseVector: querySparse,                                         │
   │      topK: 50,                                                          │
-  │      filter: { minQuality: 0.6 }                                        │
+  │      filter: { level: 'small' }                                         │
   │    })                                                                   │
   │  ])                                                                     │
+  │                                                                         │
+  │  // RRF 融合                                                            │
+  │  fusedSmallChunks = rrfFusion(denseResults, sparseResults, k=60)        │
+  │                                                                         │
+  │  结果: [                                                                 │
+  │    { smallChunkId: "s-001", parentId: "p-A", score: 0.85 },            │
+  │    { smallChunkId: "s-002", parentId: "p-A", score: 0.82 },            │
+  │    { smallChunkId: "s-005", parentId: "p-B", score: 0.78 },            │
+  │  ]                                                                      │
   └─────────────────────────────────────────────────────────────────────────┘
+
+Step 3: Phase 2 - Parent Expansion (Small-to-Big)
+───────────────────────────────────────────────────
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  // 按 parentId 分组                                                     │
+  │  parentGroups = groupByParentId(fusedSmallChunks)                       │
+  │                                                                         │
+  │  //    p-A: [s-001(0.85), s-002(0.82)]  → matchCount=2                  │
+  │  //    p-B: [s-005(0.78)]               → matchCount=1                  │
+  │                                                                         │
+  │  // Parent Score 计算                                                    │
+  │  for each parentGroup:                                                  │
+  │    parentScore = max(childScores)  // 或 avg, weighted                  │
+  │    // p-A.score = max(0.85, 0.82) = 0.85                                │
+  │    // p-B.score = 0.78                                                  │
+  │  end                                                                    │
+  │                                                                         │
+  │  // 从 HierarchicalStore 获取 Parent Content                            │
+  │  parentIds = ['p-A', 'p-B']                                             │
+  │  parentChunks = hierarchicalStore.getParentChunks(parentIds)            │
+  │                                                                         │
+  │  结果: [                                                                 │
+  │    {                                                                    │
+  │      parentChunkId: 'p-A',                                              │
+  │      parentContent: '完整 500-1500 tokens 上下文...',                    │
+  │      matchedSmallChunks: ['s-001', 's-002'],                            │
+  │      score: 0.85,                                                       │
+  │      source: 'hybrid_small'                                             │
+  │    }                                                                    │
+  │  ]                                                                      │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+Step 4: Phase 3 - Fallback (Parent Sparse Index Search)
+─────────────────────────────────────────────────────────
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  条件: smallResults.length < minResults (如 < 3)                        │
+  │                                                                         │
+  │  // Parent Sparse 索引搜索 (无遍历!)                                     │
+  │  parentResults = await qdrantAdapter.searchSparseParent({               │
+  │    sparseVector: querySparse,                                           │
+  │    topK: 20,                                                            │
+  │    filter: { level: 'parent' }                                          │
+  │  })                                                                     │
+  │                                                                         │
+  │  // 直接返回 Parent IDs                                                  │
+  │  parentIds = parentResults.map(r => r.id)                               │
+  │  parentChunks = hierarchicalStore.getParentChunks(parentIds)            │
+  │                                                                         │
+  │  结果: [                                                                 │
+  │    {                                                                    │
+  │      parentChunkId: 'p-C',                                              │
+  │      parentContent: 'Fallback Parent Content...',                       │
+  │      score: 0.72,                                                       │
+  │      source: 'fallback_parent_sparse'                                   │
+  │    }                                                                    │
+  │  ]                                                                      │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+Step 5: 结果合并
+─────────────────────
+  if (smallResults.length >= minResults):
+    return smallResults with Parent Expansion
+  else:
+    return fallbackResults (Parent Sparse)
 
 Step 3: RRF Fusion
 ────────────────────────

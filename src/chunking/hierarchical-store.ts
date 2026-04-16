@@ -30,13 +30,15 @@ const STORAGE_FILE = 'hierarchical-store.json';
  * - Parent chunks: provide full context (500-1500 tokens)
  * - Bidirectional lookup: small→parent, parent→children
  *
- * Now supports persistence to disk for data recovery after restart.
+ * NOTE: Embeddings are now stored in Qdrant, not here.
+ * This store only manages metadata (content, qualityScore, parentId, etc.)
+ *
+ * Supports persistence to disk for data recovery after restart.
  */
 export class HierarchicalStore {
   private smallChunks: Map<string, HierarchicalChunk> = new Map();
   private parentChunks: Map<string, HierarchicalChunk> = new Map();
   private config: SemanticChunkerConfig;
-  private documentEmbeddings: Map<string, number[]> = new Map();
   private storagePath?: string;
   private autoSave: boolean = false;
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -63,21 +65,27 @@ export class HierarchicalStore {
 
   /**
    * Save store to disk
+   * NOTE: Embeddings are not saved here - they're stored in Qdrant
    */
   async save(): Promise<void> {
     if (!this.storagePath) return;
 
+    // Strip embeddings from chunks before saving (they're in Qdrant)
+    const stripEmbedding = (chunk: HierarchicalChunk) => ({
+      ...chunk,
+      embedding: [], // Empty array - embeddings stored in Qdrant
+    });
+
     const data = {
-      version: 1,
-      smallChunks: Array.from(this.smallChunks.entries()),
-      parentChunks: Array.from(this.parentChunks.entries()),
-      documentEmbeddings: Array.from(this.documentEmbeddings.entries()),
+      version: 2, // New version without embeddings
+      smallChunks: Array.from(this.smallChunks.entries()).map(([id, chunk]) => [id, stripEmbedding(chunk)]),
+      parentChunks: Array.from(this.parentChunks.entries()).map(([id, chunk]) => [id, stripEmbedding(chunk)]),
       savedAt: new Date().toISOString(),
     };
 
     const filePath = path.join(this.storagePath, STORAGE_FILE);
     await fs.writeFile(filePath, JSON.stringify(data, null, 2));
-    console.log(`[HierarchicalStore] Saved ${this.smallChunks.size} small chunks, ${this.parentChunks.size} parent chunks`);
+    console.log(`[HierarchicalStore] Saved ${this.smallChunks.size} small chunks, ${this.parentChunks.size} parent chunks (embeddings in Qdrant)`);
   }
 
   /**
@@ -99,6 +107,7 @@ export class HierarchicalStore {
 
   /**
    * Load store from disk
+   * NOTE: Embeddings are loaded from Qdrant, not from this file
    */
   async load(): Promise<void> {
     if (!this.storagePath) return;
@@ -109,10 +118,18 @@ export class HierarchicalStore {
       const content = await fs.readFile(filePath, 'utf-8');
       const data = JSON.parse(content);
 
-      if (data.version === 1) {
+      // Support both v1 (old) and v2 (new without embeddings) formats
+      if (data.version === 1 || data.version === 2) {
         this.smallChunks = new Map(data.smallChunks);
         this.parentChunks = new Map(data.parentChunks);
-        this.documentEmbeddings = new Map(data.documentEmbeddings);
+
+        // Clear embeddings from loaded chunks (they're in Qdrant)
+        for (const chunk of this.smallChunks.values()) {
+          chunk.embedding = [];
+        }
+        for (const chunk of this.parentChunks.values()) {
+          chunk.embedding = [];
+        }
 
         console.log(`[HierarchicalStore] Loaded ${this.smallChunks.size} small chunks, ${this.parentChunks.size} parent chunks from ${data.savedAt}`);
       }
@@ -281,6 +298,7 @@ export class HierarchicalStore {
 
   /**
    * Create parent chunk from small chunk group
+   * NOTE: Embedding is empty - stored in Qdrant parent_chunks collection (sparse only)
    */
   private async createParentChunk(
     smallChunks: HierarchicalChunk[],
@@ -288,15 +306,6 @@ export class HierarchicalStore {
   ): Promise<HierarchicalChunk> {
     // Merge content from small chunks
     const content = smallChunks.map(c => c.content).join('\n\n');
-
-    // Calculate parent embedding (aggregate from children)
-    const childEmbeddings = smallChunks
-      .filter(c => c.embedding.length > 0)
-      .map(c => c.embedding);
-
-    const embedding = childEmbeddings.length > 0
-      ? aggregateEmbeddings(childEmbeddings)
-      : [];
 
     // Calculate position
     const minStart = Math.min(...smallChunks.map(c => c.position.start));
@@ -307,7 +316,7 @@ export class HierarchicalStore {
 
     return createHierarchicalChunk(
       content,
-      embedding,
+      [], // Empty embedding - stored in Qdrant (sparse only for parent)
       'parent',
       { start: minStart, end: maxEnd },
       sourceDocumentId,
@@ -514,6 +523,7 @@ export class HierarchicalStore {
 
   /**
    * Remove all chunks for a document
+   * NOTE: Vectors in Qdrant should also be deleted separately using VectorStoreAdapter
    */
   removeDocumentChunks(documentId: string): void {
     const { small, parent } = this.getChunksByDocument(documentId);
@@ -526,24 +536,8 @@ export class HierarchicalStore {
       this.parentChunks.delete(chunk.id);
     }
 
-    this.documentEmbeddings.delete(documentId);
-
     // Trigger auto-save after removal
     this.scheduleSave();
-  }
-
-  /**
-   * Set document embedding for relevance scoring
-   */
-  setDocumentEmbedding(documentId: string, embedding: number[]): void {
-    this.documentEmbeddings.set(documentId, embedding);
-  }
-
-  /**
-   * Get document embedding
-   */
-  getDocumentEmbedding(documentId: string): number[] | undefined {
-    return this.documentEmbeddings.get(documentId);
   }
 
   /**
@@ -558,11 +552,11 @@ export class HierarchicalStore {
 
   /**
    * Clear all chunks
+   * NOTE: Vectors in Qdrant should also be cleared separately
    */
   clear(): void {
     this.smallChunks.clear();
     this.parentChunks.clear();
-    this.documentEmbeddings.clear();
 
     // Trigger auto-save after clear
     this.scheduleSave();

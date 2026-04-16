@@ -1,4 +1,4 @@
-import { pipeline, env } from '@xenova/transformers';
+import { pipeline, env } from '@huggingface/transformers';
 import type { TextEmbeddingModel } from './embedding-model.js';
 import type { TextBlock, EmbeddingVector } from '../core/types.js';
 
@@ -36,9 +36,20 @@ export const LOCAL_MODEL_CONFIGS: Record<string, LocalEmbeddingConfig> = {
     dimension: 768,
     quantized: true,
   },
+  'multilingual-e5-large': {
+    modelId: 'Xenova/multilingual-e5-large',
+    dimension: 1024,
+    quantized: true,
+  },
   'all-MiniLM-L6-v2': {
     modelId: 'Xenova/all-MiniLM-L6-v2',
     dimension: 384,
+    quantized: true,
+  },
+  // bge-m3: 1024 dense + sparse support (requires @huggingface/transformers)
+  'bge-m3': {
+    modelId: 'BAAI/bge-m3',
+    dimension: 1024,
     quantized: true,
   },
 };
@@ -124,7 +135,6 @@ export class LocalTextEmbeddingService implements TextEmbeddingModel {
         // Load model with timeout
         this.extractor = await Promise.race([
           pipeline('feature-extraction', this.config.modelId, {
-            quantized: this.config.quantized,
             progress_callback: (progress: { status: string; progress?: number; file?: string }) => {
               if (progress.status === 'downloading') {
                 const percent = progress.progress ? `${Math.round(progress.progress)}%` : 'starting';

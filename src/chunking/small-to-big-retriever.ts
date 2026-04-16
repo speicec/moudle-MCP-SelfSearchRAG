@@ -9,6 +9,7 @@ import { HierarchicalStore } from './hierarchical-store.js';
 import { cosineSimilarity, sortBySimilarity } from './utils.js';
 import type { ConfidenceRetrievalResult } from '../retrieval/types.js';
 import { createDefaultConfidenceResult, determineConfidenceLevel } from '../retrieval/types.js';
+import type { HybridSmallToBigRetriever, HybridSearchResult } from '../retrieval/hybrid-small-to-big-retriever.js';
 
 /**
  * Query cache for embedding reuse
@@ -58,13 +59,18 @@ class QueryCache {
  *
  * Phase 1: Search in small chunks for precise matching
  * Phase 2: Expand to parent chunks for complete context
+ *
+ * Supports two modes:
+ * - Hybrid mode (with HybridSmallToBigRetriever): Uses Qdrant Dense+Sparse search
+ * - Legacy mode (without HybridRetriever): Uses in-memory cosine similarity
  */
 export class SmallToBigRetriever {
   private config: SmallToBigRetrievalConfig;
   private store: HierarchicalStore;
   private queryCache: QueryCache;
   private embeddingGenerator?: (text: string) => Promise<number[]>;
-  private embeddingTimeoutMs: number = 10000; // 10 second timeout for embedding calls (5.4)
+  private hybridRetriever?: HybridSmallToBigRetriever;
+  private embeddingTimeoutMs: number = 10000;
 
   constructor(
     store: HierarchicalStore,
@@ -73,6 +79,22 @@ export class SmallToBigRetriever {
     this.store = store;
     this.config = { ...DEFAULT_RETRIEVAL_CONFIG, ...config };
     this.queryCache = new QueryCache();
+  }
+
+  /**
+   * Set hybrid retriever for Dense+Sparse search
+   * When set, uses Qdrant for vector search instead of in-memory
+   */
+  setHybridRetriever(retriever: HybridSmallToBigRetriever): void {
+    this.hybridRetriever = retriever;
+    console.log('[SmallToBigRetriever] Hybrid retriever configured - using Qdrant for search');
+  }
+
+  /**
+   * Check if hybrid mode is enabled
+   */
+  isHybridMode(): boolean {
+    return this.hybridRetriever !== undefined;
   }
 
   /**
@@ -146,8 +168,15 @@ export class SmallToBigRetriever {
 
   /**
    * Retrieve relevant chunks using Small-to-Big strategy
+   * Uses HybridRetriever if configured, otherwise falls back to in-memory search
    */
   async retrieve(query: string): Promise<HierarchicalRetrievalResult[]> {
+    // Check if hybrid retriever is configured
+    if (this.hybridRetriever) {
+      return this.retrieveHybrid(query);
+    }
+
+    // Legacy in-memory search mode
     // 6.1: Generate query embedding
     const queryEmbedding = await this.getQueryEmbedding(query);
 
@@ -160,18 +189,14 @@ export class SmallToBigRetriever {
     );
 
     if (filteredResults.length === 0 && this.config.enableFallback) {
-      // 4.2: Log fallback trigger with reason and result count
       console.log('[SmallToBigRetriever] Fallback triggered: reason=no primary results above threshold', `| threshold=${this.config.similarityThreshold}`);
 
-      // 6.7: Fallback to direct parent search
       const fallbackResults = await this.fallbackSearch(queryEmbedding);
 
-      // 4.2: Log fallback result count
       console.log('[SmallToBigRetriever] Fallback results:', fallbackResults.length, `| threshold=${this.config.fallbackThreshold}`);
 
-      // 3.3: Early termination when no fallback results meet threshold
       if (fallbackResults.length === 0) {
-        return []; // No results meet fallback threshold
+        return [];
       }
 
       return fallbackResults;
@@ -194,6 +219,44 @@ export class SmallToBigRetriever {
     const limited = deduplicated.slice(0, this.config.topK);
 
     return limited;
+  }
+
+  /**
+   * Retrieve using HybridRetriever (Dense+Sparse with Qdrant)
+   */
+  private async retrieveHybrid(query: string): Promise<HierarchicalRetrievalResult[]> {
+    console.log('[SmallToBigRetriever] Using hybrid retrieval (Dense+Sparse)');
+
+    // Call hybrid retriever
+    const hybridResults = await this.hybridRetriever!.searchHybrid(
+      query,
+      this.config.topK,
+      undefined
+    );
+
+    // Convert HybridSearchResult to HierarchicalRetrievalResult
+    const results: HierarchicalRetrievalResult[] = [];
+
+    for (const hr of hybridResults) {
+      // Get parent chunk from store for additional metadata
+      const parentChunk = this.store.getChunk(hr.parentChunkId);
+
+      results.push({
+        smallChunkId: hr.matchedSmallChunks[0]?.smallChunkId ?? hr.parentChunkId,
+        parentChunkId: hr.parentChunkId,
+        smallChunkContent: hr.matchedSmallChunks[0]?.smallContent ?? '',
+        parentChunkContent: hr.parentContent,
+        similarityScore: hr.parentScore,
+        sourceDocumentId: parentChunk?.sourceDocumentId ?? '',
+        metadata: parentChunk?.metadata ?? { contentType: 'text' },
+        expandedFromSmallChunk: hr.method === 'hybrid_small',
+        qualityScore: parentChunk?.qualityScore ?? { composite: 0, dimensions: { informationDensity: 0, repetitionRatio: 0, semanticCompleteness: 0, documentRelevance: 0 }, evaluatedAt: new Date() },
+      });
+    }
+
+    console.log('[SmallToBigRetriever] Hybrid retrieval results:', results.length);
+
+    return results;
   }
 
   /**

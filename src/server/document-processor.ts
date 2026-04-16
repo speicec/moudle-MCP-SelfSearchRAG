@@ -19,6 +19,11 @@ import { PluginRegistry } from '../core/plugin.js';
 import type { TextChunk, EmbeddingResult } from '../core/context.js';
 import type { ParsedContent } from '../core/types.js';
 import { v4 as uuidv4 } from 'uuid';
+import type { VectorStoreAdapter, VectorPoint } from '../retrieval/vector-store-adapter.js';
+import { COLLECTION_NAMES } from '../retrieval/vector-store-adapter.js';
+import type { QdrantVectorStoreAdapter } from '../retrieval/qdrant-client.js';
+import type { HybridEmbeddingService } from '../embedding/hybrid-embedding-service.js';
+import { ImageEmbeddingService, createImageEmbeddingService } from '../embedding/image-embedding-service.js';
 
 /**
  * Processing options
@@ -319,6 +324,138 @@ async function storeInHierarchical(
 }
 
 /**
+ * Store vectors in Qdrant using Hybrid mode
+ * - Small chunks: Dense (1024) + Sparse vectors
+ * - Parent chunks: Sparse only vectors
+ * - Image chunks: Dense (512) only
+ */
+async function storeVectorsInQdrant(
+  chunks: TextChunk[],
+  documentId: string,
+  vectorStore: QdrantVectorStoreAdapter,
+  hybridEmbedding: HybridEmbeddingService,
+  hierarchicalStore: HierarchicalStore,
+  imageStore?: ImageStore,
+  imageEmbeddingService?: ImageEmbeddingService
+): Promise<void> {
+  console.log(`[HybridStorage] Storing vectors in Qdrant for document ${documentId}`);
+
+  // Get all small and parent chunks from HierarchicalStore
+  const smallChunks = hierarchicalStore.getChunksByDocument(documentId).small;
+  const parentChunks = hierarchicalStore.getChunksByDocument(documentId).parent;
+
+  // Process small chunks: Dense + Sparse
+  const smallPoints: VectorPoint[] = [];
+  for (const smallChunk of smallChunks) {
+    if (!smallChunk) continue;
+
+    try {
+      // Generate hybrid embedding (Dense + Sparse)
+      const hybridResult = await hybridEmbedding.embedHybrid(smallChunk.content);
+
+      smallPoints.push({
+        id: smallChunk.id,
+        vector: hybridResult.dense,
+        sparseVector: hybridResult.sparse,
+        payload: {
+          documentId,
+          chunkId: smallChunk.id,
+          parentId: smallChunk.parentId ?? undefined,
+          level: 'small',
+          modality: 'text',
+          qualityScore: smallChunk.qualityScore.composite,
+          pageNumber: smallChunk.metadata.pageNumber,
+          contentType: smallChunk.metadata.contentType,
+          position: smallChunk.position,
+        },
+      });
+    } catch (error) {
+      console.warn(`[HybridStorage] Failed to embed small chunk ${smallChunk.id}:`, error);
+    }
+  }
+
+  // Upsert small chunks to Qdrant
+  if (smallPoints.length > 0) {
+    await vectorStore.upsertSmall(smallPoints);
+    console.log(`[HybridStorage] Upserted ${smallPoints.length} small chunks (Dense+Sparse)`);
+  }
+
+  // Process parent chunks: Sparse only
+  const parentPoints: VectorPoint[] = [];
+  for (const parentChunk of parentChunks) {
+    if (!parentChunk) continue;
+
+    try {
+      // Generate sparse-only embedding for parent
+      const sparseResult = await hybridEmbedding.embedSparseOnly(parentChunk.content);
+
+      parentPoints.push({
+        id: parentChunk.id,
+        sparseVector: sparseResult.sparse,
+        payload: {
+          documentId,
+          chunkId: parentChunk.id,
+          level: 'parent',
+          modality: 'text',
+          qualityScore: parentChunk.qualityScore.composite,
+          pageNumber: parentChunk.metadata.pageNumber,
+          contentType: 'text',
+          position: parentChunk.position,
+          childIds: parentChunk.childIds,
+        },
+      });
+    } catch (error) {
+      console.warn(`[HybridStorage] Failed to embed parent chunk ${parentChunk.id}:`, error);
+    }
+  }
+
+  // Upsert parent chunks to Qdrant (sparse only)
+  if (parentPoints.length > 0) {
+    await vectorStore.upsertParent(parentPoints);
+    console.log(`[HybridStorage] Upserted ${parentPoints.length} parent chunks (Sparse only)`);
+  }
+
+  // Process image chunks: Dense only (CLIP 512 dimensions)
+  if (imageStore && imageEmbeddingService) {
+    const imageRecords = imageStore.getImagesByDocument(documentId);
+    const imagePoints: VectorPoint[] = [];
+
+    for (const imageRecord of imageRecords) {
+      if (!imageRecord || !imageRecord.imageBuffer) continue;
+
+      try {
+        // Generate Dense embedding using CLIP
+        const denseVector = await imageEmbeddingService.embedImageBuffer(imageRecord.imageBuffer);
+
+        imagePoints.push({
+          id: imageRecord.id,
+          vector: denseVector,
+          payload: {
+            documentId,
+            chunkId: imageRecord.id,
+            level: 'image',
+            modality: 'image',
+            blockType: imageRecord.blockType,
+            pageNumber: imageRecord.pageNumber,
+            vlmText: imageRecord.ocrText,
+          },
+        });
+      } catch (error) {
+        console.warn(`[HybridStorage] Failed to embed image ${imageRecord.id}:`, error);
+      }
+    }
+
+    // Upsert image chunks to Qdrant (Dense only)
+    if (imagePoints.length > 0) {
+      await vectorStore.upsertImage(imagePoints);
+      console.log(`[HybridStorage] Upserted ${imagePoints.length} image chunks (Dense only, 512d)`);
+    }
+  }
+
+  console.log(`[HybridStorage] Vector storage complete for document ${documentId}`);
+}
+
+/**
  * Store images from parsedContent in ImageStore
  */
 async function storeImagesInImageStore(
@@ -431,6 +568,11 @@ export async function processDocumentAsync(options: ProcessOptions): Promise<voi
   const hierarchicalStore = fastify.hierarchicalStore;
   const imageStore = fastify.imageStore as ImageStore | undefined;
 
+  // Get hybrid mode components (if available)
+  const vectorStoreAdapter = (fastify as any).vectorStoreAdapter as QdrantVectorStoreAdapter | undefined;
+  const hybridEmbeddingService = (fastify as any).hybridEmbeddingService as HybridEmbeddingService | undefined;
+  const imageEmbeddingService = (fastify as any).imageEmbeddingService as ImageEmbeddingService | undefined;
+
   if (!wsHandler || !hierarchicalStore) {
     fastify.log.error({ documentId }, 'Missing wsHandler or hierarchicalStore');
     throw new Error('Server not properly initialized');
@@ -456,6 +598,31 @@ export async function processDocumentAsync(options: ProcessOptions): Promise<voi
 
     // Update status based on result
     if (result.status === 'success') {
+      // Store vectors in Qdrant if hybrid mode is enabled
+      if (vectorStoreAdapter && hybridEmbeddingService) {
+        try {
+          // Get chunks from result context
+          const ctx = result.context as unknown as {
+            getChunks?: () => TextChunk[];
+            getEmbeddings?: () => EmbeddingResult[];
+          };
+          const chunks = ctx?.getChunks?.() ?? [];
+
+          await storeVectorsInQdrant(
+            chunks,
+            documentId,
+            vectorStoreAdapter,
+            hybridEmbeddingService,
+            hierarchicalStore,
+            imageStore,
+            imageEmbeddingService
+          );
+          fastify.log.info({ documentId }, 'Vectors stored in Qdrant');
+        } catch (vectorError) {
+          fastify.log.warn({ documentId, error: vectorError }, 'Failed to store vectors in Qdrant, document indexed without vector storage');
+        }
+      }
+
       await updateMetadata(storagePath, documentId, { status: 'indexed' });
       fastify.log.info({ documentId }, 'Document processed successfully');
     } else {

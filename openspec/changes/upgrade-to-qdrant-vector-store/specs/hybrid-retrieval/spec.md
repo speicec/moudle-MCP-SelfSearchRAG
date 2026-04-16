@@ -207,35 +207,77 @@ function rrfFusion(
 
 ## Qdrant Collection Schema
 
+### text_chunks Collection (Small Chunks - Dense + Sparse)
+
 ```typescript
-// text_chunks Collection (Hybrid)
+// Qdrant text_chunks Collection
+// 只存储 Small Chunks，用于主搜索
+
 interface TextChunkPoint {
-  id: string;                    // chunkId
+  id: string;                    // smallChunkId
   
-  // Dense vector (1024维)
+  // Dense vector (1024维) - 语义搜索
   vector: number[];
   
-  // Sparse vector (Qdrant v1.5+)
-  sparse_values?: {
+  // Sparse vector - 关键词搜索
+  sparse_values: {
     indices: number[];           // 词 ID (内部映射)
     values: number[];            // 权重
   };
   
-  // 或者用 payload 存储 sparse
   payload: {
     documentId: string;
-    chunkId: string;
-    parentId?: string;
-    level: 'small' | 'parent';
+    chunkId: string;             // smallChunkId
+    parentId: string;            // 关联 Parent (关键!)
+    level: "small";              // 固定为 small
     qualityScore: number;
     pageNumber?: number;
     contentType: string;
     position: { start: number; end: number };
-    
-    // Sparse 向量备用存储
-    sparseVector?: Record<string, number>;  // 词:权重
   };
 }
+```
+
+### parent_chunks Collection (Parent Chunks - Sparse Only)
+
+```typescript
+// Qdrant parent_chunks Collection
+// 只存储 Sparse，用于 Fallback 索引搜索
+
+interface ParentChunkPoint {
+  id: string;                    // parentChunkId
+  
+  // 只有 Sparse，没有 Dense
+  sparse_values: {
+    indices: number[];
+    values: number[];
+  };
+  
+  payload: {
+    documentId: string;
+    chunkId: string;             // parentChunkId
+    level: "parent";             // 固定为 parent
+    childIds: string[];          // 子 Small Chunk IDs
+    qualityScore: number;
+    tokenCount: number;          // Parent token 长度
+    pageNumber?: number;
+  };
+}
+```
+
+**存储对比**:
+
+| Collection | Dense | Sparse | 100K 向量存储 |
+|------------|-------|--------|---------------|
+| text_chunks (Small) | ✓ 1024维 | ✓ | ~400MB |
+| parent_chunks (Parent) | - | ✓ only | ~20MB |
+| **总计** | - | - | **~420MB (+20%)** |
+
+**Parent Sparse Index 优势**:
+- Fallback 索引搜索，无需遍历
+- Sparse 向量轻量（词权重，压缩友好）
+- 关键词匹配精确（中文优化）
+- 存储开销可控（~5% Dense 开销）
 ```
 
 ## Search API
@@ -250,9 +292,10 @@ interface HybridSearchQuery {
   // Hybrid 配置
   hybrid?: {
     enabled: boolean;
-    denseWeight?: number;    // 默认 0.5 (RRF 不用权重)
-    sparseWeight?: number;   // 默认 0.5
     rrfK?: number;           // RRF 参数，默认 60
+    denseTopK?: number;      // Small Dense 搜索 topK
+    sparseTopK?: number;     // Small Sparse 搜索 topK
+    fallbackSparseTopK?: number;  // Parent Sparse Fallback topK
   };
 }
 
@@ -262,9 +305,70 @@ interface HybridSearchResult {
     denseCount: number;
     sparseCount: number;
     overlapCount: number;    // 双路都召回的 chunk
-    method: 'hybrid' | 'dense_only' | 'sparse_only';
+    method: 'hybrid_small' | 'fallback_parent_sparse';
   };
 }
+
+// 搜索模式
+type SearchMode = 'small_hybrid' | 'parent_sparse_fallback' | 'combined';
+```
+
+## Search Flow (Small + Parent Sparse)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  双 Collection 搜索流程                                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Phase 1: Small Chunk Hybrid Search
+───────────────────────────────────────────────
+  Query → bge-m3 → Dense + Sparse
+         │
+         ├─→ Qdrant.searchDense('text_chunks', dense, topK=50)
+         │     → Dense Results: small chunkIds
+         │
+         ├─→ Qdrant.searchSparse('text_chunks', sparse, topK=50)
+         │     → Sparse Results: small chunkIds
+         │
+         └─→ RRF Fusion → fusedSmallChunkIds[]
+               │
+               └─→ 按 parentId 分组 → Parent Expansion
+                     │
+                     └─→ HierarchicalStore.getParents(parentIds)
+                           → Parent Content
+
+Phase 2: Fallback (Parent Sparse Index Search)
+─────────────────────────────────────────────────
+  条件: Small Hybrid 结果不足 (count < minResults)
+  
+  Query → bge-m3 → Sparse only (跳过 Dense)
+         │
+         └─→ Qdrant.searchSparse('parent_chunks', sparse, topK=20)
+               │
+               └─→ Parent Sparse Results: parentChunkIds[]
+                     │
+                     └─→ HierarchicalStore.getParents(parentIds)
+                           → Parent Content
+
+Phase 3: 结果合并
+─────────────────────────────────────────────────
+  if (smallResults.length >= minResults):
+    return smallResults (with Parent Expansion)
+  else:
+    return fallbackResults (Parent Sparse)
+```
+
+## Testing Criteria
+
+- Dense 向量维度验证 (1024)
+- Sparse 向量词权重范围验证 (>0, <1)
+- Small Collection 双路搜索验证
+- Parent Collection Sparse 搜索验证
+- RRF 融合正确性验证
+- Parent Expansion 分组验证
+- Fallback 触发条件验证
+- 检索延迟测试 (Small <30ms, Parent Fallback <15ms)
+- 中文关键词匹配测试 (对比纯 Dense)
 ```
 
 ## Configuration

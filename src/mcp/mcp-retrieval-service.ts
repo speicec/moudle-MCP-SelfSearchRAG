@@ -1,6 +1,7 @@
 import { HierarchicalStore } from '../chunking/hierarchical-store.js';
 import { SmallToBigRetriever } from '../chunking/small-to-big-retriever.js';
 import type { HierarchicalRetrievalResult } from '../chunking/types.js';
+import type { HybridSmallToBigRetriever } from '../retrieval/hybrid-small-to-big-retriever.js';
 
 /**
  * MCP Retrieval result format
@@ -65,6 +66,22 @@ export class McpRetrievalService {
   setEmbeddingGenerator(generator: (text: string) => Promise<number[]>): void {
     this.embeddingGenerator = generator;
     this.retriever.setEmbeddingGenerator(generator);
+  }
+
+  /**
+   * Set hybrid retriever for Dense+Sparse search
+   * When set, the retriever will use Qdrant instead of in-memory search
+   */
+  setHybridRetriever(hybridRetriever: HybridSmallToBigRetriever): void {
+    this.retriever.setHybridRetriever(hybridRetriever);
+    console.log('[McpRetrievalService] Hybrid retriever configured');
+  }
+
+  /**
+   * Check if hybrid mode is enabled
+   */
+  isHybridMode(): boolean {
+    return this.retriever.isHybridMode();
   }
 
   /**

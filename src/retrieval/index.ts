@@ -25,3 +25,16 @@ export {
 } from './enhanced-retrieval-pipeline.js';
 // Rename to avoid collision
 export { PipelineResult as EnhancedPipelineResult } from './enhanced-retrieval-pipeline.js';
+
+// Vector Store Adapter exports (new)
+export * from './vector-store-adapter.js';
+export * from './in-memory-adapter.js';
+export * from './vector-store-factory.js';
+export * from './qdrant-client.js';
+
+// Hybrid Retrieval exports (new)
+export * from './rrf-fusion.js';
+export * from './hybrid-small-to-big-retriever.js';
+
+// Rename SearchResult from vector-store-adapter to avoid collision with core
+export { SearchResult as VectorSearchResult } from './vector-store-adapter.js';

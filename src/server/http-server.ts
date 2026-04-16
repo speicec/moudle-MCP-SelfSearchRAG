@@ -15,6 +15,9 @@ import { ImageStore, createImageStore } from '../chunking/image-store.js';
 import { getEmbeddingFactory, getEmbeddingMode } from '../embedding/embedding-factory.js';
 import { TextEmbeddingService } from '../embedding/embedding-service.js';
 import { StatsAggregationService, createStatsAggregationService } from './stats-aggregation-service.js';
+import { getVectorStoreFactory, type VectorStoreType } from '../retrieval/vector-store-factory.js';
+import { createHybridSmallToBigRetriever } from '../retrieval/hybrid-small-to-big-retriever.js';
+import { createImageEmbeddingService } from '../embedding/image-embedding-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,11 +72,39 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
 
   // Log embedding service configuration status
   const mode = getEmbeddingMode();
-  if (mode === 'local') {
+  if (mode === 'hybrid') {
+    fastify.log.info('Embedding service: Using HYBRID embedding (bge-m3, Dense 1024d + Sparse)');
+    fastify.log.info('Vector Store: Qdrant (HNSW + Sparse Index)');
+  } else if (mode === 'local') {
     fastify.log.info('Embedding service: Using LOCAL embedding (transformers.js, multilingual support)');
   } else {
     const hasApiKey = !!process.env.EMBEDDING_API_KEY || !!process.env.OPENAI_API_KEY;
     fastify.log.info(`Embedding service: Using API embedding (${hasApiKey ? 'configured' : 'MOCK - no API key'})`);
+  }
+
+  // Initialize VectorStore if hybrid mode is enabled
+  let vectorStoreAdapter: any = null;
+  let hybridRetriever: any = null;
+
+  if (mode === 'hybrid') {
+    try {
+      const vectorStoreFactory = getVectorStoreFactory();
+      vectorStoreAdapter = await vectorStoreFactory.createAdapter();
+      fastify.log.info(`VectorStore initialized: ${vectorStoreFactory.getType()}`);
+
+      // Create HybridRetriever
+      const hybridEmbeddingService = embeddingFactory.getHybridEmbeddingService();
+      if (hybridEmbeddingService && vectorStoreAdapter) {
+        hybridRetriever = createHybridSmallToBigRetriever(
+          vectorStoreAdapter,
+          hierarchicalStore,
+          hybridEmbeddingService
+        );
+        fastify.log.info('HybridSmallToBigRetriever initialized');
+      }
+    } catch (error) {
+      fastify.log.warn('Failed to initialize VectorStore, falling back to in-memory mode: ' + (error instanceof Error ? error.message : String(error)));
+    }
   }
 
   // Register API routes
@@ -84,6 +115,19 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
   fastify.decorate('imageStore', imageStore);
   // Store embeddingService as any to avoid type issues with Fastify's decorate
   fastify.decorate('embeddingService', embeddingService as unknown as TextEmbeddingService);
+
+  // Decorate with VectorStore and HybridEmbeddingService for hybrid mode
+  if (mode === 'hybrid' && vectorStoreAdapter) {
+    fastify.decorate('vectorStoreAdapter', vectorStoreAdapter);
+    const hybridEmbeddingService = embeddingFactory.getHybridEmbeddingService();
+    if (hybridEmbeddingService) {
+      fastify.decorate('hybridEmbeddingService', hybridEmbeddingService);
+    }
+  }
+
+  // Create and decorate ImageEmbeddingService for image vector storage
+  const imageEmbeddingService = createImageEmbeddingService();
+  fastify.decorate('imageEmbeddingService', imageEmbeddingService);
 
   await fastify.register(chatRoutes, { prefix: '/api/chat' });
   await fastify.register(statsRoutes, { prefix: '/api/stats' });
@@ -124,14 +168,14 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
     };
   });
 
-  return { fastify, wsHandler, hierarchicalStore, imageStore, statsService };
+  return { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter };
 }
 
 /**
  * Start HTTP server
  */
 export async function startHttpServer(config: Partial<HttpServerConfig> = {}): Promise<void> {
-  const { fastify, wsHandler, hierarchicalStore, imageStore, statsService } = await createHttpServer(config);
+  const { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter } = await createHttpServer(config);
   const finalConfig = { ...DEFAULT_HTTP_SERVER_CONFIG, ...config };
 
   // Store wsHandler, hierarchicalStore, and imageStore globally for pipeline emitter access
@@ -164,6 +208,17 @@ export async function startHttpServer(config: Partial<HttpServerConfig> = {}): P
   const shutdown = async () => {
     fastify.log.info('Shutting down server...');
     statsService?.stop();
+
+    // Close VectorStore connection if initialized
+    if (vectorStoreAdapter) {
+      try {
+        await vectorStoreAdapter.shutdown();
+        fastify.log.info('VectorStore connection closed');
+      } catch (error) {
+        fastify.log.warn('Error closing VectorStore: ' + (error instanceof Error ? error.message : String(error)));
+      }
+    }
+
     wsHandler.broadcast({
       type: 'error',
       message: 'Server shutting down',
