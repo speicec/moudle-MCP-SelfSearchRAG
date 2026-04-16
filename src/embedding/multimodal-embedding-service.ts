@@ -1,4 +1,4 @@
-import { pipeline, env } from '@xenova/transformers';
+import { pipeline, env } from '@huggingface/transformers';
 import type { ImageEmbeddingModel } from './embedding-model.js';
 import type { ImageBlock, EmbeddingVector } from '../core/types.js';
 
@@ -122,7 +122,6 @@ export class MultimodalEmbeddingService implements ImageEmbeddingModel {
         // Load model with timeout
         this.imageClassifier = await Promise.race([
           pipeline('zero-shot-image-classification', this.config.modelId, {
-            quantized: this.config.quantized,
             progress_callback: (progress: { status: string; progress?: number; file?: string }) => {
               if (progress.status === 'downloading') {
                 const percent = progress.progress ? `${Math.round(progress.progress)}%` : 'starting';

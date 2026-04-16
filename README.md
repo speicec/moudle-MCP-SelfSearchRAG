@@ -105,18 +105,19 @@ PDF → 图片渲染 → OCR版面分析 → VLM增强 → 存入索引
           │
           ▼
   ┌───────────────────────────────────────────────────────────────────────────┐
-  │  数据层: DocumentStore + HierarchicalStore + ImageStore                  │
+  │  数据层: DocumentStore + HierarchicalStore + ImageStore + Qdrant         │
+  │          (元数据存储)            (向量索引: Dense+Sparse)                 │
   └───────────────────────────────────────────────────────────────────────────┘
           │
           ▼
   ┌───────────────────────────────────────────────────────────────────────────┐
-  │  检索与生成: Enhanced Retrieval Pipeline + DeepSeek LLM (思考链)          │
-  │              Analyzer → Rewriter → Expander → Retriever → Reranker        │
+  │  检索与生成: Hybrid Retriever + Enhanced Pipeline + DeepSeek LLM         │
+  │              Dense+Sparse → RRF融合 → Parent扩展 → 置信度重排             │
   └───────────────────────────────────────────────────────────────────────────┘
           │
           ▼
   ┌───────────────────────────────────────────────────────────────────────────┐
-  │  外部服务: PaddleOCR + DashScope VLM + Transformers本地嵌入              │
+  │  外部服务: PaddleOCR + DashScope VLM + Transformers (bge-m3)             │
   └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -135,7 +136,12 @@ export DASHSCOPE_API_KEY=your_key       # VLM图片理解
 # 3. 启动OCR服务（处理扫描PDF需要）
 cd scripts && uv run ocr_service.py
 
-# 4. 启动主服务
+# 4. 启动Qdrant向量数据库（可选，用于Hybrid检索）
+docker run -p 6333:6333 qdrant/qdrant
+export VECTOR_STORE_TYPE=qdrant
+export EMBEDDING_MODE=hybrid
+
+# 5. 启动主服务
 npm run dev
 ```
 
@@ -144,6 +150,29 @@ npm run dev
 ---
 
 ## 🔧 配置说明
+
+### Hybrid检索 (Qdrant + bge-m3)
+
+**推荐配置**：启用Hybrid检索获得最佳性能。
+
+```bash
+# Qdrant向量数据库
+VECTOR_STORE_TYPE=qdrant          # 使用Qdrant (默认: in-memory)
+QDRANT_URL=http://localhost:6333  # Qdrant服务地址
+QDRANT_API_KEY=your_key           # 可选，用于认证
+
+# Hybrid嵌入模式
+EMBEDDING_MODE=hybrid             # Dense+Sparse混合 (推荐)
+HYBRID_RETRIEVAL_ENABLED=true     # 启用Hybrid检索
+```
+
+**架构优势**：
+- **Dense向量** (1024维)：语义相似度搜索，理解查询意图
+- **Sparse向量** (词权重)：关键词精确匹配，中文检索更准
+- **RRF融合**：无需归一化，自动平衡两种搜索结果
+- **性能提升**：HNSW索引 O(logN) vs 内存线性 O(N)
+
+详见 [docs/hybrid-retrieval.md](docs/hybrid-retrieval.md)
 
 ### LLM智能问答 (DeepSeek)
 
@@ -241,6 +270,36 @@ Phase 2: 父块完整展开
 | GET | `/api/chat/config` | 获取检索配置预设 |
 | POST | `/api/chat/config` | 更新检索配置 |
 | GET | `/api/stats` | 系统统计 |
+| GET | `/api/ws-status` | WebSocket连接状态 |
+| GET | `/api/health` | 服务健康检查 |
+
+### HybridSearchResult 格式
+
+启用Hybrid模式后，检索结果包含融合信息：
+
+```json
+{
+  "parentChunkId": "uuid",
+  "parentContent": "完整父块内容",
+  "parentScore": 0.85,
+  "method": "hybrid_small", // 或 "fallback_parent_sparse"
+  "matchedSmallChunks": [
+    {
+      "smallChunkId": "uuid",
+      "score": 0.92,
+      "sources": ["dense", "sparse"],
+      "denseRank": 3,
+      "sparseRank": 1
+    }
+  ],
+  "fusionInfo": {
+    "denseHits": 15,
+    "sparseHits": 12,
+    "overlapHits": 5,
+    "fusedCount": 22
+  }
+}
+```
 
 ### WebSocket事件
 
