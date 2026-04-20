@@ -26,6 +26,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/**', 'node_modules/**', '*.test.ts', 'eslint-rules/*.ts'],
+    ignores: ['dist/**', 'node_modules/**', '**/*.test.ts', 'eslint-rules/*.ts'],
   },
 );
