@@ -4,7 +4,7 @@ import staticPlugin from '@fastify/static';
 import multipart from '@fastify/multipart';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import type { HttpServerConfig } from './types.js';
+import type { HttpServerConfig, PipelineEvent } from './types.js';
 import { DEFAULT_HTTP_SERVER_CONFIG } from './types.js';
 import { documentRoutes } from './routes/documents.js';
 import { chatRoutes } from './routes/chat.js';
@@ -12,7 +12,7 @@ import { statsRoutes } from './routes/stats.js';
 import { WebSocketHandler } from './websocket-handler.js';
 import { HierarchicalStore } from '../chunking/hierarchical-store.js';
 import { ImageStore, createImageStore } from '../chunking/image-store.js';
-import { getEmbeddingFactory, getEmbeddingMode } from '../embedding/embedding-factory.js';
+import { getEmbeddingFactory, getEmbeddingMode, type PreloadProgress } from '../embedding/embedding-factory.js';
 import { TextEmbeddingService } from '../embedding/embedding-service.js';
 import { StatsAggregationService, createStatsAggregationService } from './stats-aggregation-service.js';
 import { getVectorStoreFactory, type VectorStoreType } from '../retrieval/vector-store-factory.js';
@@ -202,6 +202,55 @@ export async function startHttpServer(config: Partial<HttpServerConfig> = {}): P
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
+  }
+
+  // Preload embedding models after server starts
+  // This avoids blocking the HTTP startup while models load
+  const mode = getEmbeddingMode();
+  if (mode === 'hybrid' || mode === 'local') {
+    fastify.log.info('Preloading embedding models (this may take a moment on first run)...');
+
+    // Broadcast startup progress via WebSocket
+    const broadcastProgress = (progress: PreloadProgress) => {
+      const event: PipelineEvent = {
+        type: 'startup:progress',
+        startupStage: progress.stage,
+        progress: progress.progress,
+        message: progress.message,
+        timestamp: Date.now(),
+      };
+      if (progress.model) {
+        event.model = progress.model;
+      }
+      wsHandler.broadcast(event);
+    };
+
+    try {
+      const embeddingFactory = getEmbeddingFactory();
+      await embeddingFactory.preloadModels(broadcastProgress);
+      fastify.log.info('Embedding models preloaded successfully');
+
+      // Broadcast ready status
+      wsHandler.broadcast({
+        type: 'startup:ready',
+        message: 'Server ready for document processing',
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      fastify.log.error(`Failed to preload models: ${error instanceof Error ? error.message : String(error)}`);
+      wsHandler.broadcast({
+        type: 'startup:error',
+        message: `Model preload failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: Date.now(),
+      });
+    }
+  } else {
+    // API mode - no preloading needed
+    wsHandler.broadcast({
+      type: 'startup:ready',
+      message: 'Server ready (API embedding mode)',
+      timestamp: Date.now(),
+    });
   }
 
   // Graceful shutdown

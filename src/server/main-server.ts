@@ -11,6 +11,58 @@
  * - Frontend static file serving
  */
 
+// DOM polyfill for pdfjs-dist (Node.js environment)
+// pdfjs-dist requires DOMMatrix, ImageData, Path2D which are browser APIs
+import { createCanvas } from '@napi-rs/canvas';
+
+// Polyfill DOMMatrix using canvas
+if (typeof globalThis.DOMMatrix === 'undefined') {
+  const canvas = createCanvas(1, 1);
+  const ctx = canvas.getContext('2d');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).DOMMatrix = ctx.getTransform().constructor;
+}
+
+// Polyfill ImageData (simple implementation)
+if (typeof globalThis.ImageData === 'undefined') {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).ImageData = class ImageData {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+    constructor(widthOrData: number | Uint8ClampedArray, heightOrWidth?: number) {
+      if (typeof widthOrData === 'number') {
+        this.width = widthOrData;
+        this.height = heightOrWidth ?? widthOrData;
+        this.data = new Uint8ClampedArray(this.width * this.height * 4);
+      } else {
+        this.data = widthOrData;
+        this.width = heightOrWidth ?? Math.sqrt(widthOrData.length / 4);
+        this.height = Math.ceil(widthOrData.length / (this.width * 4));
+      }
+    }
+  };
+}
+
+// Polyfill Path2D
+if (typeof globalThis.Path2D === 'undefined') {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).Path2D = class Path2D {
+    private _ops: string[] = [];
+    addPath() {}
+    moveTo() {}
+    lineTo() {}
+    closePath() {}
+    arc() {}
+    arcTo() {}
+    ellipse() {}
+    bezierCurveTo() {}
+    quadraticCurveTo() {}
+    rect() {}
+    roundRect() {}
+  };
+}
+
 // Load environment variables from .env file
 import 'dotenv/config';
 

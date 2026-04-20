@@ -10,6 +10,16 @@ import { HybridEmbeddingService, createHybridEmbeddingService } from './hybrid-e
 export type EmbeddingMode = 'local' | 'api' | 'hybrid';
 
 /**
+ * Preload progress callback
+ */
+export interface PreloadProgress {
+  stage: 'checking' | 'loading_text' | 'loading_multimodal' | 'ready';
+  progress: number; // 0-100
+  message: string;
+  model?: string;
+}
+
+/**
  * Factory configuration
  */
 export interface EmbeddingFactoryConfig {
@@ -183,27 +193,73 @@ export class EmbeddingServiceFactory {
 
   /**
    * Preload models for faster first query
+   * @param onProgress - Optional progress callback for WebSocket notifications
    */
-  async preloadModels(): Promise<void> {
+  async preloadModels(onProgress?: (progress: PreloadProgress) => void): Promise<void> {
+    // Report initial status
+    onProgress?.({
+      stage: 'checking',
+      progress: 0,
+      message: 'Checking model cache...',
+    });
+
     if (this.mode === 'hybrid') {
       console.log('[EmbeddingFactory] Preloading hybrid models...');
+      onProgress?.({
+        stage: 'loading_text',
+        progress: 10,
+        message: 'Loading hybrid embedding model (bge-m3)...',
+        model: 'bge-m3',
+      });
 
       const hybridService = this.createHybridEmbeddingService();
       await hybridService.embedDense('test');
 
+      onProgress?.({
+        stage: 'ready',
+        progress: 100,
+        message: 'Hybrid models preloaded successfully',
+      });
       console.log('[EmbeddingFactory] Hybrid models preloaded successfully');
     } else if (this.mode === 'local') {
-      console.log('[EmbeddingFactory] Preloading models...');
+      console.log('[EmbeddingFactory] Preloading local models...');
+      onProgress?.({
+        stage: 'loading_text',
+        progress: 10,
+        message: 'Loading text embedding model...',
+        model: process.env.LOCAL_TEXT_MODEL ?? 'multilingual-e5-small',
+      });
 
       const textService = this.createTextEmbeddingService() as LocalTextEmbeddingService;
-      const multimodalService = this.createMultimodalEmbeddingService();
-
-      // Initialize text model
       await textService.embedText('test');
 
-      // Initialize multimodal model (if needed)
+      onProgress?.({
+        stage: 'loading_multimodal',
+        progress: 60,
+        message: 'Loading multimodal embedding model (CLIP)...',
+        model: 'clip-vit-base-patch32',
+      });
 
+      // Initialize multimodal model (optional, for image search)
+      const multimodalService = this.createMultimodalEmbeddingService();
+      // Note: We don't preload CLIP as it's rarely used on startup
+      // Users can trigger it by uploading image-based PDFs
+      console.log('[EmbeddingFactory] Multimodal service created (not preloaded)');
+
+      onProgress?.({
+        stage: 'ready',
+        progress: 100,
+        message: 'Local models preloaded successfully',
+      });
       console.log('[EmbeddingFactory] Models preloaded successfully');
+    } else {
+      // API mode - no preloading needed
+      onProgress?.({
+        stage: 'ready',
+        progress: 100,
+        message: 'API mode - no local models required',
+      });
+      console.log('[EmbeddingFactory] API mode - no model preloading needed');
     }
   }
 }

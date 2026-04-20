@@ -1,0 +1,66 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+dist/
+
+# Development
+.git/
+.gitignore
+*.md
+!README.md
+.eslintrc.cjs
+.prettierrc
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage/
+.nyc_output/
+*.test.ts
+*.spec.ts
+vitest.config.ts
+
+# Temp files
+*.tmp
+*.temp
+*.log
+
+# Claude
+.claude/
+
+# OpenSpec
+openspec/
+
+# Data (will be mounted as volume)
+data/
+
+# Config (allow synonyms.json for retrieval)
+!config/synonyms.json
+
+# Scripts (keep OCR service and model download scripts)
+!scripts/ocr_service.py
+!scripts/download-models.ts
+!scripts/download-bge-m3.js
+
+# Docs
+docs/
+
+# Env examples
+.env.example
+claude-desktop-config.example.json
+
+# Test files
+test-*.txt
+test-*.pdf

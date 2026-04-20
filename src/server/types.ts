@@ -22,7 +22,15 @@ export type PipelineEventType =
   | 'generation:answer'
   | 'generation:complete'
   | 'generation:error'
+  | 'startup:progress'
+  | 'startup:ready'
+  | 'startup:error'
   | 'error';
+
+/**
+ * Startup progress stage
+ */
+export type StartupStage = 'checking' | 'loading_text' | 'loading_multimodal' | 'ready';
 
 /**
  * Pipeline stage names
@@ -99,7 +107,8 @@ export interface StatsUpdateData {
  */
 export interface PipelineEvent {
   type: PipelineEventType;
-  stage?: PipelineStageName;
+  stage?: PipelineStageName; // Pipeline processing stages
+  startupStage?: StartupStage; // Startup progress stages (for startup:progress events)
   progress?: number; // 0-100
   message?: string;
   timestamp: number;
@@ -125,6 +134,8 @@ export interface PipelineEvent {
   thinkingTokens?: number;
   answerTokens?: number;
   totalDuration?: number;
+  // Startup event fields
+  model?: string;
 }
 
 /**

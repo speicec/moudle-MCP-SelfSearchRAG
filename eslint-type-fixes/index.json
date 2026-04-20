@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {
+      "id": "null-assignment",
+      "tsCode": 2322,
+      "brief": "Nullable type cannot be assigned to non-null type",
+      "tags": ["null", "nullable", "assignment", "type-mismatch"],
+      "file": "rules/2322.md"
+    }
+  ],
+  "version": "1.0.0",
+  "lastUpdated": "2026-04-20"
+}

@@ -1,0 +1,185 @@
+version: '3.8'
+
+# ==============================================================================
+# 增强型多模态 RAG 系统 - Docker Compose 配置
+# ==============================================================================
+#
+# 一键启动所有服务:
+#   docker-compose up -d
+#
+# 服务架构:
+#   - qdrant: 向量数据库 (Port 6333)
+#   - ocr-service: OCR服务 (Port 8080)
+#   - rag-server: 主服务 (Port 3001)
+#
+# ==============================================================================
+
+services:
+  # ============================================================================
+  # Qdrant 向量数据库
+  # - Dense向量: HNSW索引，O(logN)检索
+  # - Sparse向量: 词索引，精确匹配
+  # ============================================================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag-qdrant
+    ports:
+      - "6333:6333"      # REST API
+      - "6334:6334"      # gRPC API (可选)
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:6333/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - rag-network
+
+  # ============================================================================
+  # OCR 服务 (PaddleOCR PP-StructureV3)
+  # - 版面分析: 识别 text/table/figure/formula
+  # - OCR识别: 提取文本内容
+  # ============================================================================
+  ocr-service:
+    build:
+      context: ./ocr
+      dockerfile: Dockerfile
+    container_name: rag-ocr
+    ports:
+      - "8080:8080"
+    environment:
+      - OCR_USE_GPU=false
+      - OCR_PORT=8080
+    volumes:
+      - ocr_models:/root/.paddleocr
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s  # OCR模型加载较慢，需要更长启动时间
+    networks:
+      - rag-network
+
+  # ============================================================================
+  # RAG 主服务
+  # - HTTP API: 文档管理、检索、问答
+  # - WebSocket: 实时Pipeline事件
+  # - 前端: React Web Dashboard
+  # ============================================================================
+  rag-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-server
+    ports:
+      - "3001:3001"
+    environment:
+      # 向量存储 (容器内网络)
+      - VECTOR_STORE_TYPE=qdrant
+      - QDRANT_URL=http://qdrant:6333
+      - HYBRID_RETRIEVAL_ENABLED=true
+
+      # OCR 服务 (容器内网络)
+      - OCR_SERVICE_URL=http://ocr-service:8080
+      - OCR_TIMEOUT_MS=600000
+      - OCR_BATCH_SIZE=10
+      - OCR_MAX_PAGES=100
+
+      # 嵌入模型
+      - EMBEDDING_MODE=hybrid
+      - LOCAL_TEXT_MODEL=bge-m3
+      - LOCAL_MULTIMODAL_MODEL=clip-vit-base-patch32
+
+      # LLM API (从宿主机环境变量或.env传入)
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-reasoner}
+
+      # VLM API
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - DASHSCOPE_BASE_URL=${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - DASHSCOPE_MODEL=${DASHSCOPE_MODEL:-qwen3-vl-flash}
+      - VLM_ENABLE_THINKING=${VLM_ENABLE_THINKING:-false}
+      - VLM_THINKING_BUDGET=${VLM_THINKING_BUDGET:-8192}
+
+      # 检索配置
+      - CONTEXT_WINDOW_BEFORE_CHARS=300
+      - CONTEXT_WINDOW_AFTER_CHARS=500
+      - CONTEXT_WINDOW_RESPECT_SENTENCE=true
+      - RESPECT_STRUCTURE_BOUNDARIES=true
+
+      # 服务配置
+      - NODE_ENV=production
+      - PORT=3001
+      - HOST=0.0.0.0
+    volumes:
+      - ./data:/app/data                    # 文档存储持久化
+      - hf_cache:/root/.cache/huggingface   # 嵌入模型缓存
+    depends_on:
+      qdrant:
+        condition: service_started
+      ocr-service:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s  # 嵌入模型加载需要时间
+    networks:
+      - rag-network
+
+# ==============================================================================
+# 数据卷定义
+# ==============================================================================
+volumes:
+  qdrant_data:
+    name: rag_qdrant_data
+    driver: local
+
+  ocr_models:
+    name: rag_ocr_models
+    driver: local
+
+  hf_cache:
+    name: rag_hf_cache
+    driver: local
+
+# ==============================================================================
+# 网络定义
+# ==============================================================================
+networks:
+  rag-network:
+    name: rag_network
+    driver: bridge
+
+# ==============================================================================
+# 使用说明
+# ==============================================================================
+#
+# 1. 创建 .env 文件，填写 API Keys:
+#    DEEPSEEK_API_KEY=your-key
+#    DASHSCOPE_API_KEY=your-key
+#
+# 2. 一键启动:
+#    docker-compose up -d
+#
+# 3. 访问服务:
+#    http://localhost:3001 (Web Dashboard)
+#    http://localhost:6333/dashboard (Qdrant Dashboard)
+#
+# 4. 查看日志:
+#    docker-compose logs -f rag-server
+#
+# 5. 停止服务:
+#    docker-compose down
+#
+# ==============================================================================

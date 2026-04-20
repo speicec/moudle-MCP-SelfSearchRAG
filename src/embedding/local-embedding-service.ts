@@ -48,7 +48,8 @@ export const LOCAL_MODEL_CONFIGS: Record<string, LocalEmbeddingConfig> = {
   },
   // bge-m3: 1024 dense + sparse support (requires @huggingface/transformers)
   'bge-m3': {
-    modelId: 'BAAI/bge-m3',
+    // modelId: 'BAAI/bge-m3',
+    modelId: 'Xenova/bge-m3',
     dimension: 1024,
     quantized: true,
   },

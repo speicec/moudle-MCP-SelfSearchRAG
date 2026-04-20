@@ -55,7 +55,8 @@ export interface HybridModelConfig {
  */
 export const HYBRID_MODEL_CONFIGS: Record<string, HybridModelConfig> = {
   'bge-m3': {
-    modelId: 'BAAI/bge-m3',
+    // modelId: 'BAAI/bge-m3',
+    modelId: 'Xenova/bge-m3',
     denseDimension: 1024,
     quantized: true,
     sparseMinWeight: 0.01,

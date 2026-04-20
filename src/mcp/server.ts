@@ -10,6 +10,8 @@ import {
 import type { Harness } from '../core/harness.js';
 import type { DocumentStorage } from '../core/storage.js';
 import type { McpRetrievalService, McpRetrievalResult } from './mcp-retrieval-service.js';
+import { TYPE_FIX_TOOLS, getTypeFixToolList } from './type-fix-tools.js';
+import { TypeFixHandlers, createTypeFixHandlers } from './type-fix-handlers.js';
 
 /**
  * MCP server configuration
@@ -36,6 +38,7 @@ export class McpServer {
   private storage: DocumentStorage;
   private retrieval: McpRetrievalService;
   private config: McpServerConfig;
+  private typeFixHandlers: TypeFixHandlers;
 
   constructor(
     pipeline: Harness,
@@ -50,6 +53,7 @@ export class McpServer {
     this.pipeline = pipeline;
     this.storage = storage;
     this.retrieval = retrieval;
+    this.typeFixHandlers = createTypeFixHandlers();
 
     this.server = new Server(
       { name: this.config.name, version: this.config.version },
@@ -138,6 +142,8 @@ export class McpServer {
               },
             },
           },
+          // Type fix tools (self-evolving type safety)
+          ...getTypeFixToolList(),
         ],
       };
     });
@@ -155,6 +161,13 @@ export class McpServer {
           return this.handleGetDocument(args as unknown as GetDocumentArgs);
         case 'list_documents':
           return this.handleListDocuments(args as unknown as ListDocumentsArgs);
+        // Type fix tools
+        case 'type_fix':
+          return this.handleTypeFix(args as unknown as TypeFixArgs);
+        case 'record_fix':
+          return this.handleRecordFix(args as unknown as RecordFixArgs);
+        case 'type_fix_list':
+          return this.handleTypeFixList();
         default:
           throw new Error(`Unknown tool: ${name}`);
       }
@@ -324,6 +337,96 @@ export class McpServer {
   }
 
   /**
+   * Handle type_fix tool
+   */
+  private async handleTypeFix(args: TypeFixArgs): Promise<CallToolResult> {
+    try {
+      const result = await this.typeFixHandlers.typeFix(args.error_code, args.error_message);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+        isError: !result.success,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  /**
+   * Handle record_fix tool
+   */
+  private async handleRecordFix(args: RecordFixArgs): Promise<CallToolResult> {
+    try {
+      const result = await this.typeFixHandlers.recordFix({
+        rule_id: args.rule_id,
+        fix_type: args.fix_type,
+        success: args.success,
+        file: args.file,
+        line: args.line,
+      });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+        isError: !result.success,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  /**
+   * Handle type_fix_list tool
+   */
+  private async handleTypeFixList(): Promise<CallToolResult> {
+    try {
+      const result = await this.typeFixHandlers.typeFixList();
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+        isError: !result.success,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  /**
    * Start the MCP server
    */
   async start(): Promise<void> {
@@ -360,6 +463,19 @@ interface GetDocumentArgs {
 interface ListDocumentsArgs {
   limit?: number;
   status_filter?: string;
+}
+
+interface TypeFixArgs {
+  error_code: number;
+  error_message?: string;
+}
+
+interface RecordFixArgs {
+  rule_id: string;
+  fix_type: string;
+  success: boolean;
+  file?: string | undefined;
+  line?: number | undefined;
 }
 
 /**
