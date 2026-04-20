@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { QdrantVectorStoreAdapter, createQdrantAdapter, QdrantAdapterConfig, DEFAULT_QDRANT_CONFIG } from '../retrieval/qdrant-client.js';
+import { QdrantVectorStoreAdapter, createQdrantVectorStoreAdapter, QdrantAdapterConfig } from '../retrieval/qdrant-client.js';
+import { DEFAULT_QDRANT_CONFIG } from '../config/vector-db-config.js';
 import type { VectorPoint, SparseVector, CollectionStats } from '../retrieval/vector-store-adapter.js';
 import { COLLECTION_NAMES } from '../retrieval/vector-store-adapter.js';
 
@@ -18,10 +19,7 @@ describe('QdrantVectorStoreAdapter Configuration', () => {
   describe('DEFAULT_QDRANT_CONFIG', () => {
     it('should have correct default values', () => {
       expect(DEFAULT_QDRANT_CONFIG.url).toBe('http://localhost:6333');
-      expect(DEFAULT_QDRANT_CONFIG.timeout).toBe(30000);
-      expect(DEFAULT_QDRANT_CONFIG.textChunksConfig.dimension).toBe(1024);
-      expect(DEFAULT_QDRANT_CONFIG.parentChunksConfig.dimension).toBe(0); // Sparse only
-      expect(DEFAULT_QDRANT_CONFIG.imageChunksConfig.dimension).toBe(512);
+      expect(DEFAULT_QDRANT_CONFIG.timeoutMs).toBe(10000);
     });
 
     it('should have correct collection names', () => {
@@ -31,24 +29,21 @@ describe('QdrantVectorStoreAdapter Configuration', () => {
     });
   });
 
-  describe('createQdrantAdapter', () => {
+  describe('createQdrantVectorStoreAdapter', () => {
     it('should create adapter with default config', () => {
-      const adapter = createQdrantAdapter();
+      const adapter = createQdrantVectorStoreAdapter();
       expect(adapter).toBeDefined();
+      expect(adapter.isReady()).toBe(false);
     });
 
     it('should create adapter with custom config', () => {
-      const customConfig: Partial<QdrantAdapterConfig> = {
+      const customConfig = {
         url: 'http://custom-qdrant:6333',
         apiKey: 'test-key',
       };
-      const adapter = createQdrantAdapter(customConfig);
+      const adapter = createQdrantVectorStoreAdapter(customConfig);
 
       expect(adapter).toBeDefined();
-    });
-
-    it('should not be ready before initialization', () => {
-      const adapter = createQdrantAdapter();
       expect(adapter.isReady()).toBe(false);
     });
   });

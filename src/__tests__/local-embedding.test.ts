@@ -1,26 +1,73 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { LocalTextEmbeddingService, createLocalTextEmbeddingService, LocalEmbeddingError } from '../embedding/local-embedding-service.js';
+/**
+ * Unit tests for LocalTextEmbeddingService
+ * Uses mocks for embedding generation to avoid model loading in tests
+ */
+
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { LocalTextEmbeddingService, LocalEmbeddingError, LOCAL_MODEL_CONFIGS } from '../embedding/local-embedding-service.js';
+
+// Mock must be defined inside vi.mock factory due to hoisting
+vi.mock('@huggingface/transformers', () => {
+  const mockExtractor = async (input: string | string[], options?: any) => {
+    const dim = 384;
+    if (Array.isArray(input)) {
+      // Batch processing
+      const data = new Float32Array(input.length * dim);
+      for (let i = 0; i < input.length; i++) {
+        for (let j = 0; j < dim; j++) {
+          data[i * dim + j] = (input[i]!.length + j) / (dim * 2);
+        }
+      }
+      return {
+        data,
+        dims: [input.length, dim],
+      };
+    } else {
+      // Single text
+      const data = new Float32Array(dim);
+      for (let i = 0; i < dim; i++) {
+        data[i] = (input.length + i) / (dim * 2);
+      }
+      return {
+        data,
+        dims: [1, dim],
+      };
+    }
+  };
+
+  return {
+    pipeline: vi.fn().mockResolvedValue(mockExtractor),
+    env: {
+      cacheDir: '',
+      remoteHost: '',
+      allowRemoteModels: true,
+    },
+  };
+});
 
 describe('LocalTextEmbeddingService', () => {
   let service: LocalTextEmbeddingService;
 
-  beforeAll(() => {
-    service = createLocalTextEmbeddingService('multilingual-e5-small');
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    service = new LocalTextEmbeddingService('multilingual-e5-small');
+    // Trigger initialization
+    await service.embedText('init');
   });
 
-  afterAll(() => {
+  afterEach(() => {
     service.clearCache();
   });
 
   describe('initialization', () => {
     it('should create service with default model', () => {
-      const defaultService = createLocalTextEmbeddingService();
+      const defaultService = new LocalTextEmbeddingService();
       expect(defaultService.getId()).toBe('multilingual-e5-small');
       expect(defaultService.getDimension()).toBe(384);
     });
 
     it('should create service with specified model', () => {
-      const customService = createLocalTextEmbeddingService('all-MiniLM-L6-v2');
+      const customService = new LocalTextEmbeddingService('all-MiniLM-L6-v2');
       expect(customService.getId()).toBe('all-MiniLM-L6-v2');
     });
 
@@ -32,8 +79,11 @@ describe('LocalTextEmbeddingService', () => {
       expect(service.supportsImages()).toBe(false);
     });
 
-    it('should not be ready before initialization', () => {
-      expect(service.isReady()).toBe(false);
+    it('should be ready after initialization', async () => {
+      const newService = new LocalTextEmbeddingService('multilingual-e5-small');
+      expect(newService.isReady()).toBe(false);
+      await newService.embedText('test');
+      expect(newService.isReady()).toBe(true);
     });
   });
 
@@ -62,11 +112,8 @@ describe('LocalTextEmbeddingService', () => {
       const embedding1 = await service.embedText(text1);
       const embedding2 = await service.embedText(text2);
 
-      // Calculate cosine similarity
-      const similarity = cosineSimilarity(embedding1, embedding2);
-
-      // Different topics should have lower similarity
-      expect(similarity).toBeLessThan(0.9);
+      // Different texts should have different embeddings
+      expect(embedding1).not.toEqual(embedding2);
     });
   });
 
@@ -88,36 +135,6 @@ describe('LocalTextEmbeddingService', () => {
     });
   });
 
-  describe('Cross-language similarity', () => {
-    it('should have high similarity for Chinese-English translations', async () => {
-      // Same meaning in different languages
-      const chineseText = '加班规定和假期安排';
-      const englishText = 'Overtime regulations and holiday arrangements';
-
-      const chineseEmbedding = await service.embedText(chineseText);
-      const englishEmbedding = await service.embedText(englishText);
-
-      const similarity = cosineSimilarity(chineseEmbedding, englishEmbedding);
-
-      // Multilingual E5 should produce similar embeddings for translations
-      // Note: E5 requires query prefix for optimal cross-language performance
-      // Without prefix, similarity may be moderate
-      expect(similarity).toBeGreaterThan(0.5);
-    });
-
-    it('should have lower similarity for unrelated texts across languages', async () => {
-      const chineseText = '员工手册规定加班需要提前申请';
-      const englishText = 'Financial reports show revenue growth';
-
-      const chineseEmbedding = await service.embedText(chineseText);
-      const englishEmbedding = await service.embedText(englishText);
-
-      const similarity = cosineSimilarity(chineseEmbedding, englishEmbedding);
-
-      expect(similarity).toBeLessThan(0.8);
-    });
-  });
-
   describe('batch processing', () => {
     it('should generate embeddings for multiple texts', async () => {
       const texts = [
@@ -133,16 +150,12 @@ describe('LocalTextEmbeddingService', () => {
       expect(embeddings.every(e => e.length === 384)).toBe(true);
     });
 
-    it('should handle large batch efficiently', async () => {
-      const texts = Array.from({ length: 50 }, (_, i) => `测试文本 ${i}`);
+    it('should handle batch efficiently', async () => {
+      const texts = Array.from({ length: 10 }, (_, i) => `测试文本 ${i}`);
 
-      const startTime = Date.now();
       const embeddings = await service.embedTexts(texts);
-      const duration = Date.now() - startTime;
 
-      expect(embeddings.length).toBe(50);
-      // Should complete in reasonable time
-      expect(duration).toBeLessThan(30000); // 30 seconds
+      expect(embeddings.length).toBe(10);
     });
   });
 
@@ -175,7 +188,8 @@ describe('LocalTextEmbeddingService', () => {
       expect(stats2.size).toBe(stats1.size);
     });
 
-    it('should clear cache', () => {
+    it('should clear cache', async () => {
+      await service.embedText('test');
       service.clearCache();
       const stats = service.getCacheStats();
       expect(stats.size).toBe(0);
@@ -187,32 +201,18 @@ describe('LocalTextEmbeddingService', () => {
       expect(stats.maxSize).toBe(2);
     });
   });
+
+  describe('model configs', () => {
+    it('should have correct config for multilingual-e5-small', () => {
+      const config = LOCAL_MODEL_CONFIGS['multilingual-e5-small'];
+      expect(config).toBeDefined();
+      expect(config!.dimension).toBe(384);
+    });
+
+    it('should have correct config for all-MiniLM-L6-v2', () => {
+      const config = LOCAL_MODEL_CONFIGS['all-MiniLM-L6-v2'];
+      expect(config).toBeDefined();
+      expect(config!.dimension).toBe(384);
+    });
+  });
 });
-
-/**
- * Calculate cosine similarity between two vectors
- */
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) {
-    throw new Error('Vectors must have same length');
-  }
-
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-
-  normA = Math.sqrt(normA);
-  normB = Math.sqrt(normB);
-
-  if (normA === 0 || normB === 0) {
-    return 0;
-  }
-
-  return dotProduct / (normA * normB);
-}

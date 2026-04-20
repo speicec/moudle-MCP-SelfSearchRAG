@@ -1,10 +1,39 @@
 {
-  "records": [],
+  "records": [
+    {
+      "timestamp": "2026-04-20T07:03:46.440Z",
+      "rule_id": "null-assignment",
+      "fix_type": "default-value",
+      "success": true
+    },
+    {
+      "timestamp": "2026-04-20T07:03:46.450Z",
+      "rule_id": "null-assignment",
+      "fix_type": "default-value",
+      "success": true
+    },
+    {
+      "timestamp": "2026-04-20T07:03:46.456Z",
+      "rule_id": "null-assignment",
+      "fix_type": "default-value",
+      "success": true
+    },
+    {
+      "timestamp": "2026-04-20T07:03:46.464Z",
+      "rule_id": "null-assignment",
+      "fix_type": "default-value",
+      "success": true
+    }
+  ],
   "summary": {
     "null-assignment": {
-      "totalHits": 0,
-      "fixDistribution": {},
-      "successRate": {}
+      "totalHits": 4,
+      "fixDistribution": {
+        "default-value": 4
+      },
+      "successRate": {
+        "default-value": 4
+      }
     }
   }
 }

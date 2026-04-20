@@ -9,7 +9,7 @@ describe('HybridEmbeddingService', () => {
     it('should have correct model configs', () => {
       expect(HYBRID_MODEL_CONFIGS['bge-m3']).toBeDefined();
       expect(HYBRID_MODEL_CONFIGS['bge-m3'].denseDimension).toBe(1024);
-      expect(HYBRID_MODEL_CONFIGS['bge-m3'].modelId).toBe('BAAI/bge-m3');
+      expect(HYBRID_MODEL_CONFIGS['bge-m3'].modelId).toBe('Xenova/bge-m3');
       expect(HYBRID_MODEL_CONFIGS['bge-m3'].sparseMinWeight).toBe(0.01);
       expect(HYBRID_MODEL_CONFIGS['bge-m3'].sparseMaxTerms).toBe(1000);
     });
