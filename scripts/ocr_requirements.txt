@@ -4,6 +4,7 @@
 # Core OCR
 paddlepaddle>=2.5.0
 paddleocr>=2.7.0
+paddlex[ocr]>=3.0.0
 
 # HTTP Service
 fastapi>=0.100.0
@@ -13,3 +14,4 @@ python-multipart>=0.0.6
 # Image Processing
 pillow>=10.0.0
 numpy>=1.24.0
+opencv-python-headless

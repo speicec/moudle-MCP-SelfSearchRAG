@@ -39,6 +39,10 @@ DASHSCOPE_API_KEY=your-dashscope-api-key
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `OCR_SERVICE_URL` | OCR HTTP service URL | `http://localhost:8080` |
+| `OCR_BATCH_SIZE` | Pages per batch | `2` |
+| `OCR_MAX_QUEUE_SIZE` | Max queue requests | `50` |
+| `OCR_REQUEST_TIMEOUT` | Request timeout seconds | `300` |
+| `OCR_ENABLE_STATUS_CHECK` | Pre-check queue status | `false` |
 
 ### VLM Enhancement
 
@@ -75,6 +79,29 @@ VLM (qwen3-vl-flash) is used for:
 - Formula recognition
 
 VLM is **only called for these block types**, not for regular text.
+
+## Client-side Coordination
+
+服务端队列模式下，客户端应配合调整：
+
+### 1. 降低 Batch Size
+```bash
+OCR_BATCH_SIZE=2  # 从默认5降到2
+```
+
+### 2. 处理 503/408 响应
+客户端自动处理：
+- **503**: 等待 `retry_after_seconds` 后重试
+- **408**: 返回空结果（不重试，避免长时间等待）
+
+### 3. 状态预检（可选）
+```bash
+OCR_ENABLE_STATUS_CHECK=true
+```
+发送请求前检查 `/status`，避开队列高峰。
+
+### 4. 批次间延迟
+客户端在批次间自动添加1秒延迟，让队列有时间处理。
 
 ## Performance Notes
 

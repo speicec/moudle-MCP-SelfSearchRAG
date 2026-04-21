@@ -112,9 +112,14 @@ export function mapEvidenceGrade(literatureType: LiteratureType): GradeLevel {
  * @returns 时效性检查结果
  */
 export function checkTimeliness(
-  year: number,
+  year: number | undefined,
   guidelineId?: string,
 ): { isCurrent: boolean; expirationWarning?: string } {
+  // 如果年份未知，默认认为当前有效
+  if (year === undefined) {
+    return { isCurrent: true };
+  }
+
   const currentYear = new Date().getFullYear();
   const yearsSincePublication = currentYear - year;
 

@@ -1,15 +1,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChatQueryRequest, ChatQueryResponse, RetrievalResultItem, PipelineEvent, RetrievalMatchData } from '../types.js';
 import { SmallToBigRetriever } from '../../chunking/small-to-big-retriever.js';
-import type { HierarchicalStore } from '../../chunking/hierarchical-store.js';
 import type { ImageStore } from '../../chunking/image-store.js';
-import type { TextEmbeddingService } from '../../embedding/embedding-service.js';
 import { PipelineEmitter } from '../pipeline-emitter.js';
 import { llmGenerationService, type GenerationEvent, type MultimodalGenerationRequest } from '../services/LLMGenerationService.js';
-import {
-  createEnhancedRetrievalPipeline,
-  type PipelineResult,
-} from '../../retrieval/enhanced-retrieval-pipeline.js';
+import { createEnhancedRetrievalPipeline } from '../../retrieval/enhanced-retrieval-pipeline.js';
 import type { EnhancedChatResponse } from '../../retrieval/types.js';
 import { createEnhancedLLMGenerationService } from '../services/enhanced-llm-generation-service.js';
 import type { EnhancedRetrievalConfig } from '../../retrieval/config.js';
@@ -338,10 +333,6 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         if (imageStore && results.length > 0) {
           // Get document ID and page numbers from results
           const docId = results[0]?.sourceDocumentId;
-          const imagePages = results
-            .filter(r => r.metadata.contentType !== 'text')
-            .map(r => r.metadata.pageNumber ?? 0)
-            .filter(p => p > 0);
 
           // Also extract pages from chunks that might have nearby images
           const allPages = results.map(r => r.metadata.pageNumber ?? 0).filter(p => p > 0);

@@ -287,8 +287,10 @@ export function formatAnswerAsMarkdown(answer: MedicalAnswer): string {
   // 来源引用
   if (answer.sources.length > 0) {
     sections.push('## 来源引用');
-    for (let i = 0; i < answer.sources.length; i++) {
-      sections.push(`${i + 1}. ${formatSourceCitation(answer.sources[i])}`);
+    let idx = 1;
+    for (const source of answer.sources) {
+      sections.push(`${idx}. ${formatSourceCitation(source)}`);
+      idx++;
     }
     sections.push('');
   }

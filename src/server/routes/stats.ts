@@ -59,7 +59,6 @@ export async function statsRoutes(fastify: FastifyInstance): Promise<void> {
 
     const chunkCount = hierarchicalStore.getChunkCount();
     const smallChunks = hierarchicalStore.getAllSmallChunks();
-    const parentChunks = hierarchicalStore.getAllParentChunks();
 
     // Calculate quality distribution
     const high = smallChunks.filter(c => c.qualityScore.composite >= 0.8).length;

@@ -36,7 +36,7 @@ export const DEFAULT_IMAGE_PDF_CONFIG: ImagePdfConfig = {
     // 批量处理数量 - 降低以减少OCR服务内存压力
     // 每页图片约5-10MB，并发过多会压垮OCR服务
     // 建议: CPU模式用2-3，GPU模式可用5-10
-    batchSize: parseInt(process.env.OCR_BATCH_SIZE ?? '3', 10),
+    batchSize: parseInt(process.env.OCR_BATCH_SIZE ?? '2', 10),
     // 最大页数限制，防止超大文档耗尽资源
     // 默认100页，可通过环境变量调整
     // 对于《黄帝内经》这类超大文档，建议设置50-100

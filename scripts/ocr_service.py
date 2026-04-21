@@ -12,6 +12,8 @@ PaddleOCR PP-StructureV3 HTTP Service
 环境变量：
   OCR_USE_GPU: 是否使用GPU (default: false)
   OCR_PORT: 服务端口 (default: 8080)
+  OCR_MAX_QUEUE_SIZE: 队列最大容量 (default: 50)
+  OCR_REQUEST_TIMEOUT: 请求超时秒数 (default: 300)
 """
 
 import argparse
@@ -20,8 +22,9 @@ import json
 import base64
 import time
 import os
+import asyncio
+from dataclasses import dataclass
 from typing import List, Optional, Generator, Any
-from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -36,6 +39,13 @@ os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
 
 # PaddleOCR导入 - PPStructureV3是新版本
 from paddleocr import PPStructureV3
+
+# ========================================
+# Queue Configuration
+# ========================================
+
+MAX_QUEUE_SIZE = int(os.getenv('OCR_MAX_QUEUE_SIZE', '50'))
+REQUEST_TIMEOUT_SECONDS = int(os.getenv('OCR_REQUEST_TIMEOUT', '300'))
 
 # ========================================
 # 配置
@@ -72,6 +82,28 @@ class BatchOcrResult(BaseModel):
     """批量OCR结果"""
     results: List[OcrResult]
     total_processing_time_ms: float
+
+class QueueStatus(BaseModel):
+    """队列状态响应"""
+    status: str
+    gpu_enabled: bool
+    queue: dict
+    timing: dict
+    stats: dict
+
+# ========================================
+# Queue Item Dataclass
+# ========================================
+
+@dataclass
+class QueueItem:
+    """队列中的请求项"""
+    image_array: np.ndarray
+    page_number: int
+    image_width: int
+    image_height: int
+    future: asyncio.Future
+    arrived_at: float  # 入队时间戳
 
 # ========================================
 # OCR引擎初始化
@@ -183,24 +215,185 @@ def process_v3_result(result: dict, image_width: int, image_height: int) -> List
 
 app = FastAPI(
     title="PaddleOCR Layout Service",
-    description="OCR服务 with 版面分析",
-    version="1.0.0",
+    description="OCR服务 with 版面分析和请求队列",
+    version="2.0.0",
 )
 
-# 全局OCR引擎（服务启动时初始化）
+# 全局OCR引擎和队列状态
 ocr_engine = None
 ocr_config: OcrConfig = OcrConfig()
+request_queue: asyncio.Queue = None
+worker_task: asyncio.Task = None
+
+# 统计信息
+queue_stats = {
+    "total_processed": 0,
+    "total_failed": 0,
+    "total_timeout": 0,
+    "avg_processing_time_ms": 0.0,
+    "avg_queue_wait_ms": 0.0,
+}
+
+# ========================================
+# Background Worker
+# ========================================
+
+async def queue_worker():
+    """
+    后台 worker：从队列中逐个取出请求，串行执行 OCR
+    """
+    global queue_stats
+
+    print("[OCR Worker] Started, waiting for requests...")
+
+    while True:
+        try:
+            # 从队列获取下一个请求
+            item: QueueItem = await request_queue.get()
+
+            # 计算队列等待时间
+            queue_wait_time = (time.time() - item.arrived_at) * 1000
+
+            print(f"[OCR Worker] Processing page {item.page_number} (queue wait: {queue_wait_time:.0f}ms)")
+
+            start_process_time = time.time()
+
+            try:
+                # 执行 OCR（同步调用）
+                results = list(ocr_engine.predict(item.image_array))
+
+                if len(results) == 0:
+                    blocks = []
+                else:
+                    blocks = process_v3_result(results[0], item.image_width, item.image_height)
+
+                processing_time = (time.time() - start_process_time) * 1000
+
+                # 构建结果
+                result = OcrResult(
+                    page_number=item.page_number,
+                    blocks=blocks,
+                    processing_time_ms=processing_time,
+                    width=item.image_width,
+                    height=item.image_height,
+                )
+
+                # 设置 Future 结果（通知等待的客户端）
+                if not item.future.done():
+                    item.future.set_result(result)
+
+                # 更新统计
+                queue_stats["total_processed"] += 1
+                queue_stats["avg_processing_time_ms"] = (
+                    queue_stats["avg_processing_time_ms"] * (queue_stats["total_processed"] - 1) + processing_time
+                ) / queue_stats["total_processed"]
+                queue_stats["avg_queue_wait_ms"] = (
+                    queue_stats["avg_queue_wait_ms"] * (queue_stats["total_processed"] - 1) + queue_wait_time
+                ) / queue_stats["total_processed"]
+
+                print(f"[OCR Worker] Page {item.page_number} done: {len(blocks)} blocks, {processing_time:.0f}ms")
+
+            except Exception as e:
+                # OCR 执行失败
+                queue_stats["total_failed"] += 1
+
+                if not item.future.done():
+                    item.future.set_exception(HTTPException(
+                        status_code=500,
+                        detail=f"OCR processing failed: {str(e)}"
+                    ))
+
+                print(f"[OCR Worker] Page {item.page_number} failed: {e}")
+
+            finally:
+                request_queue.task_done()
+
+        except asyncio.CancelledError:
+            print("[OCR Worker] Cancelled, shutting down...")
+            break
+
+        except Exception as e:
+            print(f"[OCR Worker] Unexpected error: {e}")
+            # 继续运行，不中断 worker
+
+# ========================================
+# Startup and Shutdown Events
+# ========================================
 
 @app.on_event("startup")
 async def startup_event():
-    """服务启动时初始化OCR引擎"""
-    global ocr_engine
+    """服务启动时初始化OCR引擎和队列"""
+    global ocr_engine, request_queue, worker_task
+
+    # 初始化 OCR 引擎
     ocr_engine = create_ocr_engine(ocr_config)
+
+    # 初始化请求队列
+    request_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
+
+    # 启动后台 worker 任务
+    worker_task = asyncio.create_task(queue_worker())
+
+    print(f"[OCR] Queue initialized (maxsize={MAX_QUEUE_SIZE})")
+    print(f"[OCR] Request timeout: {REQUEST_TIMEOUT_SECONDS}s")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """服务关闭时清理"""
+    global worker_task
+    if worker_task:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+    print("[OCR] Worker stopped")
+
+# ========================================
+# Status Endpoints
+# ========================================
+
+@app.get("/status")
+async def get_status():
+    """获取队列状态"""
+    queue_size = request_queue.qsize() if request_queue else 0
+    queue_capacity = MAX_QUEUE_SIZE - queue_size
+
+    # 预估等待时间 = (当前队列长度 + 1) × 平均处理时间
+    estimated_wait = (queue_size + 1) * queue_stats["avg_processing_time_ms"] / 1000 if queue_stats["avg_processing_time_ms"] > 0 else 0
+
+    return {
+        "status": "healthy" if ocr_engine is not None else "initializing",
+        "gpu_enabled": ocr_config.use_gpu,
+        "queue": {
+            "size": queue_size,
+            "max_size": MAX_QUEUE_SIZE,
+            "available_slots": queue_capacity,
+        },
+        "timing": {
+            "avg_processing_time_ms": round(queue_stats["avg_processing_time_ms"], 1),
+            "avg_queue_wait_ms": round(queue_stats["avg_queue_wait_ms"], 1),
+            "estimated_wait_seconds": round(estimated_wait, 1),
+        },
+        "stats": {
+            "total_processed": queue_stats["total_processed"],
+            "total_failed": queue_stats["total_failed"],
+            "total_timeout": queue_stats["total_timeout"],
+        }
+    }
 
 @app.get("/health")
 async def health_check():
     """健康检查"""
-    return {"status": "healthy", "gpu_enabled": ocr_config.use_gpu}
+    return {
+        "status": "healthy" if ocr_engine is not None else "initializing",
+        "gpu_enabled": ocr_config.use_gpu,
+        "queue_size": request_queue.qsize() if request_queue else 0,
+    }
+
+# ========================================
+# OCR Endpoints
+# ========================================
 
 @app.post("/ocr/layout", response_model=OcrResult)
 async def layout_ocr(
@@ -208,53 +401,127 @@ async def layout_ocr(
     page_number: int = Form(1),
 ):
     """
-    单页图片OCR处理
-    返回结构化的布局分析结果
+    单页图片OCR处理（通过队列串行执行）
+
+    如果队列已满，返回 503 Service Unavailable
+    如果请求超时，返回 408 Request Timeout
     """
     if ocr_engine is None:
         raise HTTPException(status_code=500, detail="OCR engine not initialized")
 
-    start_time = time.time()
+    if request_queue is None:
+        raise HTTPException(status_code=500, detail="Queue not initialized")
+
+    # 检查队列容量
+    if request_queue.full():
+        estimated_wait = queue_stats["avg_processing_time_ms"] * request_queue.qsize() / 1000
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Queue is full, please retry later",
+                "queue_size": request_queue.qsize(),
+                "max_size": MAX_QUEUE_SIZE,
+                "retry_after_seconds": round(estimated_wait, 1),
+            }
+        )
 
     # 读取图片
     contents = await file.read()
     image = Image.open(io.BytesIO(contents))
 
-    # 转换为RGB（如果需要）
     if image.mode != 'RGB':
         image = image.convert('RGB')
 
     img_array = np.array(image)
 
-    # 执行OCR - V3使用predict()方法，返回generator
-    results = list(ocr_engine.predict(img_array))
-    if len(results) == 0:
-        blocks = []
-    else:
-        # 取第一个结果（单页）
-        blocks = process_v3_result(results[0], image.width, image.height)
+    # 创建 Future（用于等待 worker 返回结果）
+    loop = asyncio.get_event_loop()
+    future: asyncio.Future = loop.create_future()
 
-    processing_time = (time.time() - start_time) * 1000
-
-    return OcrResult(
+    # 构建队列项
+    item = QueueItem(
+        image_array=img_array,
         page_number=page_number,
-        blocks=blocks,
-        processing_time_ms=processing_time,
-        width=image.width,
-        height=image.height,
+        image_width=image.width,
+        image_height=image.height,
+        future=future,
+        arrived_at=time.time(),
     )
+
+    # 入队
+    try:
+        request_queue.put_nowait(item)
+    except asyncio.QueueFull:
+        raise HTTPException(
+            status_code=503,
+            detail="Queue is full, request rejected"
+        )
+
+    print(f"[OCR] Page {page_number} queued (queue size: {request_queue.qsize()})")
+
+    # 等待结果（带超时）
+    try:
+        result = await asyncio.wait_for(future, timeout=REQUEST_TIMEOUT_SECONDS)
+        return result
+
+    except asyncio.TimeoutError:
+        queue_stats["total_timeout"] += 1
+
+        # 取消 Future（如果还在处理）
+        if not future.done():
+            future.cancel()
+
+        raise HTTPException(
+            status_code=408,
+            detail={
+                "error": "Request timeout",
+                "timeout_seconds": REQUEST_TIMEOUT_SECONDS,
+                "page_number": page_number,
+            }
+        )
+
+    except HTTPException:
+        # Worker 设置的异常，直接抛出
+        raise
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.post("/ocr/batch", response_model=BatchOcrResult)
 async def batch_ocr(files: List[UploadFile] = File(...)):
     """
-    批量OCR处理
-    同时处理多个图片页面
+    批量OCR处理（通过队列串行执行每个页面）
+
+    注意：批量请求会占用多个队列槽位，如果队列容量不足会返回 503
     """
     if ocr_engine is None:
         raise HTTPException(status_code=500, detail="OCR engine not initialized")
 
+    if request_queue is None:
+        raise HTTPException(status_code=500, detail="Queue not initialized")
+
+    # 检查是否有足够的队列容量
+    num_files = len(files)
+    available_slots = MAX_QUEUE_SIZE - request_queue.qsize()
+
+    if num_files > available_slots:
+        estimated_wait = queue_stats["avg_processing_time_ms"] * request_queue.qsize() / 1000
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Not enough queue capacity for batch",
+                "requested": num_files,
+                "available": available_slots,
+                "retry_after_seconds": round(estimated_wait, 1),
+            }
+        )
+
     start_time = time.time()
-    results = []
+    results: List[OcrResult] = []
+
+    # 为每个文件创建队列项
+    loop = asyncio.get_event_loop()
+    futures: List[asyncio.Future] = []
 
     for i, file in enumerate(files):
         contents = await file.read()
@@ -265,20 +532,44 @@ async def batch_ocr(files: List[UploadFile] = File(...)):
 
         img_array = np.array(image)
 
-        # 执行OCR - V3使用predict()方法
-        page_results = list(ocr_engine.predict(img_array))
-        if len(page_results) > 0:
-            blocks = process_v3_result(page_results[0], image.width, image.height)
-        else:
-            blocks = []
+        future: asyncio.Future = loop.create_future()
 
-        results.append(OcrResult(
+        item = QueueItem(
+            image_array=img_array,
             page_number=i + 1,
-            blocks=blocks,
-            processing_time_ms=0,  # 单页时间不计
-            width=image.width,
-            height=image.height,
-        ))
+            image_width=image.width,
+            image_height=image.height,
+            future=future,
+            arrived_at=time.time(),
+        )
+
+        request_queue.put_nowait(item)
+        futures.append(future)
+
+    print(f"[OCR] Batch queued: {num_files} pages")
+
+    # 等待所有结果
+    for i, future in enumerate(futures):
+        try:
+            result = await asyncio.wait_for(future, timeout=REQUEST_TIMEOUT_SECONDS * num_files)
+            results.append(result)
+        except asyncio.TimeoutError:
+            queue_stats["total_timeout"] += 1
+            results.append(OcrResult(
+                page_number=i + 1,
+                blocks=[],
+                processing_time_ms=0,
+                width=0,
+                height=0,
+            ))
+        except HTTPException:
+            results.append(OcrResult(
+                page_number=i + 1,
+                blocks=[],
+                processing_time_ms=0,
+                width=0,
+                height=0,
+            ))
 
     total_time = (time.time() - start_time) * 1000
 
@@ -299,7 +590,21 @@ async def base64_ocr(
     if ocr_engine is None:
         raise HTTPException(status_code=500, detail="OCR engine not initialized")
 
-    start_time = time.time()
+    if request_queue is None:
+        raise HTTPException(status_code=500, detail="Queue not initialized")
+
+    # 检查队列容量
+    if request_queue.full():
+        estimated_wait = queue_stats["avg_processing_time_ms"] * request_queue.qsize() / 1000
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Queue is full, please retry later",
+                "queue_size": request_queue.qsize(),
+                "max_size": MAX_QUEUE_SIZE,
+                "retry_after_seconds": round(estimated_wait, 1),
+            }
+        )
 
     # 解码Base64
     if image_base64.startswith('data:image'):
@@ -313,22 +618,54 @@ async def base64_ocr(
 
     img_array = np.array(image)
 
-    # 执行OCR - V3使用predict()方法
-    results = list(ocr_engine.predict(img_array))
-    if len(results) > 0:
-        blocks = process_v3_result(results[0], image.width, image.height)
-    else:
-        blocks = []
+    # 创建 Future
+    loop = asyncio.get_event_loop()
+    future: asyncio.Future = loop.create_future()
 
-    processing_time = (time.time() - start_time) * 1000
-
-    return OcrResult(
+    # 构建队列项
+    item = QueueItem(
+        image_array=img_array,
         page_number=page_number,
-        blocks=blocks,
-        processing_time_ms=processing_time,
-        width=image.width,
-        height=image.height,
+        image_width=image.width,
+        image_height=image.height,
+        future=future,
+        arrived_at=time.time(),
     )
+
+    # 入队
+    try:
+        request_queue.put_nowait(item)
+    except asyncio.QueueFull:
+        raise HTTPException(
+            status_code=503,
+            detail="Queue is full, request rejected"
+        )
+
+    # 等待结果（带超时）
+    try:
+        result = await asyncio.wait_for(future, timeout=REQUEST_TIMEOUT_SECONDS)
+        return result
+
+    except asyncio.TimeoutError:
+        queue_stats["total_timeout"] += 1
+
+        if not future.done():
+            future.cancel()
+
+        raise HTTPException(
+            status_code=408,
+            detail={
+                "error": "Request timeout",
+                "timeout_seconds": REQUEST_TIMEOUT_SECONDS,
+                "page_number": page_number,
+            }
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 # ========================================
 # 启动入口
@@ -336,25 +673,37 @@ async def base64_ocr(
 
 def main():
     parser = argparse.ArgumentParser(description='PaddleOCR Layout Service')
-    parser.add_argument('--host', type=str, default='0.0.0.0', help='服务地址')
-    parser.add_argument('--port', type=int, default=int(os.getenv('OCR_PORT', '8080')), help='服务端口')
-    parser.add_argument('--use-gpu', type=str, default=os.getenv('OCR_USE_GPU', 'false'), help='是否使用GPU')
-    parser.add_argument('--workers', type=int, default=1, help='Worker数量')
+    parser.add_argument('--host', type=str, default='0.0.0.0')
+    parser.add_argument('--port', type=int, default=int(os.getenv('OCR_PORT', '8080')))
+    parser.add_argument('--use-gpu', type=str, default=os.getenv('OCR_USE_GPU', 'false'))
+    parser.add_argument('--workers', type=int, default=1)
+
+    # 队列配置参数
+    parser.add_argument('--max-queue-size', type=int,
+        default=int(os.getenv('OCR_MAX_QUEUE_SIZE', '50')),
+        help='Maximum queue size')
+    parser.add_argument('--request-timeout', type=int,
+        default=int(os.getenv('OCR_REQUEST_TIMEOUT', '300')),
+        help='Request timeout in seconds')
 
     args = parser.parse_args()
 
-    # 设置配置
-    global ocr_config
+    # 更新全局配置
+    global MAX_QUEUE_SIZE, REQUEST_TIMEOUT_SECONDS, ocr_config
+    MAX_QUEUE_SIZE = args.max_queue_size
+    REQUEST_TIMEOUT_SECONDS = args.request_timeout
     ocr_config.use_gpu = args.use_gpu.lower() == 'true'
 
     print(f"[OCR Service] Starting on {args.host}:{args.port}")
-    print(f"[OCR Service] GPU: {ocr_config.use_gpu}, Workers: {args.workers}")
+    print(f"[OCR Service] GPU: {ocr_config.use_gpu}")
+    print(f"[OCR Service] Queue: maxsize={MAX_QUEUE_SIZE}, timeout={REQUEST_TIMEOUT_SECONDS}s")
 
+    # workers=1 对于队列模式是最优的（队列保证了串行）
     uvicorn.run(
         app,
         host=args.host,
         port=args.port,
-        workers=args.workers,
+        workers=1,
     )
 
 if __name__ == '__main__':

@@ -112,7 +112,6 @@ export class StatsAggregationService {
   getStats(): StatsUpdateData {
     const chunkCount = this.hierarchicalStore.getChunkCount();
     const smallChunks = this.hierarchicalStore.getAllSmallChunks();
-    const parentChunks = this.hierarchicalStore.getAllParentChunks();
 
     // Calculate quality distribution
     const qualityDistribution = this.calculateQualityDistribution(smallChunks);

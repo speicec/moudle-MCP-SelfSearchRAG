@@ -35,7 +35,17 @@
       "Bash(uv pip:*)",
       "Bash(ls -la D:/WebstormProjects/RAG/MY-RAG-MCP-SERVER/src/parsers/*.test.ts)",
       "Bash(uv run *)",
-      "Bash(.venv/Scripts/python ocr_service.py --host 0.0.0.0 --port 8080)"
+      "Bash(.venv/Scripts/python ocr_service.py --host 0.0.0.0 --port 8080)",
+      "Bash(npx vitest *)",
+      "Bash(npx tsx -e ' *)",
+      "Bash(npx tsx *)",
+      "Bash(openspec propose *)",
+      "Bash(openspec *)",
+      "Bash(npx eslint *)",
+      "Bash(cat /tmp/*)",
+      "Bash(grep -c *)",
+      "Bash(python -c \"import ocr_service; print\\('OCR service imports OK'\\)\")",
+      "Bash(python -c ' *)"
     ]
   }
 }

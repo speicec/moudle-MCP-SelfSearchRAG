@@ -2,7 +2,7 @@
  * Antidiabetic Drug Dictionary - 降糖药词典
  */
 
-import type { DrugEntity } from '../types.js';
+import type { DrugEntity } from '../../types.js';
 
 /**
  * 二甲双胍类药物
@@ -433,7 +433,7 @@ export function getAntidiabeticByName(name: string): DrugEntity | undefined {
   return ALL_ANTIDIABETIC_DRUGS.find(d =>
     d.canonicalName === name ||
     d.aliases.includes(name) ||
-    d.aliases.some(alias => alias.toLowerCase() === name.toLowerCase()) ||
+    d.aliases.some((alias: string) => alias.toLowerCase() === name.toLowerCase()) ||
     d.brands.includes(name)
   );
 }

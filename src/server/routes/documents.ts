@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import type { DocumentMetadata, PipelineEvent } from '../types.js';
+import type { DocumentMetadata } from '../types.js';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs/promises';
 import path from 'path';
@@ -13,7 +13,6 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
  */
 export async function documentRoutes(fastify: FastifyInstance): Promise<void> {
   const storagePath = fastify.documentStoragePath ?? './data/documents';
-  const wsHandler = fastify.wsHandler;
 
   // Ensure storage directory exists
   await fs.mkdir(storagePath, { recursive: true });

@@ -13,17 +13,16 @@ import { WebSocketHandler } from './websocket-handler.js';
 import { HierarchicalStore } from '../chunking/hierarchical-store.js';
 import { ImageStore, type ImageBlockRecord, type ImageBlockType } from '../chunking/image-store.js';
 import { createHierarchicalChunk, createDefaultQualityScore } from '../chunking/types.js';
-import { ChunkQualityFilter, createChunkQualityFilter, aggregateEmbeddings } from '../chunking/index.js';
+import { createChunkQualityFilter, aggregateEmbeddings } from '../chunking/index.js';
 import type { Harness } from '../core/harness.js';
 import { PluginRegistry } from '../core/plugin.js';
 import type { TextChunk, EmbeddingResult } from '../core/context.js';
 import type { ParsedContent } from '../core/types.js';
 import { v4 as uuidv4 } from 'uuid';
-import type { VectorStoreAdapter, VectorPoint } from '../retrieval/vector-store-adapter.js';
-import { COLLECTION_NAMES } from '../retrieval/vector-store-adapter.js';
+import type { VectorPoint } from '../retrieval/vector-store-adapter.js';
 import type { QdrantVectorStoreAdapter } from '../retrieval/qdrant-client.js';
 import type { HybridEmbeddingService } from '../embedding/hybrid-embedding-service.js';
-import { ImageEmbeddingService, createImageEmbeddingService } from '../embedding/image-embedding-service.js';
+import type { ImageEmbeddingService } from '../embedding/image-embedding-service.js';
 
 /**
  * Processing options
@@ -166,7 +165,6 @@ function buildPipeline(
             };
             const chunks = ctx?.getChunks?.();
             const embeddings = ctx?.getEmbeddings?.();
-            const totalDuration = Date.now() - pipelineStartTime;
 
             // Store chunks in hierarchical store and emit chunk events
             if (chunks && embeddings) {

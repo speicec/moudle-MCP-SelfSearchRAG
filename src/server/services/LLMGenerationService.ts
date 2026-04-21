@@ -1,4 +1,3 @@
-import WebSocket from 'ws';
 import { vlmEnhancementService, type VlmEnhanceRequest, type VlmStreamEvent } from './VlmEnhancementService.js';
 
 /**
@@ -132,7 +131,7 @@ export class LLMGenerationService {
 
     // Build reference material section
     const referenceSection = sources.length > 0
-      ? sources.map((s, i) => `---\n${s.content}\n---`).join('\n')
+      ? sources.map((s) => `---\n${s.content}\n---`).join('\n')
       : '无相关参考资料';
 
     const prompt = `用户问题: ${query}
@@ -285,7 +284,7 @@ ${referenceSection}
                   timestamp: Date.now(),
                 });
               }
-            } catch (e) {
+            } catch {
               // Skip malformed JSON - this can happen with incomplete lines
               console.warn(`[SSE Debug] Failed to parse chunk: "${data.slice(0, 100)}..."`);
             }

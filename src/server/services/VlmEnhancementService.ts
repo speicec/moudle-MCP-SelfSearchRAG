@@ -1,5 +1,3 @@
-import WebSocket from 'ws';
-
 /**
  * VLM增强配置
  */
@@ -286,7 +284,6 @@ ${userQuery ? `\n**用户问题**：${userQuery}` : ''}`,
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
         broadcast({
           type: 'vlm:error',
           error: `VLM API error: ${response.status}`,

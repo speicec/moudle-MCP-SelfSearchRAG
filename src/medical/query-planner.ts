@@ -31,7 +31,7 @@ import {
 import {
   ALL_THYROID_DRUGS,
 } from './dictionaries/drugs/thyroid.js';
-import type { DrugEntity, DiseaseEntity } from './types.js';
+import type { DrugEntity } from './types.js';
 
 /**
  * 全部药物词典（合并）
@@ -133,10 +133,13 @@ export function buildFilters(
     guidelineSources.push('ata');
   }
 
-  return {
+  const result: QueryStrategy['filters'] = {
     yearRange,
-    guidelineSources: guidelineSources.length > 0 ? guidelineSources : undefined,
   };
+  if (guidelineSources.length > 0) {
+    result.guidelineSources = guidelineSources;
+  }
+  return result;
 }
 
 /**

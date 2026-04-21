@@ -8,7 +8,9 @@ import {
   validateMedicalQueryInput,
   processMedicalQuery,
   handleMedicalQuery,
+  processMedicalQueryWithResults,
 } from './mcp-tool.js';
+import type { SourceCitation } from './types.js';
 
 describe('Medical Query Tool Definition', () => {
   it('should have correct tool name', () => {
@@ -171,5 +173,40 @@ describe('Handler', () => {
 
     expect(result.markdown).toContain('## 结论');
     expect(result.markdown).toContain('## 注意事项');
+  });
+
+  it('should use retrieval function when provided', async () => {
+    // Mock retrieval function
+    const mockRetrieval = async (queryText: string) => {
+      return [
+        {
+          content: 'ADA 2024指南建议：二甲双胍是2型糖尿病的一线用药',
+          source: { documentName: 'ADA Standards 2024', year: 2024, section: 'Section 9' },
+        },
+        {
+          content: 'eGFR <30时禁用二甲双胍',
+          source: { documentName: 'KDIGO Guidelines', year: 2024 },
+        },
+      ];
+    };
+
+    const result = await handleMedicalQuery(
+      { query: '二甲双胍肾功能禁忌' },
+      mockRetrieval,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.data).toBeDefined();
+    expect(result.data?.retrievalResults).toBeDefined();
+    expect(result.data?.retrievalResults?.length).toBe(2);
+  });
+
+  it('should not have retrievalResults when no retrieval provided', async () => {
+    const result = await handleMedicalQuery({
+      query: '二甲双胍',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.retrievalResults).toBeUndefined();
   });
 });

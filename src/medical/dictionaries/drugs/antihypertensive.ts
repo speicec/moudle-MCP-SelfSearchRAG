@@ -2,7 +2,7 @@
  * Antihypertensive Drug Dictionary - 降压药词典
  */
 
-import type { DrugEntity } from '../types.js';
+import type { DrugEntity } from '../../types.js';
 
 /**
  * ACEI类药物 (血管紧张素转换酶抑制剂)
@@ -449,7 +449,7 @@ export function getAntihypertensiveByName(name: string): DrugEntity | undefined 
   return ALL_ANTIHYPERTENSIVE_DRUGS.find(d =>
     d.canonicalName === name ||
     d.aliases.includes(name) ||
-    d.aliases.some(alias => alias.toLowerCase() === name.toLowerCase()) ||
+    d.aliases.some((alias: string) => alias.toLowerCase() === name.toLowerCase()) ||
     d.brands.includes(name)
   );
 }

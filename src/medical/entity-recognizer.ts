@@ -10,15 +10,12 @@ import {
 } from './dictionaries/diseases.js';
 import {
   ALL_ANTIDIABETIC_DRUGS,
-  getAntidiabeticById,
 } from './dictionaries/drugs/antidiabetic.js';
 import {
   ALL_ANTIHYPERTENSIVE_DRUGS,
-  getAntihypertensiveById,
 } from './dictionaries/drugs/antihypertensive.js';
 import {
   ALL_THYROID_DRUGS,
-  getThyroidDrugById,
 } from './dictionaries/drugs/thyroid.js';
 import {
   ALL_INDICATORS,
@@ -36,7 +33,6 @@ import type {
   IndicatorMatch,
   RelationMatch,
   DrugEntity,
-  DrugClassification,
 } from './types.js';
 
 /**
@@ -239,7 +235,7 @@ function extractIndicatorValue(text: string, indicatorMatch: MatchResult): numbe
   const numberPattern = /(\d+\.?\d*)/;
   const match = nearText.match(numberPattern);
 
-  if (match) {
+  if (match && match[1] !== undefined) {
     return parseFloat(match[1]);
   }
 

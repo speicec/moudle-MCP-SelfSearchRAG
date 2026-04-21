@@ -2,7 +2,7 @@
  * Thyroid Drug Dictionary - 甲状腺药物词典
  */
 
-import type { DrugEntity } from '../types.js';
+import type { DrugEntity } from '../../types.js';
 
 /**
  * 甲状腺激素类药物
@@ -180,7 +180,7 @@ export function getThyroidDrugByName(name: string): DrugEntity | undefined {
   return ALL_THYROID_DRUGS.find(d =>
     d.canonicalName === name ||
     d.aliases.includes(name) ||
-    d.aliases.some(alias => alias.toLowerCase() === name.toLowerCase()) ||
+    d.aliases.some((alias: string) => alias.toLowerCase() === name.toLowerCase()) ||
     d.brands.includes(name)
   );
 }

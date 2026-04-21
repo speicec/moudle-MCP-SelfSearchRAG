@@ -14,8 +14,8 @@ import { HierarchicalStore } from '../chunking/hierarchical-store.js';
 import { ImageStore, createImageStore } from '../chunking/image-store.js';
 import { getEmbeddingFactory, getEmbeddingMode, type PreloadProgress } from '../embedding/embedding-factory.js';
 import { TextEmbeddingService } from '../embedding/embedding-service.js';
-import { StatsAggregationService, createStatsAggregationService } from './stats-aggregation-service.js';
-import { getVectorStoreFactory, type VectorStoreType } from '../retrieval/vector-store-factory.js';
+import { createStatsAggregationService } from './stats-aggregation-service.js';
+import { getVectorStoreFactory } from '../retrieval/vector-store-factory.js';
 import { createHybridSmallToBigRetriever } from '../retrieval/hybrid-small-to-big-retriever.js';
 import { createImageEmbeddingService } from '../embedding/image-embedding-service.js';
 
@@ -84,7 +84,6 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
 
   // Initialize VectorStore if hybrid mode is enabled
   let vectorStoreAdapter: any = null;
-  let hybridRetriever: any = null;
 
   if (mode === 'hybrid') {
     try {
@@ -95,7 +94,7 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
       // Create HybridRetriever
       const hybridEmbeddingService = embeddingFactory.getHybridEmbeddingService();
       if (hybridEmbeddingService && vectorStoreAdapter) {
-        hybridRetriever = createHybridSmallToBigRetriever(
+        createHybridSmallToBigRetriever(
           vectorStoreAdapter,
           hierarchicalStore,
           hybridEmbeddingService

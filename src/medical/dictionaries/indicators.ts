@@ -419,7 +419,11 @@ export const OTHER_INDICATORS: IndicatorEntity[] = [
     normalRange: {
       description: '根据BMI计算理想体重',
     },
-    clinicalThresholds: [],
+    clinicalThresholds: {
+      normal: [],
+      caution: [],
+      critical: [],
+    },
     relatedDrugs: ['drug_glp1_drugs', 'drug_sglt2_drugs'],
     relatedDiseases: ['disease_diabetes_type2'],
   },

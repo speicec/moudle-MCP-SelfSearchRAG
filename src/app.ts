@@ -4,6 +4,7 @@ import { createMcpServer } from './mcp/server.js';
 import { createMcpRetrievalService } from './mcp/mcp-retrieval-service.js';
 import { HierarchicalStore } from './chunking/hierarchical-store.js';
 import { getEmbeddingFactory } from './embedding/embedding-factory.js';
+import { createLLMCaller, type LLMCaller } from './config/llm-config.js';
 import type { Harness } from './core/harness.js';
 import type { McpRetrievalService } from './mcp/mcp-retrieval-service.js';
 import type { McpServer } from './mcp/server.js';
@@ -75,11 +76,15 @@ export class Application {
   private retrieval: McpRetrievalService;
   private server: McpServer;
   private hierarchicalStore: HierarchicalStore;
+  private llmCaller: LLMCaller;
 
   private constructor(config: AppConfig) {
     this.config = config;
     this.pipeline = createDefaultPipeline();
     this.storage = new DocumentStorage(config.storage);
+
+    // Initialize LLMCaller
+    this.llmCaller = createLLMCaller();
 
     // Initialize HierarchicalStore with persistence
     this.hierarchicalStore = new HierarchicalStore();
@@ -99,7 +104,8 @@ export class Application {
       this.pipeline,
       this.storage,
       this.retrieval,
-      config.server
+      config.server,
+      this.llmCaller
     );
   }
 

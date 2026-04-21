@@ -61,6 +61,46 @@ curl http://localhost:8080/health
 
 ## API Endpoints
 
+### GET /status
+
+获取队列状态和处理统计。
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "gpu_enabled": false,
+  "queue": {
+    "size": 5,
+    "max_size": 50,
+    "available_slots": 45
+  },
+  "timing": {
+    "avg_processing_time_ms": 3000.0,
+    "avg_queue_wait_ms": 1500.0,
+    "estimated_wait_seconds": 18
+  },
+  "stats": {
+    "total_processed": 100,
+    "total_failed": 2,
+    "total_timeout": 0
+  }
+}
+```
+
+### GET /health
+
+健康检查（增强版）。
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "gpu_enabled": false,
+  "queue_size": 5
+}
+```
+
 ### POST /ocr/layout
 
 单页图片OCR处理。
@@ -86,6 +126,30 @@ curl http://localhost:8080/health
   "width": 1024,
   "height": 768
 }
+```
+
+**Error Responses:**
+- **503 Service Unavailable**: Queue is full, retry later
+  ```json
+  {
+    "detail": {
+      "error": "Queue is full, please retry later",
+      "queue_size": 50,
+      "max_size": 50,
+      "retry_after_seconds": 30.0
+    }
+  }
+  ```
+- **408 Request Timeout**: Request exceeded timeout
+  ```json
+  {
+    "detail": {
+      "error": "Request timeout",
+      "timeout_seconds": 300,
+      "page_number": 1
+    }
+  }
+  ```
 ```
 
 ### POST /ocr/batch
@@ -128,6 +192,20 @@ Base64图片输入。
 - GPU模式：每页处理约0.3-1秒
 - 表格处理比纯文本稍慢
 
+## Queue Mode (v2.0)
+
+服务使用 asyncio.Queue + Background Worker 实现请求串行处理：
+
+- **队列容量**: 默认50个请求，可通过 `OCR_MAX_QUEUE_SIZE` 调整
+- **请求超时**: 默认300秒，可通过 `OCR_REQUEST_TIMEOUT` 调整
+- **串行处理**: 所有OCR请求按顺序处理，避免并发冲突
+- **状态监控**: `/status` 端点返回队列状态和预估等待时间
+
+客户端建议：
+- 批量处理时降低 batchSize 到 1-2
+- 收到 503 时等待 `retry_after_seconds` 后重试
+- 可选启用状态预检 (`OCR_ENABLE_STATUS_CHECK=true`)
+
 ## Troubleshooting
 
 ### Model Loading Failed
@@ -153,3 +231,12 @@ python scripts/ocr_service.py --port 8081
 - 减少批量大小（分批处理）
 - 增加系统内存
 - 使用GPU减少内存占用
+- 启用队列模式（自动串行处理）
+
+### Queue Full (503 Error)
+
+如果频繁收到 503 错误：
+- 调大 `OCR_MAX_QUEUE_SIZE`
+- 降低客户端 `OCR_BATCH_SIZE`
+- 启用 `OCR_ENABLE_STATUS_CHECK` 预检队列状态
+- 增加 `OCR_REQUEST_TIMEOUT` 避免超时

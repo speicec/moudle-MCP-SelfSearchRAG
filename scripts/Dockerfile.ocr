@@ -2,8 +2,11 @@
 # OCR Service - PaddleOCR PP-StructureV3 Dockerfile
 # ==============================================================================
 #
-# 构建: docker build -t rag-ocr .
-# 运行: docker run -p 8080:8080 rag-ocr
+# 构建 (在项目根目录执行):
+#   docker build -t rag-ocr -f scripts/Dockerfile.ocr scripts/
+#
+# 运行:
+#   docker run -p 8080:8080 rag-ocr
 #
 # ==============================================================================
 

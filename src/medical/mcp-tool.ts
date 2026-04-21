@@ -7,9 +7,6 @@
 import type {
   MedicalQueryInput,
   MedicalQueryOutput,
-  MedicalEntities,
-  QueryStrategy,
-  MedicalAnswer,
   SourceCitation,
 } from './types.js';
 import {
@@ -22,6 +19,17 @@ import {
   generateMedicalAnswer,
   formatAnswerAsMarkdown,
 } from './answer-generator.js';
+
+/**
+ * Retrieval function type
+ */
+export type RetrievalFunction = (queryText: string, options?: {
+  topK?: number;
+  threshold?: number;
+}) => Promise<Array<{
+  content: string;
+  source: { documentName: string; year?: number; section?: string };
+}>>;
 
 /**
  * Medical Query Tool 定义
@@ -98,11 +106,11 @@ export function validateMedicalQueryInput(input: unknown): {
     if (!Array.isArray(args.year_range) || args.year_range.length !== 2) {
       errors.push('year_range must be an array of 2 numbers');
     } else {
-      const [start, end] = args.year_range as number[];
+      const start = args.year_range[0];
+      const end = args.year_range[1];
       if (typeof start !== 'number' || typeof end !== 'number') {
         errors.push('year_range elements must be numbers');
-      }
-      if (start > end) {
+      } else if (start > end) {
         errors.push('year_range start must be less than or equal to end');
       }
     }
@@ -117,8 +125,11 @@ export function validateMedicalQueryInput(input: unknown): {
     query: args.query as string,
     domain: (args.domain as MedicalQueryInput['domain']) ?? 'all',
     include_guidelines: (args.include_guidelines as boolean) ?? true,
-    year_range: args.year_range as [number, number] | undefined,
   };
+  // Only add year_range if it's defined
+  if (args.year_range !== undefined && Array.isArray(args.year_range) && args.year_range.length === 2) {
+    data.year_range = args.year_range as [number, number];
+  }
 
   return { valid: true, errors: [], data };
 }
@@ -143,7 +154,6 @@ export function processMedicalQuery(input: MedicalQueryInput): MedicalQueryOutpu
     entities,
     strategy,
     answer,
-    retrievalResults: undefined, // 实际检索结果需要外部服务
   };
 }
 
@@ -183,7 +193,10 @@ export function processMedicalQueryWithResults(
  *
  * 用于集成到 MCP handlers
  */
-export async function handleMedicalQuery(args: unknown): Promise<{
+export async function handleMedicalQuery(
+  args: unknown,
+  retrieval?: RetrievalFunction,
+): Promise<{
   success: boolean;
   data?: MedicalQueryOutput;
   error?: string;
@@ -199,7 +212,46 @@ export async function handleMedicalQuery(args: unknown): Promise<{
   }
 
   try {
-    const result = processMedicalQuery(validation.data!);
+    const input = validation.data!;
+
+    // 构建查询策略（用于检索）
+    const strategy = buildQueryStrategy(input);
+
+    // 执行检索（如果有检索服务）
+    let retrievalResults: Array<{
+      content: string;
+      source: SourceCitation;
+    }> | undefined;
+
+    // 执行检索（如果有检索服务）
+    if (retrieval) {
+      const rawResults = await retrieval(strategy.primaryQuery, {
+        topK: 10,
+        threshold: 0.3,
+      });
+
+      // 转换为 SourceCitation 格式
+      retrievalResults = rawResults.map(r => {
+        const source: SourceCitation = {
+          documentName: r.source.documentName,
+        };
+        if (r.source.year !== undefined) {
+          source.year = r.source.year;
+        }
+        if (r.source.section !== undefined) {
+          source.section = r.source.section;
+        }
+        return {
+          content: r.content,
+          source,
+        };
+      });
+    }
+
+    // 生成医学回答
+    const result = retrievalResults
+      ? processMedicalQueryWithResults(input, retrievalResults)
+      : processMedicalQuery(input);
 
     return {
       success: true,

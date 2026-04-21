@@ -9,9 +9,25 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { Harness } from '../core/harness.js';
 import type { DocumentStorage } from '../core/storage.js';
-import type { McpRetrievalService, McpRetrievalResult } from './mcp-retrieval-service.js';
-import { TYPE_FIX_TOOLS, getTypeFixToolList } from './type-fix-tools.js';
+import type { McpRetrievalService } from './mcp-retrieval-service.js';
+import { getTypeFixToolList } from './type-fix-tools.js';
 import { TypeFixHandlers, createTypeFixHandlers } from './type-fix-handlers.js';
+import {
+  MEDICAL_QUERY_TOOL,
+  handleMedicalQuery,
+} from '../medical/mcp-tool.js';
+import {
+  MEDICAL_AGENT_TOOL,
+  validateMedicalAgentInput,
+  formatAgentResultAsMarkdown,
+} from '../medical/agent-mcp-tool.js';
+import {
+  createMedicalAgent,
+} from '../medical/agent/index.js';
+import {
+  createLLMCaller,
+  type LLMCaller,
+} from '../config/llm-config.js';
 
 /**
  * MCP server configuration
@@ -39,12 +55,14 @@ export class McpServer {
   private retrieval: McpRetrievalService;
   private config: McpServerConfig;
   private typeFixHandlers: TypeFixHandlers;
+  private llmCaller?: LLMCaller;
 
   constructor(
     pipeline: Harness,
     storage: DocumentStorage,
     retrieval: McpRetrievalService,
-    config?: Partial<McpServerConfig>
+    config?: Partial<McpServerConfig>,
+    llmCaller?: LLMCaller,
   ) {
     this.config = {
       ...DEFAULT_MCP_CONFIG,
@@ -54,6 +72,7 @@ export class McpServer {
     this.storage = storage;
     this.retrieval = retrieval;
     this.typeFixHandlers = createTypeFixHandlers();
+    this.llmCaller = llmCaller ?? createLLMCaller();
 
     this.server = new Server(
       { name: this.config.name, version: this.config.version },
@@ -144,6 +163,10 @@ export class McpServer {
           },
           // Type fix tools (self-evolving type safety)
           ...getTypeFixToolList(),
+          // Medical query tool (endocrinology domain)
+          MEDICAL_QUERY_TOOL,
+          // Medical agent tool (full ReAct loop)
+          MEDICAL_AGENT_TOOL,
         ],
       };
     });
@@ -168,6 +191,11 @@ export class McpServer {
           return this.handleRecordFix(args as unknown as RecordFixArgs);
         case 'type_fix_list':
           return this.handleTypeFixList();
+        // Medical query tool
+        case 'medical_query':
+          return this.handleMedicalQuery(args as unknown as MedicalQueryArgs);
+        case 'medical_agent':
+          return this.handleMedicalAgent(args as unknown as MedicalAgentArgs);
         default:
           throw new Error(`Unknown tool: ${name}`);
       }
@@ -427,6 +455,132 @@ export class McpServer {
   }
 
   /**
+   * Handle medical_query tool
+   */
+  private async handleMedicalQuery(args: MedicalQueryArgs): Promise<CallToolResult> {
+    try {
+      // Create retrieval wrapper function
+      const retrievalFn = async (queryText: string, options?: { topK?: number; threshold?: number }) => {
+        const results = await this.retrieval.query(queryText, {
+          topK: options?.topK ?? 10,
+          threshold: options?.threshold ?? 0.3,
+        });
+
+        // Map McpRetrievalResult to RetrievalFunction format
+        return results.map(r => ({
+          content: r.parentChunkContent,
+          source: {
+            documentName: r.sourceDocumentId,
+          },
+        }));
+      };
+
+      const result = await handleMedicalQuery(args, retrievalFn);
+
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error: ${result.error}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: result.markdown ?? JSON.stringify(result.data, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  /**
+   * Handle medical_agent tool
+   */
+  private async handleMedicalAgent(args: MedicalAgentArgs): Promise<CallToolResult> {
+    try {
+      const validation = validateMedicalAgentInput(args);
+
+      if (!validation.valid) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error: ${validation.errors.join('; ')}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Create retrieval wrapper function
+      const retrievalFn = async (queryText: string, options?: { topK?: number; threshold?: number }) => {
+        const results = await this.retrieval.query(queryText, {
+          topK: options?.topK ?? 10,
+          threshold: options?.threshold ?? 0.3,
+        });
+
+        return results.map(r => ({
+          content: r.parentChunkContent,
+          source: {
+            documentName: r.sourceDocumentId,
+          },
+        }));
+      };
+
+      // Create and run MedicalAgent
+      const agent = createMedicalAgent(
+        this.llmCaller!,
+        retrievalFn,
+        {
+          maxIterations: args.max_iterations ?? 5,
+          confidenceThreshold: args.confidence_threshold ?? 0.8,
+        },
+      );
+
+      const result = await agent.run({
+        query: validation.data!.query,
+        domain: validation.data!.domain,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: formatAgentResultAsMarkdown(result),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  /**
    * Start the MCP server
    */
   async start(): Promise<void> {
@@ -478,6 +632,20 @@ interface RecordFixArgs {
   line?: number | undefined;
 }
 
+interface MedicalQueryArgs {
+  query: string;
+  domain?: 'diabetes' | 'hypertension' | 'thyroid' | 'all';
+  include_guidelines?: boolean;
+  year_range?: [number, number];
+}
+
+interface MedicalAgentArgs {
+  query: string;
+  domain?: 'diabetes' | 'hypertension' | 'thyroid' | 'all';
+  max_iterations?: number;
+  confidence_threshold?: number;
+}
+
 /**
  * Create MCP server
  */
@@ -485,7 +653,8 @@ export function createMcpServer(
   pipeline: Harness,
   storage: DocumentStorage,
   retrieval: McpRetrievalService,
-  config?: Partial<McpServerConfig>
+  config?: Partial<McpServerConfig>,
+  llmCaller?: LLMCaller,
 ): McpServer {
-  return new McpServer(pipeline, storage, retrieval, config);
+  return new McpServer(pipeline, storage, retrieval, config, llmCaller);
 }

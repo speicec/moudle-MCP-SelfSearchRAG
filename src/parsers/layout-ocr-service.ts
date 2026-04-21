@@ -8,6 +8,7 @@ export interface LayoutOcrConfig {
   baseUrl: string;           // OCR服务地址
   timeoutMs: number;         // 请求超时
   batchSize: number;         // 批量处理数量
+  enableStatusCheck: boolean; // 是否启用状态预检
 }
 
 export const DEFAULT_OCR_CONFIG: LayoutOcrConfig = {
@@ -15,11 +16,35 @@ export const DEFAULT_OCR_CONFIG: LayoutOcrConfig = {
   // 大型文档需要更长超时时间
   // 默认10分钟，可通过环境变量调整
   timeoutMs: parseInt(process.env.OCR_TIMEOUT_MS ?? '600000', 10),
-  // 批量处理数量 - 降低以减少内存压力
-  // 注意: 每页图片约5-10MB，并发过多会压垮OCR服务
-  // 建议: CPU模式用2-3，GPU模式可用5-10
-  batchSize: parseInt(process.env.OCR_BATCH_SIZE ?? '3', 10),
+  // 批量处理数量 - 降低以减少队列压力
+  // 服务端队列模式下建议 1-2
+  batchSize: parseInt(process.env.OCR_BATCH_SIZE ?? '2', 10),
+  // 是否在发送请求前检查服务状态
+  enableStatusCheck: process.env.OCR_ENABLE_STATUS_CHECK === 'true',
 };
+
+/**
+ * OCR服务状态响应
+ */
+export interface OcrServiceStatus {
+  status: string;
+  gpu_enabled: boolean;
+  queue: {
+    size: number;
+    max_size: number;
+    available_slots: number;
+  };
+  timing: {
+    avg_processing_time_ms: number;
+    avg_queue_wait_ms: number;
+    estimated_wait_seconds: number;
+  };
+  stats: {
+    total_processed: number;
+    total_failed: number;
+    total_timeout: number;
+  };
+}
 
 /**
  * OCR输出的单个块
@@ -80,7 +105,41 @@ export class LayoutOcrService {
   }
 
   /**
-   * 处理单页图片（带重试机制）
+   * 获取服务状态（队列信息）
+   */
+  async getStatus(): Promise<OcrServiceStatus | null> {
+    try {
+      const response = await fetch(`${this.config.baseUrl}/status`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return null;
+      }
+      return await response.json() as OcrServiceStatus;
+    } catch {
+      console.warn('[LayoutOcr] Status check failed');
+      return null;
+    }
+  }
+
+  /**
+   * 检查队列是否有可用槽位
+   */
+  async checkQueueAvailable(): Promise<{ available: boolean; waitSeconds: number }> {
+    const status = await this.getStatus();
+    if (!status) {
+      // 无法获取状态，假设可用
+      return { available: true, waitSeconds: 0 };
+    }
+
+    return {
+      available: status.queue.available_slots > 0,
+      waitSeconds: status.timing.estimated_wait_seconds,
+    };
+  }
+
+  /**
+   * 处理单页图片（带重试机制，支持503/408响应）
    */
   async processPage(
     pageImage: PageImage,
@@ -93,6 +152,15 @@ export class LayoutOcrService {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         console.log(`[LayoutOcr] Processing page ${pageImage.pageNumber}... (attempt ${attempt}/${maxRetries})`);
+
+        // 可选：预检队列状态
+        if (this.config.enableStatusCheck && attempt === 1) {
+          const queueStatus = await this.checkQueueAvailable();
+          if (!queueStatus.available) {
+            console.log(`[LayoutOcr] Queue full, waiting ${queueStatus.waitSeconds}s before sending request...`);
+            await new Promise(resolve => setTimeout(resolve, queueStatus.waitSeconds * 1000));
+          }
+        }
 
         // 构建multipart/form-data请求
         const formData = new FormData();
@@ -107,6 +175,29 @@ export class LayoutOcrService {
           body: formData,
           signal: AbortSignal.timeout(this.config.timeoutMs),
         });
+
+        // 处理特殊响应码
+        if (response.status === 503) {
+          // 队列已满，等待后重试
+          const errorData = await response.json() as { detail?: { retry_after_seconds?: number } };
+          const retryAfter = errorData.detail?.retry_after_seconds ?? 30;
+          console.warn(`[LayoutOcr] Page ${pageImage.pageNumber}: Queue full (503), waiting ${retryAfter}s before retry...`);
+          await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+          continue; // 重试
+        }
+
+        if (response.status === 408) {
+          // 请求超时，可以重试或返回空结果
+          console.warn(`[LayoutOcr] Page ${pageImage.pageNumber}: Request timeout (408)`);
+          // 对于超时，不重试，直接返回空结果（避免长时间等待）
+          return {
+            pageNumber: pageImage.pageNumber,
+            blocks: [],
+            processingTimeMs: Date.now() - startTime,
+            width: 0,
+            height: 0,
+          };
+        }
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -141,7 +232,7 @@ export class LayoutOcrService {
 
     // 所有重试都失败，返回空结果而不是抛出错误
     // 这样可以继续处理其他页面
-    console.error(`[LayoutOcr] Page ${pageImage.pageNumber} failed after ${maxRetries} retries`);
+    console.error(`[LayoutOcr] Page ${pageImage.pageNumber} failed after ${maxRetries} retries: ${lastError?.message}`);
     return {
       pageNumber: pageImage.pageNumber,
       blocks: [],  // 空结果
@@ -188,6 +279,14 @@ export class LayoutOcrService {
       // 统计本批次成功/失败数
       const successCount = batchResults.filter(r => r.blocks.length > 0).length;
       console.log(`[LayoutOcr] Processed batch ${Math.floor(i / this.config.batchSize) + 1}: ${successCount}/${batch.length} pages successful`);
+
+      // 批次间添加短暂延迟，让服务端队列有时间处理
+      // 特别是在队列模式下，避免连续批次压垮服务
+      if (i + this.config.batchSize < pageImages.length && this.config.batchSize > 1) {
+        const delayMs = 1000; // 1秒
+        console.log(`[LayoutOcr] Waiting ${delayMs}ms before next batch...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
     }
 
     return results;

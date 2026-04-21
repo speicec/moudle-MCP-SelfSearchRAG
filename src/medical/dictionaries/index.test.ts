@@ -97,7 +97,8 @@ describe('Antidiabetic Drug Dictionary', () => {
 
   it('should have proper aliases for semaglutide', () => {
     const semaglutide = getAntidiabeticById('drug_semaglutide');
-    expect(semaglutide?.aliases).toContain('司美格鲁肽');
+    expect(semaglutide?.canonicalName).toBe('司美格鲁肽');
+    expect(semaglutide?.aliases).toContain('Semaglutide');
     expect(semaglutide?.aliases).toContain('Ozempic');
     expect(semaglutide?.aliases).toContain('诺和泰');
   });

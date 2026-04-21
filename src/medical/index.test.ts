@@ -217,7 +217,7 @@ describe('End-to-End Medical Query Flow', () => {
       expect(result.entities.indicators.length).toBeGreaterThanOrEqual(3);
 
       // Should have confidence
-      expect(result.confidence).toBeGreaterThan(0);
+      expect(result.entities.confidence).toBeGreaterThan(0);
 
       // Should use specified year range
       expect(result.strategy.filters.yearRange).toEqual([2022, 2024]);

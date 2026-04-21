@@ -185,7 +185,7 @@ export class InMemoryVectorStore implements VectorStore {
    */
   async get(id: string): Promise<EmbeddingResult | null> {
     const entry = this.index.get(id);
-    if (!entry) return null;
+    if (!entry) return Promise.resolve(null);
 
     return {
       id: entry.id,

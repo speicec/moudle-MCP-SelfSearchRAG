@@ -88,7 +88,7 @@ export interface ContraindicationRelation {
   id: string;                    // "contra_metformin_egfr_30"
   drug: string;                  // "drug_metformin"
   condition: string;             // 指标或疾病ID
-  threshold?: ThresholdCondition;
+  threshold?: ThresholdCondition | undefined;  // 显式允许 undefined
   severity: 'absolute' | 'relative';  // 绝对禁忌/相对禁忌(慎用)
   source: string;                // "ada"
   year: number;                  // 2024
@@ -154,8 +154,8 @@ export interface IndicatorMatch {
   id: string;
   canonicalName: string;
   matchedTerm: string;
-  unit?: string;
-  value?: number;                // 如果查询包含数值
+  unit?: string | undefined;  // 显式允许 undefined
+  value?: number | undefined; // 如果查询包含数值，显式允许 undefined
 }
 
 /**
@@ -187,8 +187,8 @@ export interface QueryStrategy {
   primaryQuery: string;          // 主查询语句
   expandedTerms: string[];       // 扩展术语
   filters: {
-    yearRange?: [number, number];
-    guidelineSources?: string[];
+    yearRange?: [number, number] | undefined;
+    guidelineSources?: string[] | undefined;
   };
   prioritySources: string[];     // 优先来源
 }
@@ -212,9 +212,9 @@ export interface EvidenceEvaluation {
   literatureType: LiteratureType;
   grade: GradeLevel;
   isCurrent: boolean;
-  year: number;
-  sourceGuideline?: string;
-  expirationWarning?: string;
+  year: number | undefined;  // 可能为 undefined（来源没有年份信息）
+  sourceGuideline?: string | undefined;   // 显式允许 undefined
+  expirationWarning?: string | undefined; // 显式允许 undefined
 }
 
 // ==================== Answer Types ====================
@@ -229,7 +229,7 @@ export type ConfidenceLevel = 'high' | 'medium' | 'low';
  */
 export interface SourceCitation {
   documentName: string;          // "ADA Standards of Care 2024"
-  year: number;                  // 2024
+  year?: number;                 // 2024 (optional if not in metadata)
   section?: string;              // "Section 9"
   pageNumber?: number;           // 123
 }
@@ -278,9 +278,9 @@ export interface MedicalAnswer {
  */
 export interface MedicalQueryInput {
   query: string;                 // 医学查询问题
-  domain?: 'diabetes' | 'hypertension' | 'thyroid' | 'all';
-  include_guidelines?: boolean;  // 是否优先检索指南
-  year_range?: [number, number]; // 年份范围
+  domain?: 'diabetes' | 'hypertension' | 'thyroid' | 'all' | undefined;
+  include_guidelines?: boolean | undefined;  // 是否优先检索指南
+  year_range?: [number, number] | undefined; // 年份范围
 }
 
 /**
@@ -290,5 +290,5 @@ export interface MedicalQueryOutput {
   entities: MedicalEntities;
   strategy: QueryStrategy;
   answer: MedicalAnswer;
-  retrievalResults?: unknown[];
+  retrievalResults?: unknown[] | undefined;
 }
