@@ -13,6 +13,10 @@ export interface PdfParserConfig {
   preserveReadingOrder: boolean;
   maxPages: number;
   ocrEnabled: boolean;
+  // Mixed mode processing configuration
+  mixedModeThreshold: number;    // Minimum chars per page to be considered "text page"
+  forceOcrAll: boolean;          // Force all pages to go through OCR
+  skipEmptyPages: boolean;       // Skip completely empty pages
 }
 
 /**
@@ -28,6 +32,10 @@ export const DEFAULT_PDF_CONFIG: PdfParserConfig = {
   preserveReadingOrder: true,
   maxPages: 1000,
   ocrEnabled: false,
+  // Mixed mode defaults
+  mixedModeThreshold: parseInt(process.env.PDF_MIXED_MODE_THRESHOLD ?? '100', 10),
+  forceOcrAll: process.env.PDF_FORCE_OCR_ALL === 'true',
+  skipEmptyPages: process.env.PDF_SKIP_EMPTY_PAGES !== 'false', // Default true
 };
 
 /**

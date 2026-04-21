@@ -116,6 +116,64 @@ export class PdfToImageConverter {
   }
 
   /**
+   * 选择性转换指定页面（用于混合模式处理）
+   * 只渲染给定的页面编号，而非全部PDF
+   *
+   * @param pdfBuffer PDF文件Buffer
+   * @param pageNumbers 要渲染的页面编号数组（1-based）
+   * @returns 渲染后的页面图片数组
+   */
+  async convertPages(pdfBuffer: Buffer, pageNumbers: number[]): Promise<PageImage[]> {
+    const startTime = Date.now();
+    console.log(`[PdfToImage] Starting selective conversion, target pages: ${pageNumbers.length}`);
+    console.log(`[PdfToImage] Pages to render: ${pageNumbers.join(', ')}`);
+
+    if (pageNumbers.length === 0) {
+      return [];
+    }
+
+    // 加载PDF文档
+    const loadingTask = getDocument({
+      data: new Uint8Array(pdfBuffer),
+      useSystemFonts: true,
+      disableFontFace: false,
+      isEvalSupported: false,
+    });
+
+    const pdfDocument = await loadingTask.promise;
+    const numPages = pdfDocument.numPages;
+    console.log(`[PdfToImage] PDF loaded: ${numPages} total pages`);
+
+    // 验证页码有效性
+    const validPageNumbers = pageNumbers.filter(pn => pn >= 1 && pn <= numPages);
+    if (validPageNumbers.length !== pageNumbers.length) {
+      const invalidPages = pageNumbers.filter(pn => pn < 1 || pn > numPages);
+      console.warn(`[PdfToImage] Invalid page numbers skipped: ${invalidPages.join(', ')}`);
+    }
+
+    const results: PageImage[] = [];
+
+    // 渲染指定页面
+    for (const pageNum of validPageNumbers) {
+      const pageStartTime = Date.now();
+
+      const pageImage = await this.renderPage(pdfDocument, pageNum);
+      results.push(pageImage);
+
+      const pageDuration = Date.now() - pageStartTime;
+      console.log(`[PdfToImage] Page ${pageNum} rendered: ${pageImage.width}x${pageImage.height} px, ${(pageImage.imageBuffer.length / 1024).toFixed(2)} KB, ${pageDuration}ms`);
+    }
+
+    // 清理
+    pdfDocument.destroy();
+
+    const totalDuration = Date.now() - startTime;
+    console.log(`[PdfToImage] Selective conversion complete: ${validPageNumbers.length} pages, ${totalDuration}ms total`);
+
+    return results;
+  }
+
+  /**
    * 渲染单个页面
    */
   private async renderPage(pdfDocument: any, pageNumber: number): Promise<PageImage> {

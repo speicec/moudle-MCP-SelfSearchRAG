@@ -2,7 +2,7 @@ import { BasePlugin } from '../core/plugin.js';
 import { BaseStage } from '../core/stage.js';
 import type { Context, ProcessingState } from '../core/context.js';
 import type { ParsedContent, PageContent, TextBlock, TableBlock, ImageBlock, FormulaBlock } from '../core/types.js';
-import { PDFTextExtractor, createTextExtractor } from './text-extractor.js';
+import { PDFTextExtractor, createTextExtractor, type PageTextDiagnostic, DEFAULT_EMPTY_PAGE_THRESHOLD } from './text-extractor.js';
 import { PDFTableExtractor, createTableExtractor } from './table-extractor.js';
 import { PDFImageExtractor, createImageExtractor } from './image-extractor.js';
 import { PDFFormulaExtractor, createFormulaExtractor } from './formula-extractor.js';
@@ -10,6 +10,24 @@ import { PDFLayoutAnalyzer, createLayoutAnalyzer } from './layout-analyzer.js';
 import { PageSegmenter, createPageSegmenter } from './page-segmenter.js';
 import { ImagePdfProcessor, createImagePdfProcessor, DEFAULT_IMAGE_PDF_CONFIG } from './image-pdf-processor.js';
 import { ProcessingState as State } from '../core/context.js';
+
+/**
+ * Mixed mode processing configuration
+ */
+export interface MixedModeConfig {
+  threshold: number;       // Minimum chars per page to be considered "text page"
+  forceOcrAll: boolean;    // Force all pages to go through OCR
+  skipEmptyPages: boolean; // Skip completely empty pages
+}
+
+/**
+ * Default mixed mode configuration
+ */
+export const DEFAULT_MIXED_MODE_CONFIG: MixedModeConfig = {
+  threshold: parseInt(process.env.PDF_MIXED_MODE_THRESHOLD ?? '100', 10),
+  forceOcrAll: process.env.PDF_FORCE_OCR_ALL === 'true',
+  skipEmptyPages: process.env.PDF_SKIP_EMPTY_PAGES !== 'false', // Default true
+};
 
 /**
  * Parse plugin - extracts structured content from documents
@@ -22,6 +40,7 @@ export class ParsePlugin extends BasePlugin {
   private layoutAnalyzer: PDFLayoutAnalyzer;
   private pageSegmenter: PageSegmenter;
   private imagePdfProcessor: ImagePdfProcessor | null = null;
+  private mixedModeConfig: MixedModeConfig;
 
   constructor() {
     super('parse');
@@ -31,6 +50,7 @@ export class ParsePlugin extends BasePlugin {
     this.formulaExtractor = createFormulaExtractor();
     this.layoutAnalyzer = createLayoutAnalyzer();
     this.pageSegmenter = createPageSegmenter();
+    this.mixedModeConfig = DEFAULT_MIXED_MODE_CONFIG;
 
     // 初始化图片PDF处理器（如果OCR服务已配置）
     this.initImagePdfProcessor();
@@ -140,113 +160,49 @@ export class ParsePlugin extends BasePlugin {
   }
 
   /**
-   * Process PDF document
+   * Process PDF document with smart mixed-mode handling
    */
   private async processPdfDocument(ctx: Context, content: Buffer): Promise<Context> {
     console.log(`[ParsePlugin] Processing PDF document (${(content.length / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`[ParsePlugin] Mixed mode config: threshold=${this.mixedModeConfig.threshold}, forceOcrAll=${this.mixedModeConfig.forceOcrAll}`);
 
     try {
-      // Extract text
-      console.log('[ParsePlugin] Extracting text from PDF...');
-      const textResults = await this.textExtractor.extract(content);
-      console.log(`[ParsePlugin] Extracted text from ${textResults.length} pages`);
+      // ========================================
+      // Step 1: Diagnose each page
+      // ========================================
+      console.log('[ParsePlugin] Step 1: Diagnosing PDF pages...');
+      const diagnostics = await this.textExtractor.diagnose(content, this.mixedModeConfig.threshold);
+      console.log(`[ParsePlugin] Diagnosed ${diagnostics.length} pages`);
 
-      // Log total text length
-      const totalText = textResults.reduce((sum, r) => sum + r.totalCharacters, 0);
-      console.log(`[ParsePlugin] Total text extracted: ${(totalText / 1024).toFixed(2)} KB`);
+      // Log diagnosis summary
+      const textPages = diagnostics.filter(d => !d.isEmpty);
+      const imagePages = diagnostics.filter(d => d.isEmpty);
+      const totalChars = diagnostics.reduce((sum, d) => sum + d.charCount, 0);
+      console.log(`[ParsePlugin] Diagnosis result: ${textPages.length} text pages, ${imagePages.length} image pages, total ${totalChars} characters`);
 
       // ========================================
-      // 检测纯图片PDF：使用OCR流程处理
+      // Step 2: Determine processing strategy
       // ========================================
-      if (totalText === 0) {
-        console.warn('[ParsePlugin] No text extracted from PDF. The document appears to be image-based.');
-
-        // 尝试使用图片PDF处理器
-        if (this.imagePdfProcessor) {
-          console.log('[ParsePlugin] Attempting image-based PDF processing with OCR...');
-
-          try {
-            const parsedContent = await this.imagePdfProcessor.process(content);
-            ctx.set('parsedContent', parsedContent);
-            ctx.setState(State.PARSING);
-
-            console.log(`[ParsePlugin] Image-based PDF processing successful: ${parsedContent.pages.length} pages`);
-            return ctx;
-
-          } catch (ocrError) {
-            const errorMsg = ocrError instanceof Error ? ocrError.message : 'OCR processing failed';
-            console.error(`[ParsePlugin] Image-based PDF processing failed: ${errorMsg}`);
-
-            ctx.addError({
-              stage: 'parse',
-              plugin: this.name,
-              message: `Image-based PDF processing failed: ${errorMsg}. Document may be encrypted or corrupted.`,
-              recoverable: false,
-            });
-            return ctx;
-          }
-        } else {
-          // OCR服务未配置
-          ctx.addError({
-            stage: 'parse',
-            plugin: this.name,
-            message: 'No text could be extracted from the PDF. The document appears to be image-based, but OCR service is not configured. Please set OCR_SERVICE_URL environment variable.',
-            recoverable: false,
-          });
-          return ctx;
-        }
+      if (this.mixedModeConfig.forceOcrAll && this.imagePdfProcessor) {
+        console.log('[ParsePlugin] Force OCR mode: all pages will go through OCR');
+        return this.processAllPagesWithOcr(ctx, content, diagnostics);
       }
 
-      // Build page contents
-      const pages: PageContent[] = [];
-
-      for (const textResult of textResults) {
-        const pageNumber = textResult.pageNumber;
-
-        // Extract tables for this page
-        const pageText = textResult.blocks.map(b => b.content).join('\n');
-        const tables = await this.tableExtractor.extract(pageText, pageNumber);
-
-        // Extract formulas
-        const formulas = await this.formulaExtractor.extract(pageText, pageNumber);
-
-        // Layout analysis
-        const layoutResult = await this.layoutAnalyzer.analyzePage(pageText, pageNumber);
-
-        // Create page content
-        const pageContent: PageContent = {
-          pageNumber,
-          textBlocks: textResult.blocks,
-          tables,
-          images: [], // Will be populated by image extractor if needed
-          formulas,
-        };
-
-        // Segment page into logical blocks
-        const segmentationResult = this.pageSegmenter.segment(pageContent);
-        pageContent.structure = segmentationResult.structure;
-
-        pages.push(pageContent);
+      // All image pages? Use pure OCR flow
+      if (textPages.length === 0) {
+        console.log('[ParsePlugin] All pages are image-based, using pure OCR flow');
+        return this.processAllPagesWithOcr(ctx, content, diagnostics);
       }
 
-      // Extract images (placeholder - full implementation would parse PDF structure)
-      // const images = await this.imageExtractor.extract(content);
-      // Distribute images to pages based on position
+      // All text pages? Use pure text extraction
+      if (imagePages.length === 0) {
+        console.log('[ParsePlugin] All pages are text-based, using pure text extraction');
+        return this.processAllPagesWithText(ctx, diagnostics);
+      }
 
-      const parsedContent: ParsedContent = {
-        pages,
-        totalPages: pages.length,
-        metadata: {
-          title: undefined,
-          author: undefined,
-          pageCount: pages.length,
-        },
-      };
-
-      ctx.set('parsedContent', parsedContent);
-      ctx.setState(State.PARSING);
-
-      console.log(`[ParsePlugin] PDF parsing complete: ${pages.length} pages, ${totalText} characters`);
+      // Mixed: some text, some image - use hybrid processing
+      console.log('[ParsePlugin] Mixed PDF detected, using hybrid processing');
+      return this.processMixedPdfDocument(ctx, content, diagnostics);
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'PDF parsing failed';
@@ -263,6 +219,203 @@ export class ParsePlugin extends BasePlugin {
     }
 
     return ctx;
+  }
+
+  /**
+   * Process all pages using OCR (pure image-based PDF)
+   */
+  private async processAllPagesWithOcr(
+    ctx: Context,
+    content: Buffer,
+    diagnostics: PageTextDiagnostic[]
+  ): Promise<Context> {
+    if (!this.imagePdfProcessor) {
+      ctx.addError({
+        stage: 'parse',
+        plugin: this.name,
+        message: 'OCR service is not configured. Please set OCR_SERVICE_URL environment variable.',
+        recoverable: false,
+      });
+      return ctx;
+    }
+
+    console.log('[ParsePlugin] Processing all pages with OCR...');
+    try {
+      const parsedContent = await this.imagePdfProcessor.process(content);
+      ctx.set('parsedContent', parsedContent);
+      ctx.setState(State.PARSING);
+      console.log(`[ParsePlugin] OCR processing complete: ${parsedContent.pages.length} pages`);
+      return ctx;
+    } catch (ocrError) {
+      const errorMsg = ocrError instanceof Error ? ocrError.message : 'OCR processing failed';
+      console.error(`[ParsePlugin] OCR processing failed: ${errorMsg}`);
+      ctx.addError({
+        stage: 'parse',
+        plugin: this.name,
+        message: `OCR processing failed: ${errorMsg}`,
+        recoverable: false,
+      });
+      return ctx;
+    }
+  }
+
+  /**
+   * Process all pages using text extraction (pure text-based PDF)
+   */
+  private async processAllPagesWithText(
+    ctx: Context,
+    diagnostics: PageTextDiagnostic[]
+  ): Promise<Context> {
+    console.log('[ParsePlugin] Processing all pages with text extraction...');
+    const pages: PageContent[] = [];
+
+    for (const diagnostic of diagnostics) {
+      if (this.mixedModeConfig.skipEmptyPages && diagnostic.charCount === 0) {
+        console.log(`[ParsePlugin] Skipping empty page ${diagnostic.pageNumber}`);
+        continue;
+      }
+
+      const pageContent = await this.buildPageContentFromDiagnostic(diagnostic);
+      pages.push(pageContent);
+    }
+
+    const parsedContent: ParsedContent = {
+      pages,
+      totalPages: diagnostics.length,
+      metadata: {
+        title: undefined,
+        author: undefined,
+        pageCount: diagnostics.length,
+      },
+    };
+
+    ctx.set('parsedContent', parsedContent);
+    ctx.setState(State.PARSING);
+    console.log(`[ParsePlugin] Text extraction complete: ${pages.length} pages`);
+    return ctx;
+  }
+
+  /**
+   * Process mixed PDF: text pages + image pages
+   */
+  private async processMixedPdfDocument(
+    ctx: Context,
+    content: Buffer,
+    diagnostics: PageTextDiagnostic[]
+  ): Promise<Context> {
+    console.log('[ParsePlugin] Processing mixed PDF document...');
+
+    const textPageDiags = diagnostics.filter(d => !d.isEmpty);
+    const imagePageDiags = diagnostics.filter(d => d.isEmpty && d.charCount < this.mixedModeConfig.threshold);
+
+    // Process text pages
+    console.log(`[ParsePlugin] Processing ${textPageDiags.length} text pages...`);
+    const textPages: PageContent[] = [];
+    for (const diag of textPageDiags) {
+      const pageContent = await this.buildPageContentFromDiagnostic(diag);
+      textPages.push(pageContent);
+    }
+
+    // Process image pages with OCR
+    let imagePages: PageContent[] = [];
+    if (imagePageDiags.length > 0 && this.imagePdfProcessor) {
+      console.log(`[ParsePlugin] Processing ${imagePageDiags.length} image pages with OCR...`);
+      const imagePageNumbers = imagePageDiags.map(d => d.pageNumber);
+      try {
+        const ocrResult = await this.imagePdfProcessor.processPages(content, imagePageNumbers);
+        imagePages = ocrResult.pages;
+      } catch (ocrError) {
+        const errorMsg = ocrError instanceof Error ? ocrError.message : 'OCR processing failed';
+        console.warn(`[ParsePlugin] OCR processing for image pages failed: ${errorMsg}`);
+        // Create empty pages for failed OCR pages
+        imagePages = imagePageDiags.map(d => ({
+          pageNumber: d.pageNumber,
+          textBlocks: [],
+          tables: [],
+          images: [],
+          formulas: [],
+        }));
+      }
+    } else if (imagePageDiags.length > 0 && !this.imagePdfProcessor) {
+      console.warn('[ParsePlugin] OCR service not available, image pages will be empty');
+      imagePages = imagePageDiags.map(d => ({
+        pageNumber: d.pageNumber,
+        textBlocks: [],
+        tables: [],
+        images: [],
+        formulas: [],
+      }));
+    }
+
+    // Merge pages in order
+    const mergedPages = this.mergePages(textPages, imagePages);
+
+    const parsedContent: ParsedContent = {
+      pages: mergedPages,
+      totalPages: diagnostics.length,
+      metadata: {
+        title: undefined,
+        author: undefined,
+        pageCount: diagnostics.length,
+      },
+    };
+
+    ctx.set('parsedContent', parsedContent);
+    ctx.setState(State.PARSING);
+    console.log(`[ParsePlugin] Mixed processing complete: ${mergedPages.length} pages (${textPages.length} text, ${imagePages.length} OCR)`);
+    return ctx;
+  }
+
+  /**
+   * Build PageContent from a diagnostic result
+   */
+  private async buildPageContentFromDiagnostic(diagnostic: PageTextDiagnostic): Promise<PageContent> {
+    const pageNumber = diagnostic.pageNumber;
+    const pageText = diagnostic.text;
+
+    // Extract text blocks
+    const paragraphs = pageText
+      .split(/\n\s*\n/)
+      .map(p => p.trim())
+      .filter(p => p.length >= 3);
+
+    const textBlocks: TextBlock[] = paragraphs.map((p, i) => ({
+      type: 'text',
+      content: p,
+      position: { page: pageNumber, x: 0, y: 0, width: 0, height: 0 },
+      blockIndex: i,
+      metadata: { isHeader: p.length < 100 && /^[A-Z\s]+$|^\d+\.\s+/.test(p), isFooter: false },
+    }));
+
+    // Extract tables
+    const tables = await this.tableExtractor.extract(pageText, pageNumber);
+
+    // Extract formulas
+    const formulas = await this.formulaExtractor.extract(pageText, pageNumber);
+
+    const pageContent: PageContent = {
+      pageNumber,
+      textBlocks,
+      tables,
+      images: [],
+      formulas,
+    };
+
+    // Segment page into logical blocks
+    const segmentationResult = this.pageSegmenter.segment(pageContent);
+    pageContent.structure = segmentationResult.structure;
+
+    return pageContent;
+  }
+
+  /**
+   * Merge text pages and image pages, maintaining page order
+   */
+  private mergePages(textPages: PageContent[], imagePages: PageContent[]): PageContent[] {
+    const allPages = [...textPages, ...imagePages];
+    // Sort by page number to maintain original order
+    allPages.sort((a, b) => a.pageNumber - b.pageNumber);
+    return allPages;
   }
 
   /**

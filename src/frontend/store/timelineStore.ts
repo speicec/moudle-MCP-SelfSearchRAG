@@ -14,6 +14,22 @@ export interface StageMetrics {
 }
 
 /**
+ * Log entry for timeline event messages
+ */
+export interface LogEntry {
+  timestamp: number;
+  message: string;
+  type: 'info' | 'warn' | 'error';
+  stage?: string;
+}
+
+/**
+ * Log cache limits
+ */
+export const MAX_STAGE_LOGS = 20;
+export const MAX_GLOBAL_LOGS = 100;
+
+/**
  * Startup progress stage
  */
 export type StartupStage = 'checking' | 'loading_text' | 'loading_multimodal' | 'ready';
@@ -35,7 +51,7 @@ export interface StartupProgress {
  * Timeline stage state
  */
 export interface TimelineStage {
-  name: 'ingest' | 'parse' | 'embed' | 'index';
+  name: 'ingest' | 'parse' | 'chunk' | 'embed' | 'index';
   status: 'pending' | 'running' | 'completed' | 'error';
   progress: number;
   startTime?: number;
@@ -57,12 +73,15 @@ export interface TimelineState {
   endTime?: number;
   // Startup progress state
   startupProgress: StartupProgress;
+  // Log cache
+  stageLogs: Map<string, LogEntry[]>;
+  globalLogs: LogEntry[];
 
   // Event handlers
   handlePipelineStart: (documentId: string, timestamp: number) => void;
-  handleStageStart: (stage: string, timestamp: number) => void;
-  handleStageProgress: (stage: string, progress: number) => void;
-  handleStageComplete: (stage: string, timestamp: number) => void;
+  handleStageStart: (stage: string, timestamp: number, message?: string) => void;
+  handleStageProgress: (stage: string, progress: number, message?: string) => void;
+  handleStageComplete: (stage: string, timestamp: number, message?: string) => void;
   handleStageMetrics: (stage: string, metrics: StageMetrics) => void;
   handlePipelineComplete: (timestamp: number) => void;
   handleError: (stage: string, message: string) => void;
@@ -71,11 +90,16 @@ export interface TimelineState {
   handleStartupProgress: (progress: Partial<StartupProgress>) => void;
   handleStartupReady: (message: string) => void;
   handleStartupError: (message: string) => void;
+  // Log handlers
+  addStageLog: (stage: string, entry: LogEntry) => void;
+  addGlobalLog: (entry: LogEntry) => void;
+  clearLogs: () => void;
 }
 
 const initialStages: TimelineStage[] = [
   { name: 'ingest', status: 'pending', progress: 0 },
   { name: 'parse', status: 'pending', progress: 0 },
+  { name: 'chunk', status: 'pending', progress: 0 },
   { name: 'embed', status: 'pending', progress: 0 },
   { name: 'index', status: 'pending', progress: 0 },
 ];
@@ -96,6 +120,8 @@ export const useTimelineStore = create<TimelineState>((set) => ({
   startTime: undefined,
   endTime: undefined,
   startupProgress: initialStartupProgress,
+  stageLogs: new Map(),
+  globalLogs: [],
 
   handlePipelineStart: (documentId: string, timestamp: number) => {
     set({
@@ -111,35 +137,70 @@ export const useTimelineStore = create<TimelineState>((set) => ({
         duration: undefined,
         metrics: undefined,
       })),
+      stageLogs: new Map(),
+      globalLogs: [],
     });
   },
 
-  handleStageStart: (stage: string, timestamp: number) => {
-    set((state) => ({
-      stages: state.stages.map((s) =>
-        s.name === stage ? { ...s, status: 'running', startTime: timestamp, progress: 0 } : s
-      ),
-    }));
+  handleStageStart: (stage: string, timestamp: number, message?: string) => {
+    set((state) => {
+      const updates: Partial<TimelineState> = {
+        stages: state.stages.map((s) =>
+          s.name === stage ? { ...s, status: 'running', startTime: timestamp, progress: 0 } : s
+        ),
+      };
+      if (message) {
+        const entry: LogEntry = { timestamp, message, type: 'info', stage };
+        updates.stageLogs = new Map(state.stageLogs).set(
+          stage,
+          [...(state.stageLogs.get(stage) || []), entry].slice(-MAX_STAGE_LOGS)
+        );
+        updates.globalLogs = [...state.globalLogs, entry].slice(-MAX_GLOBAL_LOGS);
+      }
+      return updates;
+    });
   },
 
-  handleStageProgress: (stage: string, progress: number) => {
-    set((state) => ({
-      stages: state.stages.map((s) =>
-        s.name === stage ? { ...s, progress } : s
-      ),
-    }));
+  handleStageProgress: (stage: string, progress: number, message?: string) => {
+    set((state) => {
+      const updates: Partial<TimelineState> = {
+        stages: state.stages.map((s) =>
+          s.name === stage ? { ...s, progress } : s
+        ),
+      };
+      if (message) {
+        const entry: LogEntry = { timestamp: Date.now(), message, type: 'info', stage };
+        updates.stageLogs = new Map(state.stageLogs).set(
+          stage,
+          [...(state.stageLogs.get(stage) || []), entry].slice(-MAX_STAGE_LOGS)
+        );
+        updates.globalLogs = [...state.globalLogs, entry].slice(-MAX_GLOBAL_LOGS);
+      }
+      return updates;
+    });
   },
 
-  handleStageComplete: (stage: string, timestamp: number) => {
-    set((state) => ({
-      stages: state.stages.map((s) => {
-        if (s.name === stage) {
-          const duration = s.startTime ? timestamp - s.startTime : undefined;
-          return { ...s, status: 'completed', endTime: timestamp, duration, progress: 100 };
-        }
-        return s;
-      }),
-    }));
+  handleStageComplete: (stage: string, timestamp: number, message?: string) => {
+    set((state) => {
+      const updates: Partial<TimelineState> = {
+        stages: state.stages.map((s) => {
+          if (s.name === stage) {
+            const duration = s.startTime ? timestamp - s.startTime : undefined;
+            return { ...s, status: 'completed', endTime: timestamp, duration, progress: 100 };
+          }
+          return s;
+        }),
+      };
+      if (message) {
+        const entry: LogEntry = { timestamp, message, type: 'info', stage };
+        updates.stageLogs = new Map(state.stageLogs).set(
+          stage,
+          [...(state.stageLogs.get(stage) || []), entry].slice(-MAX_STAGE_LOGS)
+        );
+        updates.globalLogs = [...state.globalLogs, entry].slice(-MAX_GLOBAL_LOGS);
+      }
+      return updates;
+    });
   },
 
   handleStageMetrics: (stage: string, metrics: StageMetrics) => {
@@ -159,12 +220,20 @@ export const useTimelineStore = create<TimelineState>((set) => ({
   },
 
   handleError: (stage: string, message: string) => {
-    set((state) => ({
-      isRunning: false,
-      stages: state.stages.map((s) =>
-        s.name === stage ? { ...s, status: 'error', message } : s
-      ),
-    }));
+    set((state) => {
+      const entry: LogEntry = { timestamp: Date.now(), message, type: 'error', stage };
+      return {
+        isRunning: false,
+        stages: state.stages.map((s) =>
+          s.name === stage ? { ...s, status: 'error', message } : s
+        ),
+        stageLogs: new Map(state.stageLogs).set(
+          stage,
+          [...(state.stageLogs.get(stage) || []), entry].slice(-MAX_STAGE_LOGS)
+        ),
+        globalLogs: [...state.globalLogs, entry].slice(-MAX_GLOBAL_LOGS),
+      };
+    });
   },
 
   reset: () => {
@@ -176,6 +245,8 @@ export const useTimelineStore = create<TimelineState>((set) => ({
       startTime: undefined,
       endTime: undefined,
       startupProgress: initialStartupProgress,
+      stageLogs: new Map(),
+      globalLogs: [],
     });
   },
 
@@ -206,5 +277,27 @@ export const useTimelineStore = create<TimelineState>((set) => ({
         errorMessage: message,
       },
     }));
+  },
+
+  addStageLog: (stage: string, entry: LogEntry) => {
+    set((state) => ({
+      stageLogs: new Map(state.stageLogs).set(
+        stage,
+        [...(state.stageLogs.get(stage) || []), entry].slice(-MAX_STAGE_LOGS)
+      ),
+    }));
+  },
+
+  addGlobalLog: (entry: LogEntry) => {
+    set((state) => ({
+      globalLogs: [...state.globalLogs, entry].slice(-MAX_GLOBAL_LOGS),
+    }));
+  },
+
+  clearLogs: () => {
+    set({
+      stageLogs: new Map(),
+      globalLogs: [],
+    });
   },
 }));

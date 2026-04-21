@@ -19,16 +19,30 @@ function createEventHandler() {
     // Handle timeline events
     if (event.type === 'pipeline:start' && event.documentId) {
       useTimelineStore.getState().handlePipelineStart(event.documentId, event.timestamp);
+      if (event.message) {
+        useTimelineStore.getState().addGlobalLog({
+          timestamp: event.timestamp,
+          message: event.message,
+          type: 'info',
+        });
+      }
     } else if (event.type === 'stage:start' && event.stage) {
-      useTimelineStore.getState().handleStageStart(event.stage, event.timestamp);
+      useTimelineStore.getState().handleStageStart(event.stage, event.timestamp, event.message);
     } else if (event.type === 'stage:progress' && event.stage) {
-      useTimelineStore.getState().handleStageProgress(event.stage, event.progress ?? 0);
+      useTimelineStore.getState().handleStageProgress(event.stage, event.progress ?? 0, event.message);
     } else if (event.type === 'stage:complete' && event.stage) {
-      useTimelineStore.getState().handleStageComplete(event.stage, event.timestamp);
+      useTimelineStore.getState().handleStageComplete(event.stage, event.timestamp, event.message);
     } else if (event.type === 'stage:metrics' && event.stage && event.metrics) {
       useTimelineStore.getState().handleStageMetrics(event.stage, event.metrics);
     } else if (event.type === 'pipeline:complete') {
       useTimelineStore.getState().handlePipelineComplete(event.timestamp);
+      if (event.message) {
+        useTimelineStore.getState().addGlobalLog({
+          timestamp: event.timestamp,
+          message: event.message,
+          type: 'info',
+        });
+      }
     } else if (event.type === 'error' && event.stage && event.error) {
       useTimelineStore.getState().handleError(event.stage, event.error.message);
     }

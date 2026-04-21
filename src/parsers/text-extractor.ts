@@ -34,6 +34,22 @@ export interface PageTextResult {
 }
 
 /**
+ * Page diagnostic result for mixed-mode processing
+ */
+export interface PageTextDiagnostic {
+  pageNumber: number;
+  text: string;
+  charCount: number;
+  isEmpty: boolean;  // charCount < threshold
+}
+
+/**
+ * Default threshold for determining if a page is "empty" (image-based)
+ * Pages with fewer than this many characters are considered image pages
+ */
+export const DEFAULT_EMPTY_PAGE_THRESHOLD = 100;
+
+/**
  * PDF text extractor
  */
 export class PDFTextExtractor {
@@ -48,42 +64,146 @@ export class PDFTextExtractor {
 
   /**
    * Extract text from PDF buffer
+   * Fixed: Use custom pagerender to get per-page results, not \f detection
    */
   async extract(content: Buffer): Promise<PageTextResult[]> {
     // Dynamic import to avoid bundling issues
     const pdfParse = await import('pdf-parse');
 
-    const data = await pdfParse.default(content);
+    // Custom pagerender callback that returns per-page text
+    // This fixes the bug where we relied on \f (form feed) character
+    const pageResults: { pageNumber: number; text: string }[] = [];
+    let currentPageNum = 0;
 
-    const results: PageTextResult[] = [];
-    let currentPageNumber = 1;
-    let currentText = '';
-    let startPosition = 0;
+    const customPagerender = (pageData: any) => {
+      currentPageNum++;
+      const renderOptions = {
+        normalizeWhitespace: false,
+        disableCombineTextItems: false,
+      };
 
-    // Process text per page
-    for (let i = 0; i < data.text.length; i++) {
-      // Simple page boundary detection based on form feed
-      if (data.text[i] === '\f' || i === data.text.length - 1) {
-        const pageText = currentText.trim();
-        if (pageText.length > 0) {
-          const blocks = this.extractTextBlocks(pageText, currentPageNumber, startPosition);
-          results.push({
-            pageNumber: currentPageNumber,
-            blocks,
-            totalCharacters: pageText.length,
-            readingOrder: blocks.map((_, idx) => idx),
-          });
+      return pageData.getTextContent(renderOptions).then((textContent: any) => {
+        let lastY: number | null = null;
+        let text = '';
+
+        for (const item of textContent.items) {
+          if (lastY === item.transform[5] || lastY === null) {
+            text += item.str;
+          } else {
+            text += '\n' + item.str;
+          }
+          lastY = item.transform[5];
         }
 
-        currentPageNumber++;
-        currentText = '';
-        startPosition = i + 1;
+        pageResults.push({
+          pageNumber: currentPageNum,
+          text,
+        });
+
+        return text;
+      });
+    };
+
+    // Call pdf-parse with custom pagerender
+    const data = await pdfParse.default(content, {
+      pagerender: customPagerender,
+    });
+
+    // Now pageResults contains properly indexed pages
+    const results: PageTextResult[] = [];
+
+    for (const pageResult of pageResults) {
+      const pageText = pageResult.text.trim();
+      if (pageText.length > 0) {
+        const blocks = this.extractTextBlocks(pageText, pageResult.pageNumber, 0);
+        results.push({
+          pageNumber: pageResult.pageNumber,
+          blocks,
+          totalCharacters: pageText.length,
+          readingOrder: blocks.map((_, idx) => idx),
+        });
       } else {
-        currentText += data.text[i];
+        // Empty page - still include it for proper page counting
+        results.push({
+          pageNumber: pageResult.pageNumber,
+          blocks: [],
+          totalCharacters: 0,
+          readingOrder: [],
+        });
       }
     }
 
     return results;
+  }
+
+  /**
+   * Diagnose each page to determine if it's text-based or image-based
+   * Used for mixed-mode processing where some pages need OCR
+   *
+   * @param content PDF buffer
+   * @param threshold Minimum characters per page to be considered "text page"
+   * @returns Array of page diagnostics
+   */
+  async diagnose(
+    content: Buffer,
+    threshold: number = DEFAULT_EMPTY_PAGE_THRESHOLD
+  ): Promise<PageTextDiagnostic[]> {
+    // Dynamic import to avoid bundling issues
+    const pdfParse = await import('pdf-parse');
+
+    // Custom pagerender callback for diagnosis
+    const pageResults: { pageNumber: number; text: string }[] = [];
+    let currentPageNum = 0;
+
+    const customPagerender = (pageData: any) => {
+      currentPageNum++;
+      const renderOptions = {
+        normalizeWhitespace: false,
+        disableCombineTextItems: false,
+      };
+
+      return pageData.getTextContent(renderOptions).then((textContent: any) => {
+        let lastY: number | null = null;
+        let text = '';
+
+        for (const item of textContent.items) {
+          if (lastY === item.transform[5] || lastY === null) {
+            text += item.str;
+          } else {
+            text += '\n' + item.str;
+          }
+          lastY = item.transform[5];
+        }
+
+        pageResults.push({
+          pageNumber: currentPageNum,
+          text,
+        });
+
+        return text;
+      });
+    };
+
+    // Call pdf-parse with custom pagerender
+    await pdfParse.default(content, {
+      pagerender: customPagerender,
+    });
+
+    // Convert to diagnostic results
+    const diagnostics: PageTextDiagnostic[] = pageResults.map((pageResult) => {
+      const trimmedText = pageResult.text.trim();
+      const charCount = trimmedText.length;
+      const isEmpty = charCount < threshold;
+
+      return {
+        pageNumber: pageResult.pageNumber,
+        text: trimmedText,
+        charCount,
+        isEmpty,
+      };
+    });
+
+    return diagnostics;
   }
 
   /**

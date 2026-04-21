@@ -136,6 +136,76 @@ export class ImagePdfProcessor {
   }
 
   /**
+   * 处理指定页面的PDF（用于混合模式处理）
+   * 只处理给定的页面编号，不处理全部PDF
+   *
+   * @param pdfBuffer PDF文件Buffer
+   * @param pageNumbers 要处理的页面编号数组（1-based）
+   * @returns 处理后的ParsedContent，只包含指定页面
+   */
+  async processPages(pdfBuffer: Buffer, pageNumbers: number[]): Promise<ParsedContent> {
+    const startTime = Date.now();
+    console.log(`[ImagePdfProcessor] Starting selective page processing: ${pageNumbers.length} pages`);
+    console.log(`[ImagePdfProcessor] Target pages: ${pageNumbers.join(', ')}`);
+
+    if (pageNumbers.length === 0) {
+      return {
+        pages: [],
+        totalPages: 0,
+        metadata: { pageCount: 0 },
+      };
+    }
+
+    // Step 1: 检查OCR服务可用性
+    console.log('[ImagePdfProcessor] Step 1: Checking OCR service...');
+    const ocrHealthy = await this.ocrService.healthCheck();
+    if (!ocrHealthy) {
+      throw new Error('OCR service is not available. Please start the OCR service first.');
+    }
+    console.log('[ImagePdfProcessor] OCR service is healthy');
+
+    // Step 2: 选择性渲染指定页面
+    console.log('[ImagePdfProcessor] Step 2: Rendering selected pages...');
+    const pageImages = await this.pdfConverter.convertPages(pdfBuffer, pageNumbers);
+    console.log(`[ImagePdfProcessor] Rendered ${pageImages.length} pages`);
+
+    // 获取坐标信息
+    const coordinateInfos = pageImages.map(img => this.pdfConverter.getPageCoordinateInfo(img));
+
+    // Step 3: 图片 → OCR
+    console.log('[ImagePdfProcessor] Step 3: Running layout OCR...');
+    let ocrResults = await this.ocrService.processBatch(pageImages, coordinateInfos);
+    console.log(`[ImagePdfProcessor] OCR complete: ${ocrResults.length} pages processed`);
+
+    // Step 3.5: VLM增强处理（如果启用）
+    if (this.config.enableVlm && vlmEnhancementService.isEnabled()) {
+      console.log('[ImagePdfProcessor] Step 3.5: Enhancing with VLM...');
+      try {
+        ocrResults = await this.enhanceWithVlm(ocrResults, pageImages);
+        console.log('[ImagePdfProcessor] VLM enhancement complete');
+      } catch (vlmError) {
+        const errorMsg = vlmError instanceof Error ? vlmError.message : 'Unknown VLM error';
+        console.warn(`[ImagePdfProcessor] VLM enhancement failed: ${errorMsg}, continuing with OCR results`);
+      }
+    }
+
+    // Step 4: OCR结果 → 结构化ParsedContent
+    console.log('[ImagePdfProcessor] Step 4: Converting OCR results to ParsedContent...');
+    const pages = this.convertToParsedContent(ocrResults, pageImages, coordinateInfos);
+
+    const duration = Date.now() - startTime;
+    console.log(`[ImagePdfProcessor] Selective processing complete: ${pages.length} pages, ${duration}ms`);
+
+    return {
+      pages,
+      totalPages: pageNumbers.length,
+      metadata: {
+        pageCount: pageNumbers.length,
+      },
+    };
+  }
+
+  /**
    * VLM增强处理
    * 对table/figure/formula类型调用VLM获取深度理解结果
    */
