@@ -151,6 +151,84 @@ describe('IntentAnalyzer', () => {
         expect(result.specialNeeds.requireYearFilter).toBe(true);
         expect(result.specialNeeds.yearValue).toBe(2024);
       });
+
+      // 新增：扩展的禁忌意图检测测试
+      describe('extended contraindication detection', () => {
+        it('should detect contraindication from "能否使用" pattern', () => {
+          const entities = createTestEntities({
+            drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+            indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+            rawQuery: 'eGFR=35能否使用二甲双胍',
+          });
+
+          const result = analyzeIntent(entities, 'eGFR=35能否使用二甲双胍');
+          expect(result.specialNeeds.checkContraindication).toBe(true);
+          expect(result.queryTypes).toContain('decision_support');
+          expect(result.queryTypes).toContain('safety_check');
+        });
+
+        it('should detect contraindication from "可以服用" pattern', () => {
+          const entities = createTestEntities({
+            drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+            rawQuery: '肾功能不全可以服用二甲双胍吗',
+          });
+
+          const result = analyzeIntent(entities, '肾功能不全可以服用二甲双胍吗');
+          expect(result.specialNeeds.checkContraindication).toBe(true);
+        });
+
+        it('should detect contraindication from "能不能用" pattern', () => {
+          const entities = createTestEntities({
+            drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+            indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 30 }],
+            rawQuery: 'eGFR=30能不能用二甲双胍',
+          });
+
+          const result = analyzeIntent(entities, 'eGFR=30能不能用二甲双胍');
+          expect(result.specialNeeds.checkContraindication).toBe(true);
+        });
+
+        it('should detect contraindication from "是否可以" pattern', () => {
+          const entities = createTestEntities({
+            drugs: [{ id: 'drug_1', canonicalName: '利拉鲁肽', matchedTerm: '利拉鲁肽', aliases: [], classification: { category: '降糖药', subcategory: 'GLP-1受体激动剂' } }],
+            rawQuery: '胰腺炎病史是否可以使用利拉鲁肽',
+          });
+
+          const result = analyzeIntent(entities, '胰腺炎病史是否可以使用利拉鲁肽');
+          expect(result.specialNeeds.checkContraindication).toBe(true);
+        });
+
+        it('should detect contraindication from "适合用" pattern', () => {
+          const entities = createTestEntities({
+            drugs: [{ id: 'drug_1', canonicalName: 'SGLT2抑制剂', matchedTerm: 'SGLT2抑制剂', aliases: [], classification: { category: '降糖药', subcategory: 'SGLT2抑制剂' } }],
+            rawQuery: '肾病患者适合用SGLT2抑制剂吗',
+          });
+
+          const result = analyzeIntent(entities, '肾病患者适合用SGLT2抑制剂吗');
+          expect(result.specialNeeds.checkContraindication).toBe(true);
+        });
+
+        it('should not detect contraindication when no relevant entities', () => {
+          const entities = createTestEntities({
+            rawQuery: '能否使用', // 无药物实体
+          });
+
+          const result = analyzeIntent(entities, '能否使用');
+          expect(result.specialNeeds.checkContraindication).toBe(false);
+        });
+
+        it('should detect both decision_support and safety_check for contraindication query', () => {
+          const entities = createTestEntities({
+            drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+            indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+            rawQuery: 'eGFR=35能否使用二甲双胍',
+          });
+
+          const result = analyzeIntent(entities, 'eGFR=35能否使用二甲双胍');
+          expect(result.queryTypes).toContain('decision_support');
+          expect(result.queryTypes).toContain('safety_check');
+        });
+      });
     });
 
     describe('retrieval needs prediction', () => {
@@ -236,6 +314,50 @@ describe('IntentAnalyzer', () => {
 
         const result = analyzeIntent(entities, '二甲双胍的作用机制');
         expect(result.expectedAnswerFormat).toBe('direct');
+      });
+    });
+
+    // 新增：用药建议意图检测测试
+    describe('drug recommendation intent detection', () => {
+      it('should detect decision_support for "用什么药" query', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+          rawQuery: '糖尿病用什么药',
+        });
+
+        const result = analyzeIntent(entities, '糖尿病用什么药');
+        expect(result.queryTypes).toContain('decision_support');
+        expect(result.expectedAnswerFormat).toBe('recommendation');
+      });
+
+      it('should detect decision_support for "怎么治" query', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+          rawQuery: '糖尿病怎么治',
+        });
+
+        const result = analyzeIntent(entities, '糖尿病怎么治');
+        expect(result.queryTypes).toContain('decision_support');
+      });
+
+      it('should detect decision_support for "治疗方案" query', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+          rawQuery: '糖尿病治疗方案',
+        });
+
+        const result = analyzeIntent(entities, '糖尿病治疗方案');
+        expect(result.queryTypes).toContain('decision_support');
+      });
+
+      it('should detect decision_support for "推荐药物" query', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+          rawQuery: '糖尿病推荐药物',
+        });
+
+        const result = analyzeIntent(entities, '糖尿病推荐药物');
+        expect(result.queryTypes).toContain('decision_support');
       });
     });
   });

@@ -396,12 +396,20 @@ export function calculateDAGStats(dag: TaskDAG): DAGStats {
 
 /**
  * 计算最大深度
+ * 使用递归栈检测循环依赖，避免无限递归
  */
 function calculateMaxDepth(dag: TaskDAG): number {
   const taskMap = new Map(dag.tasks.map(t => [t.id, t]));
   const depthCache = new Map<string, number>();
+  const recursionStack = new Set<string>();
 
   function getDepth(taskId: string): number {
+    // 检测循环依赖
+    if (recursionStack.has(taskId)) {
+      // 循环依赖，返回默认深度避免无限递归
+      return 0;
+    }
+
     if (depthCache.has(taskId)) {
       return depthCache.get(taskId)!;
     }
@@ -412,9 +420,13 @@ function calculateMaxDepth(dag: TaskDAG): number {
       return 0;
     }
 
+    recursionStack.add(taskId);
+
     const maxDepDepth = Math.max(
       ...task.dependencies.map(dep => getDepth(dep))
     );
+
+    recursionStack.delete(taskId);
     depthCache.set(taskId, maxDepDepth + 1);
     return maxDepDepth + 1;
   }

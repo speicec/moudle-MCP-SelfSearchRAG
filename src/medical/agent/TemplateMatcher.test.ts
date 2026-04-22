@@ -197,6 +197,91 @@ describe('TemplateMatcher', () => {
       });
     });
 
+    // 新增：疾病用药建议模板测试
+    describe('disease_drug_recommendation template', () => {
+      it('should match disease drug recommendation template', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+          rawQuery: '糖尿病用什么药',
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support'],
+          expectedAnswerFormat: 'recommendation',
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, '糖尿病用什么药');
+        expect(result.matched).toBe(true);
+        expect(result.templateId).toBe('disease_drug_recommendation');
+      });
+
+      it('should NOT match when drugs are specified', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+          drugs: [{ id: 'drug_metformin', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+          rawQuery: '糖尿病二甲双胍用什么药',
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support'],
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        // 有药物时不匹配用药建议模板
+        expect(result.templateId).not.toBe('disease_drug_recommendation');
+      });
+
+      it('should NOT match without decision_support query type', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['information_query'], // 不是决策支持
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        expect(result.templateId).not.toBe('disease_drug_recommendation');
+      });
+
+      it('should generate DAG with parallel retrieval', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support'],
+          expectedAnswerFormat: 'recommendation',
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        const dag = result.dag!;
+
+        expect(dag.parallelGroups.length).toBe(1);
+        expect(dag.tasks.filter(t => t.type === 'retrieve').length).toBe(2);
+        expect(dag.tasks.find(t => t.id === 'retrieve_treatment')).toBeDefined();
+        expect(dag.tasks.find(t => t.id === 'retrieve_guidelines')).toBeDefined();
+      });
+
+      it('should generate DAG with recommendation format answer', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support'],
+          expectedAnswerFormat: 'recommendation',
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        const dag = result.dag!;
+
+        const answerTask = dag.tasks.find(t => t.type === 'generate_answer');
+        expect(answerTask).toBeDefined();
+        expect(answerTask?.params.format).toBe('recommendation');
+      });
+    });
+
     describe('indicator_drug_query template', () => {
       it('should match indicator drug query template', () => {
         const entities = createTestEntities({
@@ -209,8 +294,8 @@ describe('TemplateMatcher', () => {
         });
 
         const result = matchTemplate(entities, intentAnalysis, 'eGFR=35能否使用二甲双胍');
+        // 注意：decision_support_with_indicator 模板优先级更高
         expect(result.matched).toBe(true);
-        expect(result.templateId).toBe('indicator_drug_query');
       });
 
       it('should generate DAG with calculate_indicator task', () => {
@@ -250,6 +335,164 @@ describe('TemplateMatcher', () => {
       });
     });
 
+    // 新增：decision_support_with_indicator 模板测试
+    describe('decision_support_with_indicator template', () => {
+      it('should match decision_support_with_indicator template', () => {
+        const entities = createTestEntities({
+          drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+          indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support', 'safety_check'],
+          specialNeeds: { checkContraindication: true },
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'eGFR=35能否使用二甲双胍');
+        expect(result.matched).toBe(true);
+        expect(result.templateId).toBe('decision_support_with_indicator');
+      });
+
+      it('should NOT match without decision_support query type', () => {
+        const entities = createTestEntities({
+          drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+          indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['safety_check'], // 没有 decision_support
+          specialNeeds: { checkContraindication: true },
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        expect(result.matched).toBe(true);
+        expect(result.templateId).toBe('indicator_drug_query'); // 使用另一个模板
+      });
+
+      it('should NOT match without indicator value', () => {
+        const entities = createTestEntities({
+          drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+          indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²' }], // 无 value
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support'],
+          specialNeeds: { checkContraindication: true },
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        expect(result.matched).toBe(false);
+      });
+
+      it('should have priority over indicator_drug_query', () => {
+        const entities = createTestEntities({
+          drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+          indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+        });
+
+        // 同时满足 decision_support_with_indicator 和 indicator_drug_query 的条件
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support', 'safety_check'],
+          specialNeeds: { checkContraindication: true },
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'eGFR=35能否使用二甲双胍');
+        expect(result.matched).toBe(true);
+        expect(result.templateId).toBe('decision_support_with_indicator'); // 优先级更高
+      });
+
+      it('should generate DAG with recommendation format', () => {
+        const entities = createTestEntities({
+          drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+          indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support', 'safety_check'],
+          specialNeeds: { checkContraindication: true },
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        const dag = result.dag!;
+
+        const answerTask = dag.tasks.find(t => t.type === 'generate_answer');
+        expect(answerTask).toBeDefined();
+        expect(answerTask?.params.format).toBe('recommendation');
+      });
+    });
+
+    // 新增：模板尝试记录测试
+    describe('template attempts logging', () => {
+      it('should record template attempts', () => {
+        const entities = createTestEntities({
+          drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+          indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support', 'safety_check'],
+          specialNeeds: { checkContraindication: true },
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        expect(result.attempts).toBeDefined();
+        // matchTemplate 只记录到匹配为止，不继续记录后面的模板
+        expect(result.attempts?.length).toBeGreaterThanOrEqual(1);
+        expect(result.attempts?.length).toBeLessThanOrEqual(5);
+      });
+
+      it('should record matched template in attempts', () => {
+        const entities = createTestEntities({
+          drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+          indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support', 'safety_check'],
+          specialNeeds: { checkContraindication: true },
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        const matchedAttempt = result.attempts?.find(a => a.matched);
+        expect(matchedAttempt).toBeDefined();
+        expect(matchedAttempt?.templateId).toBe('decision_support_with_indicator');
+      });
+
+      it('should record rejection reasons for failed templates', () => {
+        const entities = createTestEntities({
+          drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
+          indicators: [{ id: 'indicator_1', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support', 'safety_check'],
+          specialNeeds: { checkContraindication: true },
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        const failedAttempts = result.attempts?.filter(a => !a.matched);
+        expect(failedAttempts?.length).toBeGreaterThan(0);
+
+        for (const attempt of failedAttempts ?? []) {
+          expect(attempt.rejectionReason).toBeDefined();
+        }
+      });
+
+      it('should record attempts even when no match', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_1', canonicalName: '糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+        });
+
+        const intentAnalysis = createIntentAnalysis();
+
+        const result = matchTemplate(entities, intentAnalysis, '糖尿病症状');
+        expect(result.matched).toBe(false);
+        expect(result.attempts).toBeDefined();
+        // 无匹配时应该记录所有模板
+        expect(result.attempts?.length).toBe(6);
+      });
+    });
+
     describe('no-match fallback', () => {
       it('should return no match for unmatched patterns', () => {
         const entities = createTestEntities({
@@ -280,15 +523,17 @@ describe('TemplateMatcher', () => {
   });
 
   describe('STRUCTURED_TEMPLATES', () => {
-    it('should have 4 base templates', () => {
-      expect(STRUCTURED_TEMPLATES.length).toBe(4);
+    it('should have 6 templates', () => {
+      expect(STRUCTURED_TEMPLATES.length).toBe(6);
     });
 
     it('should have correct template IDs', () => {
       const ids = STRUCTURED_TEMPLATES.map(t => t.id);
+      expect(ids).toContain('disease_drug_recommendation'); // 新增
       expect(ids).toContain('guideline_year_filter');
       expect(ids).toContain('drug_contraindication');
       expect(ids).toContain('drug_comparison');
+      expect(ids).toContain('decision_support_with_indicator'); // 新增
       expect(ids).toContain('indicator_drug_query');
     });
 
@@ -310,7 +555,7 @@ describe('TemplateMatcher', () => {
     it('should return templates via getTemplates', () => {
       const matcher = createTemplateMatcher();
       const templates = matcher.getTemplates();
-      expect(templates.length).toBe(4);
+      expect(templates.length).toBe(6);
     });
   });
 
@@ -356,7 +601,7 @@ describe('TemplateMatcher', () => {
       const result1 = matchTemplate(entities1, intentAnalysis1, 'test');
       expect(result1.dag?.tasks.length).toBe(3);
 
-      // 药物对比: 5 tasks (2 retrieve + compare + answer)
+      // 药物对比: 4 tasks (2 retrieve + compare + answer)
       const entities2 = createTestEntities({
         drugs: [
           { id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } },
@@ -367,7 +612,7 @@ describe('TemplateMatcher', () => {
         queryTypes: ['comparison'],
       });
       const result2 = matchTemplate(entities2, intentAnalysis2, 'test');
-      expect(result2.dag?.tasks.length).toBe(5);
+      expect(result2.dag?.tasks.length).toBe(4);
 
       // 指标药物查询: 5 tasks (2 retrieve + calculate + check + answer)
       const entities3 = createTestEntities({

@@ -97,7 +97,7 @@ describe('ReplanningEngine', () => {
       expect(calculateCoverage(state, entities)).toBe(0.5);
     });
 
-    it('should count entity from task params', () => {
+    it('should count entity from completed task params', () => {
       const entities = createTestEntities({
         drugs: [{ id: 'drug_1', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }],
       });
@@ -111,8 +111,15 @@ describe('ReplanningEngine', () => {
         exitTasks: ['task_1'],
       };
 
-      const state = createTestState({ dag });
-      expect(calculateCoverage(state, entities)).toBe(1);
+      // Without completed task, coverage should be 0
+      const statePending = createTestState({ dag });
+      expect(calculateCoverage(statePending, entities)).toBe(0);
+
+      // With completed task, coverage should be 1
+      const completed = new Map<string, TaskResult>();
+      completed.set('task_1', { taskId: 'task_1', success: true, data: {}, durationMs: 100 });
+      const stateCompleted = createTestState({ dag, completed });
+      expect(calculateCoverage(stateCompleted, entities)).toBe(1);
     });
   });
 

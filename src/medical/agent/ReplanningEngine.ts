@@ -80,6 +80,12 @@ export function evaluateReplanningNeed(
   const triggers: TriggerReason[] = [];
   let urgency: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' = 'LOW';
 
+  // Helper function to compare urgency levels (higher = more urgent)
+  const compareUrgency = (a: typeof urgency, b: typeof urgency): typeof urgency => {
+    const order = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+    return order[a] >= order[b] ? a : b;
+  };
+
   // 1. 覆盖率检查
   const coverage = calculateCoverage(state, entities);
   if (coverage < 0.8) {
@@ -87,7 +93,7 @@ export function evaluateReplanningNeed(
     if (coverage < 0.5) {
       urgency = 'CRITICAL';
     } else {
-      urgency = Math.max(urgency.charCodeAt(0), 'HIGH'.charCodeAt(0)) === urgency.charCodeAt(0) ? urgency : 'HIGH';
+      urgency = compareUrgency('HIGH', urgency);
     }
   }
 
@@ -101,14 +107,14 @@ export function evaluateReplanningNeed(
   const evidenceScore = calculateEvidenceScore(state);
   if (evidenceScore < 0.3) {
     triggers.push('evidence_quality');
-    urgency = Math.max(urgency.charCodeAt(0), 'MEDIUM'.charCodeAt(0)) === urgency.charCodeAt(0) ? urgency : 'MEDIUM';
+    urgency = compareUrgency('MEDIUM', urgency);
   }
 
   // 4. 执行失败检查
   const failedRatio = calculateFailedRatio(state);
   if (failedRatio > 0.2) {
     triggers.push('execution_failure');
-    urgency = Math.max(urgency.charCodeAt(0), 'HIGH'.charCodeAt(0)) === urgency.charCodeAt(0) ? urgency : 'HIGH';
+    urgency = compareUrgency('HIGH', urgency);
   }
 
   // 5. 关键任务失败检查
@@ -172,6 +178,7 @@ export function evaluateReplanningNeed(
 
 /**
  * 计算实体覆盖率
+ * 只计算已完成任务中覆盖的实体
  */
 export function calculateCoverage(state: ExecutorState, entities: MedicalEntities): number {
   const allEntityIds = [
@@ -184,7 +191,7 @@ export function calculateCoverage(state: ExecutorState, entities: MedicalEntitie
     return 1;
   }
 
-  // 检查检索结果中覆盖的实体
+  // 检查检索结果中覆盖的实体（只来自已完成的任务）
   const coveredEntities = new Set<string>();
   for (const [, result] of state.completed) {
     if (result.success && result.data) {
@@ -193,15 +200,17 @@ export function calculateCoverage(state: ExecutorState, entities: MedicalEntitie
       if (data.entity) {
         coveredEntities.add(data.entity as string);
       }
-      // 或者检查任务参数中的实体引用
     }
   }
 
-  // 检查任务参数中的实体引用
+  // 检查已完成任务参数中的实体引用
   for (const task of state.dag.tasks) {
-    if (task.params.entity || task.params.drug || task.params.indicator || task.params.disease) {
-      const entityId = task.params.entity || task.params.drug || task.params.indicator || task.params.disease;
-      coveredEntities.add(entityId as string);
+    const result = state.completed.get(task.id);
+    if (result?.success) {
+      if (task.params.entity || task.params.drug || task.params.indicator || task.params.disease) {
+        const entityId = task.params.entity || task.params.drug || task.params.indicator || task.params.disease;
+        coveredEntities.add(entityId as string);
+      }
     }
   }
 

@@ -122,6 +122,12 @@ function classifyQueryTypes(query: string, entities: MedicalEntities): QueryType
   // 决策支持（有条件判断）
   if (detectDecisionSupport(query, entities)) {
     types.push('decision_support');
+    // 扩展：决策支持 + 禁忌相关实体 → 同时标记为 safety_check
+    if (detectDecisionSupportContraindication(query, entities)) {
+      if (!types.includes('safety_check')) {
+        types.push('safety_check');
+      }
+    }
   }
 
   // 默认为信息查询
@@ -162,6 +168,9 @@ function detectSafetyCheck(query: string, entities: MedicalEntities): boolean {
     /不良反应/,
     /相互作用/,
     /合用/,
+    /更安全/,
+    /安全性/,
+    /安全/,
     /contraindication/,
     /interaction/,
     /safety/,
@@ -192,12 +201,49 @@ function detectDecisionSupport(query: string, entities: MedicalEntities): boolea
     /can I/,
     /should/,
     /whether/,
+    // 新增：决策支持禁忌检查模式
+    /能否使用/,
+    /可以服用/,
+    /适合用/,
+    // 新增：用药建议模式
+    /用什么药/,
+    /用什么/,
+    /怎么治/,
+    /治疗方案/,
+    /治疗药物/,
+    /推荐药物/,
+    /用药建议/,
+    /药物选择/,
   ];
 
   // 或者有指标值（需要条件判断）
   const hasIndicatorValue = entities.indicators.some(i => i.value !== undefined);
 
   return decisionPatterns.some(p => p.test(query)) || hasIndicatorValue;
+}
+
+/**
+ * 检测决策支持禁忌意图（扩展）
+ * 识别"能否使用"、"可以服用"等背后的禁忌检查需求
+ */
+function detectDecisionSupportContraindication(query: string, entities: MedicalEntities): boolean {
+  const decisionContraindicationPatterns = [
+    /能否使用/,
+    /可以服用/,
+    /能不能用/,
+    /是否可以/,
+    /适合用/,
+    /能否/,
+    /能不能/,
+    /是否.*用/,
+    /可以.*用/,
+  ];
+
+  // 模式匹配 + 有药物或指标实体 → 禁忌检查需求
+  const hasPattern = decisionContraindicationPatterns.some(p => p.test(query));
+  const hasRelevantEntities = entities.drugs.length >= 1 || entities.indicators.length >= 1;
+
+  return hasPattern && hasRelevantEntities;
 }
 
 /**
@@ -323,7 +369,10 @@ function detectSpecialNeeds(
   return {
     calculateIndicator: entities.indicators.some(i => i.value !== undefined),
     checkInteraction: entities.drugs.length >= 2 || /相互作用|合用/.test(query),
-    checkContraindication: /禁忌/.test(query) || entities.relations.some(r => r.type === 'contraindication'),
+    // 扩展：检测"禁忌"关键词或决策支持禁忌意图
+    checkContraindication: /禁忌/.test(query)
+      || entities.relations.some(r => r.type === 'contraindication')
+      || detectDecisionSupportContraindication(query, entities),
     requireYearFilter: detectYearFilter(query),
     yearValue: yearValue ?? undefined,
   };
@@ -363,11 +412,12 @@ function predictAnswerFormat(queryTypes: QueryType[]): IntentAnalysis['expectedA
   if (queryTypes.includes('comparison')) {
     return 'comparison';
   }
-  if (queryTypes.includes('safety_check')) {
-    return 'safety_warning';
-  }
+  // decision_support + safety_check → recommendation（决策支持为主）
   if (queryTypes.includes('decision_support')) {
     return 'recommendation';
+  }
+  if (queryTypes.includes('safety_check')) {
+    return 'safety_warning';
   }
   return 'direct';
 }

@@ -11,6 +11,7 @@ import type {
   ComplexityLevel,
   IntentAnalysis,
   ComplexityAssessment,
+  QueryStrategy,
 } from './ExecutionTypes.js';
 import {
   assessComplexity,
@@ -18,7 +19,7 @@ import {
   generateQueryHash,
 } from './ComplexityJudge.js';
 import { analyzeIntent } from './IntentAnalyzer.js';
-import { matchTemplate } from './TemplateMatcher.js';
+import { matchTemplate, type TemplateAttemptRecord } from './TemplateMatcher.js';
 import { validateDAG, autoCorrectDAG } from './DAGValidator.js';
 
 /**
@@ -125,6 +126,9 @@ export const TASK_PLANNER_PROMPT = `你是一个医学任务规划专家。
 
 请根据上述信息输出任务 DAG。`;
 
+// Re-export QueryStrategy for convenience
+export type { QueryStrategy } from './ExecutionTypes.js';
+
 /**
  * 规划结果
  */
@@ -136,6 +140,8 @@ export interface PlanningResult {
   intentAnalysis: IntentAnalysis;
   validationErrors?: string[];
   usedLLM: boolean;
+  queryStrategy?: QueryStrategy; // 记录使用的查询策略
+  templateAttempts?: TemplateAttemptRecord[]; // 模板匹配尝试记录
 }
 
 /**
@@ -147,6 +153,7 @@ export async function plan(
   options?: {
     llmCall?: (prompt: string) => Promise<string>;
     enableLLMFallback?: boolean;
+    queryStrategy?: QueryStrategy; // 优化查询策略
   }
 ): Promise<PlanningResult> {
   // 1. 复杂度判断
@@ -165,8 +172,8 @@ export async function plan(
   // 2. 意图分析
   const intentAnalysis = analyzeIntent(entities, query);
 
-  // 3. 模板匹配
-  const templateMatch = matchTemplate(entities, intentAnalysis, query);
+  // 3. 模板匹配（传递优化查询策略）
+  const templateMatch = matchTemplate(entities, intentAnalysis, query, options?.queryStrategy);
 
   if (templateMatch.matched && templateMatch.dag) {
     // 使用模板 DAG，验证后返回
@@ -187,8 +194,16 @@ export async function plan(
       intentAnalysis,
       usedLLM: false,
     };
+    // 仅在存在时添加 queryStrategy
+    if (options?.queryStrategy) {
+      result.queryStrategy = options.queryStrategy;
+    }
     if (templateMatch.templateName) {
       result.matchedTemplate = templateMatch.templateName;
+    }
+    // 添加模板匹配尝试记录
+    if (templateMatch.attempts) {
+      result.templateAttempts = templateMatch.attempts;
     }
     if (!validation.valid) {
       result.validationErrors = validation.errors.map(e => e.message);
@@ -229,6 +244,15 @@ export async function plan(
           dag: finalDag,
           complexityLevel: complexity.level,
           intentAnalysis,
+          usedLLM: true,
+        };
+      } else {
+        // LLM 返回了无法解析的响应
+        return {
+          success: false,
+          complexityLevel: complexity.level,
+          intentAnalysis,
+          validationErrors: ['LLM returned unparseable response'],
           usedLLM: true,
         };
       }

@@ -274,18 +274,19 @@ describe('ContextManager', () => {
         compressionThreshold: 0.8,
       });
 
-      // 添加内容达到阈值
-      for (let i = 0; i < 8; i++) {
-        manager.addEntry('retrieval', `Medium content ${i}`, {
+      // 添加内容达到阈值并即将超出限制
+      // effectiveMaxTokens = 900, threshold = 720 tokens
+      // 中文约 1.5 tokens/字符
+      // 需要先达到 threshold (720) 且新条目会超出 effectiveMaxTokens
+      // 使用约60 tokens/条目，需要约12条达到阈值，再加一条触发压缩
+      for (let i = 0; i < 13; i++) {
+        manager.addEntry('retrieval', `这是一段较长的中文内容用于测试压缩功能索引号${i}包含足够的文字来触发压缩阈值判断机制自动化测试验证`, {
           priority: 0.4,
           confidence: 0.6,
         });
       }
 
-      // 添加触发压缩的条目
-      manager.addEntry('retrieval', 'Trigger compression');
-
-      // 检查是否有压缩条目
+      // 检查是否有压缩条目（低优先级 0.4 < 0.5 会被压缩）
       const entries = manager.getEntries();
       expect(entries.some(e => e.compressed)).toBe(true);
     });

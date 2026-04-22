@@ -9,6 +9,14 @@ import type { MedicalEntities, SourceCitation } from '../types.js';
 // ==================== Complexity Types ====================
 
 /**
+ * 查询策略（优化后的检索词）
+ */
+export interface QueryStrategy {
+  primaryQuery: string;
+  expandedTerms: string[];
+}
+
+/**
  * 复杂度级别
  */
 export type ComplexityLevel = 'simple' | 'moderate' | 'complex' | 'structured';

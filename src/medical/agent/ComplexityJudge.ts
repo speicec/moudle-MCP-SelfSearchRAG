@@ -40,6 +40,18 @@ export function assessComplexity(entities: MedicalEntities, query: string): Comp
     needsPlanning = true;
     reason = 'Explicit year filter condition detected';
   }
+  // 规则 1.5: 禁忌/安全检查 → structured，使用模板
+  else if (detectSafetyIntent(query)) {
+    level = 'structured';
+    needsPlanning = true;
+    reason = 'Safety/contraindication intent detected';
+  }
+  // 规则 1.6: 用药建议 → moderate，启用 Planning（疾病+用药建议需检索多个药物）
+  else if (detectDrugRecommendationIntent(query)) {
+    level = 'moderate';
+    needsPlanning = true;
+    reason = 'Drug recommendation intent detected, requires multi-drug retrieval';
+  }
   // 规则 2: 单实体 → simple，跳过 Planning
   else if (entityCount <= 1 && !hasComparison && !hasConditions) {
     level = 'simple';
@@ -132,6 +144,49 @@ function detectYearFilter(query: string): boolean {
   ];
 
   return yearPatterns.some(pattern => pattern.test(query));
+}
+
+/**
+ * 检测用药建议意图
+ */
+function detectDrugRecommendationIntent(query: string): boolean {
+  const drugRecommendationPatterns = [
+    /用什么药/,
+    /用什么/,
+    /怎么治/,
+    /治疗方案/,
+    /治疗药物/,
+    /推荐药物/,
+    /用药建议/,
+    /药物选择/,
+    /用药/,
+  ];
+
+  return drugRecommendationPatterns.some(pattern => pattern.test(query));
+}
+
+/**
+ * 检测安全/禁忌检查意图
+ */
+function detectSafetyIntent(query: string): boolean {
+  const safetyPatterns = [
+    /禁忌/,
+    /禁忌症/,
+    /禁忌证/,
+    /能否使用/,
+    /能否用/,
+    /能不能用/,
+    /可以使用/,
+    /副作用/,
+    /不良反应/,
+    /相互作用/,
+    /更安全/,
+    /安全性/,
+    /contraindication/,
+    /safety/,
+  ];
+
+  return safetyPatterns.some(pattern => pattern.test(query));
 }
 
 /**

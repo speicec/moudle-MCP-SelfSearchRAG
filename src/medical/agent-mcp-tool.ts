@@ -5,6 +5,49 @@
  */
 
 import type { MedicalQueryInput, SourceCitation } from './types.js';
+import type { RetrievalVisualization, ExecutionTrace } from './agent/types.js';
+
+/**
+ * 格式化可视化简要版
+ */
+function formatVisualizationBrief(viz: RetrievalVisualization): string {
+  const lines: string[] = [];
+
+  // 原始查询
+  lines.push(`**原始查询**: "${viz.originalQuery}"`);
+  lines.push('');
+
+  // 识别结果
+  if (viz.entityMatches.length > 0) {
+    lines.push('**识别结果**:');
+    for (const match of viz.entityMatches) {
+      const valueStr = match.value !== undefined ? `=${match.value}${match.unit ?? ''}` : '';
+      lines.push(`- ${match.entityType}: ${match.matchedTerm}${valueStr} → ${match.canonicalName}`);
+    }
+    lines.push('');
+  }
+
+  // 优化查询
+  if (viz.queryRewriting.primaryQuery && viz.queryRewriting.primaryQuery !== viz.originalQuery) {
+    lines.push(`**优化查询**: "${viz.queryRewriting.primaryQuery}"`);
+    if (viz.queryRewriting.expandedTerms.length > 0) {
+      lines.push(`  扩展词: ${viz.queryRewriting.expandedTerms.join(', ')}`);
+    }
+    lines.push('');
+  }
+
+  // 执行路径
+  lines.push(`**执行路径**: ${viz.executionPath.stages.join(' → ')}`);
+  if (viz.executionPath.matchedTemplate) {
+    lines.push(`  匹配模板: ${viz.executionPath.matchedTemplate}`);
+  }
+  lines.push('');
+
+  // 检索结果
+  lines.push(`**检索结果**: ${viz.retrievalResultCount}条相关文献`);
+
+  return lines.join('\n');
+}
 
 /**
  * Medical Agent Tool 定义（ReAct 模式）
@@ -122,10 +165,12 @@ export interface PlanningModeOutput {
     llmCallCount: number;
     replanningRounds: number;
   };
-  complexityLevel?: string;
-  matchedTemplate?: string;
-  fallbackReason?: string;
-  limitReached?: string;
+  complexityLevel?: string | undefined;
+  matchedTemplate?: string | undefined;
+  fallbackReason?: string | undefined;
+  limitReached?: string | undefined;
+  visualization?: RetrievalVisualization | undefined;
+  executionTrace?: ExecutionTrace | undefined;
 }
 
 /**
@@ -287,8 +332,16 @@ export function formatAgentResultAsMarkdown(result: {
     totalTimeMs: number;
   };
   satisfied: boolean;
+  visualization?: RetrievalVisualization | undefined;
 }): string {
   const sections: string[] = [];
+
+  // 检索分析（在结论之前）
+  if (result.visualization) {
+    sections.push('## 🔍 检索分析');
+    sections.push(formatVisualizationBrief(result.visualization));
+    sections.push('');
+  }
 
   // 结论
   sections.push('## 结论');
@@ -346,6 +399,13 @@ export function formatAgentResultAsMarkdown(result: {
  */
 export function formatPlanningResultAsMarkdown(result: PlanningModeOutput): string {
   const sections: string[] = [];
+
+  // 检索分析（在结论之前）
+  if (result.visualization) {
+    sections.push('## 🔍 检索分析');
+    sections.push(formatVisualizationBrief(result.visualization));
+    sections.push('');
+  }
 
   // 结论
   sections.push('## 结论');

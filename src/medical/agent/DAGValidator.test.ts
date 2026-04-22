@@ -363,7 +363,7 @@ describe('DAGValidator', () => {
           { id: 'retrieve_1', type: 'retrieve', params: { query: 'metformin' }, dependencies: [], priority: 1 },
           { id: 'retrieve_2', type: 'retrieve', params: { query: 'egfr' }, dependencies: [], priority: 1 },
           { id: 'evaluate', type: 'evaluate', params: { results: [] }, dependencies: ['retrieve_1', 'retrieve_2'], priority: 4 },
-          { id: 'answer', type: 'generate_answer', params: {}, dependencies: ['evaluate'], priority: 7 },
+          { id: 'answer', type: 'generate_answer', params: { context: 'test' }, dependencies: ['evaluate'], priority: 7 },
         ],
         parallelGroups: [],
         entryTasks: ['retrieve_1', 'retrieve_2'],

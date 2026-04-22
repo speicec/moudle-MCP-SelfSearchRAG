@@ -7,11 +7,15 @@
 import type { MedicalEntities, MedicalAnswer, SourceCitation, EvidenceEvaluation } from '../types.js';
 import type { SafetyAssessment } from '../safety-layer.js';
 import type { ExtractedThreshold } from '../threshold-extractor.js';
+import type { RetrievalVisualization } from './RetrievalVisualization.js';
+import type { ExecutionTrace } from './TraceVisualizer.js';
 
 // Re-export types used by Agent module
 export type { MedicalEntities, MedicalAnswer, SourceCitation, EvidenceEvaluation } from '../types.js';
 export type { SafetyAssessment } from '../safety-layer.js';
 export type { ExtractedThreshold } from '../threshold-extractor.js';
+export type { RetrievalVisualization } from './RetrievalVisualization.js';
+export type { ExecutionTrace } from './TraceVisualizer.js';
 
 /**
  * Agent 状态
@@ -187,6 +191,12 @@ export interface AgentResult {
   satisfied: boolean;
   error?: string | undefined;
   fallbackReason?: string | undefined;
+
+  // 检索可视化（新增）
+  visualization?: RetrievalVisualization | undefined;
+
+  // 执行链路追踪（新增）
+  executionTrace?: ExecutionTrace | undefined;
 }
 
 /**
