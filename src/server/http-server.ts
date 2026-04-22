@@ -17,6 +17,7 @@ import { TextEmbeddingService } from '../embedding/embedding-service.js';
 import { createStatsAggregationService } from './stats-aggregation-service.js';
 import { getVectorStoreFactory } from '../retrieval/vector-store-factory.js';
 import { createHybridSmallToBigRetriever } from '../retrieval/hybrid-small-to-big-retriever.js';
+import { SmallToBigRetriever } from '../chunking/small-to-big-retriever.js';
 import { createImageEmbeddingService } from '../embedding/image-embedding-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -84,25 +85,43 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
 
   // Initialize VectorStore if hybrid mode is enabled
   let vectorStoreAdapter: any = null;
+  let hybridRetriever: any = null;
+  let sharedRetriever: any = null;
 
   if (mode === 'hybrid') {
     try {
+      fastify.log.info('=== Hybrid Mode Initialization ===');
+
+      // Step 1: VectorStore
       const vectorStoreFactory = getVectorStoreFactory();
       vectorStoreAdapter = await vectorStoreFactory.createAdapter();
-      fastify.log.info(`VectorStore initialized: ${vectorStoreFactory.getType()}`);
+      fastify.log.info(`  [1/4] VectorStore: ${vectorStoreFactory.getType()}`);
 
-      // Create HybridRetriever
+      // Step 2: HybridEmbeddingService
       const hybridEmbeddingService = embeddingFactory.getHybridEmbeddingService();
-      if (hybridEmbeddingService && vectorStoreAdapter) {
-        createHybridSmallToBigRetriever(
-          vectorStoreAdapter,
-          hierarchicalStore,
-          hybridEmbeddingService
-        );
-        fastify.log.info('HybridSmallToBigRetriever initialized');
+      if (!hybridEmbeddingService) {
+        fastify.log.error('  [FAIL] HybridEmbeddingService not available!');
+        throw new Error('Hybrid mode requires HybridEmbeddingService');
       }
+      fastify.log.info('  [2/4] HybridEmbeddingService available');
+
+      // Step 3: Create HybridRetriever
+      hybridRetriever = createHybridSmallToBigRetriever(
+        vectorStoreAdapter,
+        hierarchicalStore,
+        hybridEmbeddingService
+      );
+      fastify.log.info('  [3/4] HybridRetriever created');
+
+      // Step 4: Create Shared Retriever and configure Hybrid
+      sharedRetriever = new SmallToBigRetriever(hierarchicalStore);
+      sharedRetriever.setHybridRetriever(hybridRetriever);
+      fastify.log.info('  [4/4] SharedRetriever configured with Hybrid');
+
+      fastify.log.info('=== Hybrid Mode Ready ===');
+
     } catch (error) {
-      fastify.log.warn('Failed to initialize VectorStore, falling back to in-memory mode: ' + (error instanceof Error ? error.message : String(error)));
+      fastify.log.warn('Failed to initialize Hybrid mode, falling back to in-memory: ' + (error instanceof Error ? error.message : String(error)));
     }
   }
 
@@ -115,9 +134,12 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
   // Store embeddingService as any to avoid type issues with Fastify's decorate
   fastify.decorate('embeddingService', embeddingService as unknown as TextEmbeddingService);
 
-  // Decorate with VectorStore and HybridEmbeddingService for hybrid mode
-  if (mode === 'hybrid' && vectorStoreAdapter) {
+  // Decorate with Hybrid components (if available)
+  if (mode === 'hybrid' && vectorStoreAdapter && hybridRetriever && sharedRetriever) {
     fastify.decorate('vectorStoreAdapter', vectorStoreAdapter);
+    fastify.decorate('hybridRetriever', hybridRetriever);
+    fastify.decorate('sharedRetriever', sharedRetriever);
+
     const hybridEmbeddingService = embeddingFactory.getHybridEmbeddingService();
     if (hybridEmbeddingService) {
       fastify.decorate('hybridEmbeddingService', hybridEmbeddingService);
