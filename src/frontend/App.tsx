@@ -1,12 +1,12 @@
 import React from 'react';
-import VisualApp from './components/VisualApp';
+import ClinicalApp from './components/ClinicalApp';
 
 /**
  * Main App component
- * Renders the VisualApp with tab layout and visualization components
+ * Renders the ClinicalApp with medical workstation-style interface
  */
 const App: React.FC = () => {
-  return <VisualApp />;
+  return <ClinicalApp />;
 };
 
 export default App;
