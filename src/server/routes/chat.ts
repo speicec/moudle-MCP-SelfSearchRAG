@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChatQueryRequest, ChatQueryResponse, RetrievalResultItem, PipelineEvent, RetrievalMatchData } from '../types.js';
 import { SmallToBigRetriever } from '../../chunking/small-to-big-retriever.js';
 import type { ImageStore } from '../../chunking/image-store.js';
+import type { HybridSmallToBigRetriever } from '../../retrieval/hybrid-small-to-big-retriever.js';
 import { PipelineEmitter } from '../pipeline-emitter.js';
 import { llmGenerationService, type GenerationEvent, type MultimodalGenerationRequest } from '../services/LLMGenerationService.js';
 import { createEnhancedRetrievalPipeline } from '../../retrieval/enhanced-retrieval-pipeline.js';
@@ -56,42 +57,49 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    // Create retriever with request parameters
-    const retriever = new SmallToBigRetriever(hierarchicalStore, {
-      topK,
-      similarityThreshold,
-      maxContextTokens,
-    });
+    // Check if Hybrid Retriever is available
+    const sharedRetriever = (fastify as any).sharedRetriever as SmallToBigRetriever | undefined;
 
-    // Set embedding generator for semantic similarity calculation
-    if (embeddingService) {
-      console.log(`[ChatRoute] Embedding service available, dimension: ${embeddingService.getDimension()}`);
-      retriever.setEmbeddingGenerator((text: string) => embeddingService.embedText(text));
+    let retriever: SmallToBigRetriever;
 
-      // Validate embedding dimension matches stored chunks
-      const sampleChunks = hierarchicalStore.getAllSmallChunks();
-      if (sampleChunks.length > 0) {
-        const sampleChunk = sampleChunks[0];
-        if (sampleChunk && sampleChunk.embedding.length > 0) {
-          const storedDim = sampleChunk.embedding.length;
-          const serviceDim = embeddingService.getDimension();
-          console.log(`[ChatRoute] Dimension check - stored: ${storedDim}, service: ${serviceDim}`);
+    if (sharedRetriever && sharedRetriever.isHybridMode()) {
+      // Hybrid 模式：使用已配置的 retriever
+      console.log('[ChatRoute] Using pre-configured Hybrid Retriever');
+      retriever = sharedRetriever;
+      retriever.setConfig({ topK, similarityThreshold, maxContextTokens });
+    } else {
+      // Fallback: Legacy 内存模式
+      console.log('[ChatRoute] Using Legacy in-memory retriever');
+      retriever = new SmallToBigRetriever(hierarchicalStore, {
+        topK,
+        similarityThreshold,
+        maxContextTokens,
+      });
 
-          if (storedDim !== serviceDim) {
-            fastify.log.error({
-              storedDim,
-              serviceDim,
-              message: 'Embedding dimension mismatch between stored chunks and embedding service',
-            });
-            return reply.status(500).send({
-              error: 'Embedding dimension mismatch',
-              message: `Stored chunks use ${storedDim} dimensions, but embedding service produces ${serviceDim} dimensions`,
-            });
+      if (embeddingService) {
+        console.log(`[ChatRoute] Embedding service available, dimension: ${embeddingService.getDimension()}`);
+        retriever.setEmbeddingGenerator((text: string) => embeddingService.embedText(text));
+
+        // 维度检查仅适用于 Legacy 模式（Hybrid 模式 embeddings 在 Qdrant）
+        const sampleChunks = hierarchicalStore.getAllSmallChunks();
+        if (sampleChunks.length > 0) {
+          const sampleChunk = sampleChunks[0];
+          if (sampleChunk && sampleChunk.embedding.length > 0) {
+            const storedDim = sampleChunk.embedding.length;
+            const serviceDim = embeddingService.getDimension();
+            console.log(`[ChatRoute] Dimension check - stored: ${storedDim}, service: ${serviceDim}`);
+
+            if (storedDim !== serviceDim) {
+              return reply.status(500).send({
+                error: 'Embedding dimension mismatch',
+                message: `Stored chunks use ${storedDim} dimensions, but embedding service produces ${serviceDim} dimensions`,
+              });
+            }
           }
         }
+      } else {
+        console.warn('[ChatRoute] No embedding service available - using synthetic embeddings');
       }
-    } else {
-      console.warn('[ChatRoute] No embedding service available - using synthetic embeddings (not recommended for production)');
     }
 
     // Create emitter for retrieval events
@@ -242,15 +250,26 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    // Create retriever
-    const retriever = new SmallToBigRetriever(hierarchicalStore, {
-      topK,
-      similarityThreshold,
-      maxContextTokens,
-    });
+    // Check if Hybrid Retriever is available
+    const sharedRetriever = (fastify as any).sharedRetriever as SmallToBigRetriever | undefined;
 
-    if (embeddingService) {
-      retriever.setEmbeddingGenerator((text: string) => embeddingService.embedText(text));
+    let retriever: SmallToBigRetriever;
+
+    if (sharedRetriever && sharedRetriever.isHybridMode()) {
+      console.log('[ChatRoute:Generate] Using pre-configured Hybrid Retriever');
+      retriever = sharedRetriever;
+      retriever.setConfig({ topK, similarityThreshold, maxContextTokens });
+    } else {
+      console.log('[ChatRoute:Generate] Using Legacy in-memory retriever');
+      retriever = new SmallToBigRetriever(hierarchicalStore, {
+        topK,
+        similarityThreshold,
+        maxContextTokens,
+      });
+
+      if (embeddingService) {
+        retriever.setEmbeddingGenerator((text: string) => embeddingService.embedText(text));
+      }
     }
 
     // WebSocket broadcast helper
@@ -459,10 +478,21 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
     const startTime = Date.now();
 
     try {
-      // Create retriever
-      const retriever = new SmallToBigRetriever(hierarchicalStore);
-      if (embeddingService) {
-        retriever.setEmbeddingGenerator((text: string) => embeddingService.embedText(text));
+      // Check if Hybrid Retriever is available
+      const sharedRetriever = (fastify as any).sharedRetriever as SmallToBigRetriever | undefined;
+
+      let retriever: SmallToBigRetriever;
+
+      if (sharedRetriever && sharedRetriever.isHybridMode()) {
+        console.log('[ChatRoute:Enhanced] Using pre-configured Hybrid Retriever');
+        retriever = sharedRetriever;
+      } else {
+        console.log('[ChatRoute:Enhanced] Using Legacy in-memory retriever');
+        retriever = new SmallToBigRetriever(hierarchicalStore);
+
+        if (embeddingService) {
+          retriever.setEmbeddingGenerator((text: string) => embeddingService.embedText(text));
+        }
       }
 
       // Create enhanced pipeline
