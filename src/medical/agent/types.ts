@@ -4,10 +4,14 @@
  * 定义医学 Agent 的状态、动作和结果类型
  */
 
-import type { MedicalEntities, MedicalAnswer, SourceCitation } from '../types.js';
+import type { MedicalEntities, MedicalAnswer, SourceCitation, EvidenceEvaluation } from '../types.js';
+import type { SafetyAssessment } from '../safety-layer.js';
+import type { ExtractedThreshold } from '../threshold-extractor.js';
 
 // Re-export types used by Agent module
-export type { MedicalEntities, MedicalAnswer, SourceCitation } from '../types.js';
+export type { MedicalEntities, MedicalAnswer, SourceCitation, EvidenceEvaluation } from '../types.js';
+export type { SafetyAssessment } from '../safety-layer.js';
+export type { ExtractedThreshold } from '../threshold-extractor.js';
 
 /**
  * Agent 状态
@@ -20,6 +24,15 @@ export interface AgentState {
 
   // 实体识别结果
   entities: MedicalEntities;
+
+  // 提取的阈值条件
+  thresholds?: ExtractedThreshold[];
+
+  // 安全预检查结果
+  safetyAssessment?: SafetyAssessment;
+
+  // 证据评估结果
+  evidenceEvaluation?: EvidenceEvaluation[];
 
   // 检索结果
   retrievalResults?: Array<{
@@ -155,7 +168,7 @@ export interface AgentResult {
   retrievalResults?: Array<{
     content: string;
     source: SourceCitation;
-  }>;
+  }> | undefined;
 
   // 执行统计
   stats: {
@@ -172,7 +185,8 @@ export interface AgentResult {
   // 状态
   success: boolean;
   satisfied: boolean;
-  error?: string;
+  error?: string | undefined;
+  fallbackReason?: string | undefined;
 }
 
 /**
@@ -189,10 +203,15 @@ export interface AgentContext {
   reasoner: {
     reasonClinical: (state: AgentState) => Promise<AgentDecision>;
     decide: (state: AgentState) => Promise<boolean>;
-    generateAnswer: (entities: MedicalEntities, retrievalResults?: Array<{
-      content: string;
-      source: SourceCitation;
-    }>) => Promise<MedicalAnswer>;
+    generateAnswer: (
+      entities: MedicalEntities,
+      retrievalResults?: Array<{
+        content: string;
+        source: SourceCitation;
+      }>,
+      safetyAssessment?: SafetyAssessment,
+      evidenceEvaluation?: EvidenceEvaluation[],
+    ) => Promise<MedicalAnswer>;
     checkQuality: (answer: MedicalAnswer) => Promise<{
       isValid: boolean;
       issues: string[];

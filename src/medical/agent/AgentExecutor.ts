@@ -1,7 +1,7 @@
 /**
  * Agent Executor - Agent 执行器
  *
- * 实现 ReAct 循环：Think → Act → Observe → Decide
+ * 支持双模式：ReAct 循环 + PlanAndExecute 流程
  */
 
 import type {
@@ -16,6 +16,7 @@ import type {
   MedicalAnswer,
   SourceCitation,
 } from './types.js';
+import type { SafetyAssessment, ExtractedThreshold } from './types.js';
 import {
   createInitialState,
   setStatus,
@@ -28,33 +29,225 @@ import {
   canContinue,
   serializeState,
 } from './AgentState.js';
-import type { MedicalEntities } from '../types.js';
+import type { MedicalEntities, EvidenceEvaluation } from '../types.js';
+import { extractThresholds } from '../threshold-extractor.js';
+import { performSafetyCheck } from '../safety-layer.js';
+import { evaluateMultipleSources, calculateOverallGrade } from '../evidence-evaluator.js';
+
+// Planning mode imports
+import type { TaskDAG, ExecutorState, ComplexityLevel, PlanningResult, ReplanningDecision } from './ExecutionTypes.js';
+import { plan } from './TaskPlanner.js';
+import { execute, buildExecutionSummary } from './TaskExecutor.js';
+import { evaluateReplanningNeed, createReplanningEngine } from './ReplanningEngine.js';
+import { validateDAG, autoCorrectDAG } from './DAGValidator.js';
+import { assessComplexity } from './ComplexityJudge.js';
+
+/**
+ * 扩展的 Agent 配置
+ */
+export interface ExtendedAgentConfig extends AgentConfig {
+  enablePlanning?: boolean;
+  maxReplanRounds?: number;
+  // confidenceThreshold 继承自 AgentConfig，不再重复声明
+}
+
+/**
+ * Planning 模式执行结果
+ */
+export interface PlanningModeResult {
+  answer: MedicalAnswer;
+  dag?: TaskDAG | undefined;
+  replanningHistory?: ReplanningDecision[] | undefined;
+  complexityLevel?: ComplexityLevel | undefined;
+  matchedTemplate?: string | undefined;
+  stats: {
+    totalTasks: number;
+    completedTasks: number;
+    failedTasks: number;
+    parallelTasks: number;
+    totalDurationMs: number;
+    llmCallCount: number;
+    replanningRounds: number;
+  };
+  fallbackReason?: string | undefined;
+}
 
 /**
  * AgentExecutor - 执行 Agent 循环
  */
 export class AgentExecutor {
-  private config: AgentConfig;
+  private config: ExtendedAgentConfig;
   private context: AgentContext;
   private startTime: number;
 
-  constructor(config: AgentConfig, context: AgentContext) {
+  constructor(config: ExtendedAgentConfig, context: AgentContext) {
     this.config = config;
     this.context = context;
     this.startTime = 0;
   }
 
   /**
-   * 执行 Agent 循环
+   * 执行 Agent 循环（支持双模式）
    */
   async run(query: string): Promise<AgentResult> {
     this.startTime = Date.now();
 
-    // 1. 初始化状态
+    // 选择执行模式
     const entities = this.context.extractEntities(query);
+    const mode = this.chooseExecutionMode(entities, query);
+
+    if (mode === 'planning' && this.config.enablePlanning) {
+      // 尝试 Planning 模式
+      try {
+        const planningResult = await this.executePlanningMode(query, entities);
+        return this.convertPlanningResult(planningResult, entities);
+      } catch (error) {
+        // Planning 失败，回退到 ReAct
+        if (this.config.enableTraceLogging) {
+          console.log('[AgentExecutor] Planning mode failed, falling back to ReAct:', error);
+        }
+        return this.executeReactMode(query, entities, `Planning failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+
+    // 默认使用 ReAct 模式
+    return this.executeReactMode(query, entities);
+  }
+
+  /**
+   * 选择执行模式
+   */
+  private chooseExecutionMode(entities: MedicalEntities, query: string): 'react' | 'planning' {
+    if (!this.config.enablePlanning) {
+      return 'react';
+    }
+
+    // 复杂度判断
+    const complexity = assessComplexity(entities, query);
+
+    if (!complexity.needsPlanning) {
+      return 'react';
+    }
+
+    return 'planning';
+  }
+
+  /**
+   * 执行 Planning 模式
+   */
+  private async executePlanningMode(query: string, entities: MedicalEntities): Promise<PlanningModeResult> {
+    // 1. 规划
+    const planningResult = await plan(entities, query, {
+      llmCall: async (prompt: string) => {
+        // 简化实现：返回基础 DAG
+        return JSON.stringify({
+          tasks: [
+            { id: 'retrieve_1', type: 'retrieve', params: { query }, dependencies: [], priority: 1 },
+            { id: 'evaluate_1', type: 'evaluate', params: {}, dependencies: ['retrieve_1'], priority: 4 },
+            { id: 'answer', type: 'generate_answer', params: {}, dependencies: ['evaluate_1'], priority: 7 },
+          ],
+          parallelGroups: [],
+        });
+      },
+      enableLLMFallback: true,
+    });
+
+    if (!planningResult.success || !planningResult.dag) {
+      throw new Error(planningResult.validationErrors?.join(', ') || 'Planning failed');
+    }
+
+    // 2. 验证 DAG
+    const validation = validateDAG(planningResult.dag);
+    let dag = planningResult.dag;
+
+    if (!validation.valid) {
+      const correction = autoCorrectDAG(dag);
+      if (correction.remainingErrors.length > 0) {
+        throw new Error(`DAG validation failed: ${correction.remainingErrors.map(e => e.message).join(', ')}`);
+      }
+      dag = correction.correctedDag;
+    }
+
+    // 3. 执行 DAG（支持重规划）
+    const replanningHistory: ReplanningDecision[] = [];
+    const maxRounds = this.config.maxReplanRounds ?? 2;
+    let currentRound = 0;
+
+    const executionContext = {
+      retrieval: this.context.retrieval,
+      entities,
+      query,
+    };
+
+    let executorState = await execute(dag, executionContext);
+
+    // 4. 重规划循环
+    while (currentRound < maxRounds) {
+      const replanDecision = evaluateReplanningNeed(executorState, entities);
+
+      if (!replanDecision.shouldReplan) {
+        break;
+      }
+
+      replanningHistory.push(replanDecision);
+
+      // 添加补充任务到 DAG
+      if (replanDecision.supplementalTasks.length > 0) {
+        dag = {
+          ...dag,
+          tasks: [...dag.tasks, ...replanDecision.supplementalTasks],
+          entryTasks: [...dag.entryTasks, ...replanDecision.supplementalTasks.map(t => t.id)],
+        };
+
+        // 执行补充任务
+        executorState = await execute(dag, executionContext);
+      }
+
+      currentRound++;
+      executorState = { ...executorState, currentRound };
+    }
+
+    // 5. 生成答案
+    const answer = await this.generateAnswerFromState(executorState, entities);
+
+    // 6. 构建统计
+    const summary = buildExecutionSummary(executorState);
+
+    return {
+      answer,
+      dag,
+      replanningHistory,
+      complexityLevel: planningResult.complexityLevel ?? undefined,
+      matchedTemplate: planningResult.matchedTemplate ?? undefined,
+      stats: {
+        ...summary,
+        llmCallCount: planningResult.usedLLM ? 1 : 0,
+        replanningRounds: currentRound,
+      },
+    };
+  }
+
+  /**
+   * 执行 ReAct 模式
+   */
+  private async executeReactMode(query: string, entities: MedicalEntities, fallbackReason?: string): Promise<AgentResult> {
+    // 1. 初始化状态
     let state = createInitialState(query, entities, this.config.maxIterations);
 
+    // 1.1 提取阈值条件（用于安全预检查）
+    const thresholds: ExtractedThreshold[] = extractThresholds(query);
+    state.thresholds = thresholds;
+
+    // 1.2 执行安全预检查
+    const safetyAssessment: SafetyAssessment = performSafetyCheck(entities, thresholds);
+    state.safetyAssessment = safetyAssessment;
+
     if (this.config.enableTraceLogging) {
+      console.log('[AgentExecutor] Safety assessment:', {
+        severity: safetyAssessment.severity,
+        hasContraindications: safetyAssessment.contraindicationMatches.length > 0,
+        hasInteractions: safetyAssessment.interactions.length > 0,
+      });
       console.log('[AgentExecutor] Initial state:', serializeState(state));
     }
 
@@ -88,6 +281,20 @@ export class AgentExecutor {
           source: SourceCitation;
         }>;
         state = updateRetrievalResults(state, retrievalData);
+
+        // 证据质量评估
+        const evidenceEval: EvidenceEvaluation[] = evaluateMultipleSources(
+          retrievalData.map(r => r.source)
+        );
+        state.evidenceEvaluation = evidenceEval;
+
+        if (this.config.enableTraceLogging) {
+          const overallGrade = calculateOverallGrade(evidenceEval);
+          console.log('[AgentExecutor] Evidence evaluation:', {
+            overallGrade,
+            evaluatedSources: evidenceEval.length,
+          });
+        }
       }
 
       // Decide: 判断是否满足
@@ -128,7 +335,64 @@ export class AgentExecutor {
     // 5. 完成
     state = setStatus(state, 'completed');
 
-    return this.buildResult(state);
+    const result = this.buildResult(state);
+    if (fallbackReason) {
+      result.fallbackReason = fallbackReason;
+    }
+    return result;
+  }
+
+  /**
+   * 从执行状态生成答案
+   */
+  private async generateAnswerFromState(executorState: ExecutorState, entities: MedicalEntities): Promise<MedicalAnswer> {
+    // 从完成的任务中收集检索结果
+    const retrievalResults: Array<{ content: string; source: SourceCitation }> = [];
+
+    for (const task of executorState.dag.tasks) {
+      if (task.type === 'retrieve') {
+        const result = executorState.completed.get(task.id);
+        if (result?.success && result.data) {
+          const data = result.data as { results?: Array<{ content: string; source: SourceCitation }> };
+          if (data.results) {
+            retrievalResults.push(...data.results);
+          }
+        }
+      }
+    }
+
+    // 使用现有的答案生成器
+    return await this.context.reasoner.generateAnswer(
+      entities,
+      retrievalResults,
+      performSafetyCheck(entities, []),
+      [],
+    );
+  }
+
+  /**
+   * 转换 Planning 结果为 Agent 结果
+   */
+  private convertPlanningResult(planningResult: PlanningModeResult, entities: MedicalEntities): AgentResult {
+    const result: AgentResult = {
+      answer: planningResult.answer,
+      entities,
+      stats: {
+        iterations: 0,
+        actionsExecuted: planningResult.stats.totalTasks,
+        retrievalCalls: planningResult.stats.totalTasks,
+        llmCalls: planningResult.stats.llmCallCount,
+        totalTimeMs: planningResult.stats.totalDurationMs,
+      },
+      reasoningTrace: [],
+      success: planningResult.stats.failedTasks === 0,
+      satisfied: true,
+    };
+
+    // 添加额外信息（使用扩展字段）
+    (result as AgentResult & { planningInfo?: PlanningModeResult }).planningInfo = planningResult;
+
+    return result;
   }
 
   /**
@@ -279,6 +543,8 @@ export class AgentExecutor {
     const answer = await this.context.reasoner.generateAnswer(
       state.entities,
       state.retrievalResults,
+      state.safetyAssessment,
+      state.evidenceEvaluation,
     );
 
     return {
@@ -318,6 +584,8 @@ export class AgentExecutor {
     return await this.context.reasoner.generateAnswer(
       state.entities,
       state.retrievalResults,
+      state.safetyAssessment,
+      state.evidenceEvaluation,
     );
   }
 
@@ -352,6 +620,6 @@ export class AgentExecutor {
 /**
  * 创建 AgentExecutor
  */
-export function createAgentExecutor(config: AgentConfig, context: AgentContext): AgentExecutor {
+export function createAgentExecutor(config: ExtendedAgentConfig, context: AgentContext): AgentExecutor {
   return new AgentExecutor(config, context);
 }
