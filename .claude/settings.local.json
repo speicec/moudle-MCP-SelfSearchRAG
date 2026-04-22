@@ -45,7 +45,9 @@
       "Bash(cat /tmp/*)",
       "Bash(grep -c *)",
       "Bash(python -c \"import ocr_service; print\\('OCR service imports OK'\\)\")",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
