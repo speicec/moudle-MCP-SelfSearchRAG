@@ -1,4 +1,17 @@
-## ADDED Requirements
+---
+capability: mcp-query-tool
+version: 1.0
+created: 2026-04-21
+updated: 2026-04-22
+---
+
+# Spec: MCP Query Tool
+
+## 概述
+
+MCP 查询工具是 Medical Agent 的核心检索接口，支持 Small-to-Big 检索和 Planning 模式。
+
+## Requirements
 
 ### Requirement: MCP query tool uses HierarchicalStore
 The MCP query tool SHALL use HierarchicalStore as its data source for retrieval.
@@ -52,8 +65,76 @@ The MCP query tool SHALL use the same embedding service as HTTP Server.
 - **WHEN** embedding service fails to generate query embedding
 - **THEN** MCP query tool returns error with message describing the failure
 
-## REMOVED Requirements
+### Requirement: Planning mode MCP tool
+The system SHALL provide MCP tool with planning mode option.
+
+#### Scenario: Enable planning mode
+- **WHEN** medical_agent_plan tool called with enable_planning=true
+- **THEN** system uses PlanAndExecute flow
+- **AND** returns structured result with planning details
+
+#### Scenario: Disable planning mode
+- **WHEN** medical_agent_plan tool called with enable_planning=false or omitted
+- **THEN** system uses existing ReAct flow
+- **AND** maintains backward compatibility
+
+#### Scenario: Planning mode parameters
+- **WHEN** medical_agent_plan tool called
+- **THEN** parameters include: query, enable_planning, max_replan_rounds, confidence_threshold
+- **AND** all parameters optional except query
+
+### Requirement: Planning result structure
+The system SHALL return structured planning results.
+
+#### Scenario: DAG in result
+- **WHEN** planning mode enabled
+- **THEN** result includes executed DAG structure
+- **AND** DAG shows tasks and their execution order
+
+#### Scenario: Replanning history
+- **WHEN** replanning occurred during execution
+- **THEN** result includes replanning history
+- **AND** history shows rounds, triggers, and supplemental tasks
+
+#### Scenario: Execution statistics
+- **WHEN** execution completes
+- **THEN** result includes stats: totalTasks, parallelTasks, totalDuration, llmCallCount
+- **AND** statistics available for performance analysis
+
+### Requirement: Complexity level disclosure
+The system SHALL disclose query complexity assessment in result.
+
+#### Scenario: Complexity level returned
+- **WHEN** planning mode completes
+- **THEN** result includes complexityLevel (simple/moderate/complex/structured)
+- **AND** user understands why planning was used or skipped
+
+#### Scenario: Template match disclosure
+- **WHEN** template matching used
+- **THEN** result includes matchedTemplate name
+- **AND** user understands planning was template-based
+
+### Requirement: Error handling with fallback
+The system SHALL gracefully handle planning failures with fallback.
+
+#### Scenario: Planning failure fallback
+- **WHEN** planning phase fails (LLM error, invalid DAG)
+- **THEN** system falls back to ReAct mode
+- **AND** result includes fallbackReason field
+
+#### Scenario: Replanning limit fallback
+- **WHEN** replanning rounds exhausted
+- **THEN** system proceeds with best available results
+- **AND** result includes limitReached field with reason
+
+#### Scenario: Context overflow fallback
+- **WHEN** context exceeds limit even after compression
+- **THEN** system truncates and proceeds
+- **AND** result includes truncated flag with count
+
+## Deprecated Requirements
 
 ### Requirement: MCP query uses InMemoryVectorStore
+**Status**: REMOVED
 **Reason**: InMemoryVectorStore was created empty and never populated with data. All actual data resides in HierarchicalStore.
 **Migration**: Use HierarchicalStore with SmallToBigRetriever instead, which provides Small-to-Big retrieval with context windows.

@@ -2,13 +2,14 @@
 capability: medical-entity-recognition
 version: 1.0
 created: 2026-04-21
+updated: 2026-04-22
 ---
 
 # Spec: Medical Entity Recognition
 
 ## 概述
 
-医学实体识别是 Medical Agent 的核心能力，负责从用户查询中提取疾病、药物、指标等医学实体。
+医学实体识别是 Medical Agent 的核心能力，负责从用户查询中提取疾病、药物、指标等医学实体，包括数值解析和阈值推断。
 
 ## 功能需求
 
@@ -54,6 +55,16 @@ created: 2026-04-21
 | 慎用 | 谨慎, 小心, 相对禁忌 |
 | 相互作用 | 配伍, 合用, 同时使用 |
 |适应症 | 可以用, 适合, 推荐 |
+
+### FR-5: 指标值解析 (NEW)
+
+系统应能从用户查询中解析指标数值：
+
+| 场景 | 输入示例 | 解析结果 |
+|------|----------|----------|
+| 单值 | "eGFR=35" | value=35, unit=ml/min |
+| 区间 | "eGFR 30-45" | minValue=30, maxValue=45 |
+| 带单位 | "HbA1c 7.5%" | value=7.5, unit=% |
 
 ## 非功能需求
 
@@ -117,8 +128,12 @@ interface IndicatorMatch {
   id: string;
   canonicalName: string;
   matchedTerm: string;
-  unit?: string;
-  value?: number;             // 如果查询包含数值
+  unit?: string | undefined;
+  value?: number | undefined;             // 如果查询包含数值
+  minValue?: number | undefined;          // 区间最小值 (NEW)
+  maxValue?: number | undefined;          // 区间最大值 (NEW)
+  thresholdZone?: 'normal' | 'caution' | 'critical' | undefined; // 阈值区域 (NEW)
+  contraindicationRelevance?: boolean | undefined; // 禁忌相关性 (NEW)
 }
 
 interface RelationMatch {
@@ -137,3 +152,44 @@ interface RelationMatch {
 | 复合查询 | "糖尿病高血压怎么选药" | disease:糖尿病+高血压, relation:适应症 |
 | 别名查询 | "Metformin能不能用" | drug:二甲双胍 (识别英文别名) |
 | 阈值查询 | "糖化多少算糖尿病" | indicator:HbA1c, relation:诊断 |
+| 带值指标 | "eGFR=35二甲双胍" | indicator:eGFR, value:35, zone:caution |
+| 区间指标 | "eGFR 30-45能用药吗" | indicator:eGFR, minValue:30, maxValue:45 |
+| 临界值 | "eGFR=25二甲双胍" | indicator:eGFR, value:25, zone:critical, contraindicationRelevance:true |
+
+## Additional Requirements (ADDED)
+
+### Requirement: Indicator value parsing
+The system SHALL parse indicator values from user queries.
+
+#### Scenario: Indicator with value
+- **WHEN** query contains indicator with numeric value (e.g., "eGFR=35", "HbA1c 7.5")
+- **THEN** IndicatorMatch includes value field with parsed number
+- **AND** unit field populated if unit detected
+
+#### Scenario: Indicator without value
+- **WHEN** query contains indicator name only
+- **THEN** IndicatorMatch.value remains undefined
+- **AND** indicator recognized for retrieval purposes
+
+#### Scenario: Value range detection
+- **WHEN** query contains range (e.g., "eGFR 30-45")
+- **THEN** IndicatorMatch includes minValue and maxValue fields
+- **AND** range used for threshold comparison
+
+### Requirement: Indicator threshold inference
+The system SHALL infer clinical significance from indicator values.
+
+#### Scenario: Threshold crossing detection
+- **WHEN** indicator value parsed and clinicalThresholds defined
+- **THEN** system determines threshold zone (normal/caution/critical)
+- **AND** zone stored in IndicatorMatch.thresholdZone
+
+#### Scenario: Contraindication relevance flag
+- **WHEN** indicator value in critical zone (< 30 for eGFR)
+- **THEN** system flags contraindication relevance
+- **AND** retrieval prioritizes contraindication evidence
+
+#### Scenario: Threshold lookup from dictionary
+- **WHEN** indicator recognized
+- **THEN** clinicalThresholds retrieved from IndicatorEntity
+- **AND** thresholds used for zone calculation
