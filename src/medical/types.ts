@@ -156,6 +156,9 @@ export interface IndicatorMatch {
   matchedTerm: string;
   unit?: string | undefined;  // 显式允许 undefined
   value?: number | undefined; // 如果查询包含数值，显式允许 undefined
+  minValue?: number | undefined;  // 范围查询最小值
+  maxValue?: number | undefined;  // 范围查询最大值
+  thresholdZone?: 'normal' | 'caution' | 'critical' | undefined;  // 临床阈值区间
 }
 
 /**

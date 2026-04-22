@@ -112,8 +112,13 @@ export class MedicalAgent {
           }
           return await this.reasoner.decide(decideStateArgs);
         },
-        generateAnswer: async (entities, retrievalResults) => {
-          return await this.reasoner.generateMedicalAnswer(entities, retrievalResults);
+        generateAnswer: async (entities, retrievalResults, safetyAssessment, evidenceEvaluation) => {
+          return await this.reasoner.generateMedicalAnswer(
+            entities,
+            retrievalResults,
+            safetyAssessment,
+            evidenceEvaluation,
+          );
         },
         checkQuality: async (answer) => {
           return await this.reasoner.checkAnswerQuality(answer);

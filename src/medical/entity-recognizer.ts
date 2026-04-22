@@ -35,6 +35,10 @@ import type {
   DrugEntity,
 } from './types.js';
 
+// Re-export threshold extraction for convenience
+export { extractThresholds, extractPatientIndicatorValues } from './threshold-extractor.js';
+export type { ExtractedThreshold } from './threshold-extractor.js';
+
 /**
  * 全部药物词典
  */

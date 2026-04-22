@@ -10,13 +10,16 @@ import type {
   MedicalAnswer,
   SourceCitation,
   GradeLevel,
+  EvidenceEvaluation,
 } from '../types.js';
+import type { SafetyAssessment } from '../safety-layer.js';
 import {
   THINK_PROMPT,
   DECIDE_PROMPT,
   ANSWER_PROMPT,
   QUALITY_PROMPT,
 } from './AgentPrompts.js';
+import { calculateOverallGrade } from '../evidence-evaluator.js';
 
 /**
  * 推理状态
@@ -131,17 +134,26 @@ export class MedicalReasoner {
       content: string;
       source: SourceCitation;
     }>,
+    safetyAssessment?: SafetyAssessment,
+    evidenceEvaluation?: EvidenceEvaluation[],
   ): Promise<MedicalAnswer> {
-    const promptArgs: { entities: MedicalEntities } = { entities };
-    if (retrievalResults) {
-      (promptArgs as { retrievalResults?: Array<{ content: string; source: SourceCitation }> }).retrievalResults = retrievalResults;
+    // 传递基本参数给 LLM（保持提示词模板不变）
+    const promptArgs: {
+      entities: MedicalEntities;
+      retrievalResults?: Array<{
+        content: string;
+        source: SourceCitation;
+      }>;
+    } = { entities };
+    if (retrievalResults !== undefined) {
+      promptArgs.retrievalResults = retrievalResults;
     }
     const prompt = ANSWER_PROMPT(promptArgs);
 
     const response = await this.llmCaller(prompt);
 
-    // 解析 LLM 响应为结构化回答
-    return this.parseAnswer(response, entities, retrievalResults);
+    // 解析 LLM 响应为结构化回答（三层综合）
+    return this.parseAnswer(response, entities, retrievalResults, safetyAssessment, evidenceEvaluation);
   }
 
   /**
@@ -188,7 +200,7 @@ export class MedicalReasoner {
   }
 
   /**
-   * 解析医学回答
+   * 解析医学回答（三层综合）
    */
   private parseAnswer(
     response: string,
@@ -197,32 +209,159 @@ export class MedicalReasoner {
       content: string;
       source: SourceCitation;
     }>,
+    safetyAssessment?: SafetyAssessment,
+    evidenceEvaluation?: EvidenceEvaluation[],
   ): MedicalAnswer {
     // 从响应中提取结构化内容
     const sections = this.extractSections(response);
 
+    // 三层综合：优先级 absolute > relative > interaction > safe
+    let conclusionText: string;
+    let conclusionConfidence: 'high' | 'medium' | 'low';
+
+    if (safetyAssessment?.severity === 'absolute') {
+      // Layer 1 优先：绝对禁忌
+      conclusionText = safetyAssessment.recommendation;
+      conclusionConfidence = 'high';
+    } else if (safetyAssessment?.severity === 'relative') {
+      // Layer 1 + Layer 2：相对禁忌 + 检索补充
+      conclusionText = `慎用：${safetyAssessment.recommendation}`;
+      conclusionConfidence = 'high';
+    } else if (safetyAssessment?.severity === 'interaction') {
+      // Layer 1：相互作用
+      conclusionText = `药物相互作用：${safetyAssessment.recommendation}`;
+      conclusionConfidence = 'high';
+    } else {
+      // Layer 2：检索结果综合
+      conclusionText = sections.conclusion ?? '基于检索结果生成的医学回答';
+      conclusionConfidence = entities.confidence > 0.8 ? 'high' : 'medium';
+    }
+
+    // 构建详细说明点
+    const detailsPoints = this.buildDetailPoints(
+      sections,
+      retrievalResults,
+      safetyAssessment,
+    );
+
+    // GRADE 等级：从 EvidenceEvaluation 计算（而非 LLM 提取）
+    const evidenceGrade = this.buildEvidenceGrade(evidenceEvaluation, response);
+
+    // 收集来源
+    const sources = this.collectSources(retrievalResults, safetyAssessment);
+
     // 构建回答
     return {
       conclusion: {
-        text: sections.conclusion ?? '基于检索结果生成的医学回答',
-        confidence: entities.confidence > 0.8 ? 'high' : 'medium',
+        text: conclusionText,
+        confidence: conclusionConfidence,
       },
       details: {
-        points: (sections.details ?? []).map(text => ({
-          text,
-          sources: retrievalResults?.slice(0, 2).map(r => r.source) ?? [],
-        })),
+        points: detailsPoints,
       },
-      evidenceGrade: {
-        grade: this.extractGrade(response),
-        sourceType: 'guideline',
-      },
-      sources: retrievalResults?.map(r => r.source) ?? [],
+      evidenceGrade,
+      sources,
       warnings: [
         '本回答仅供参考，不构成医疗建议',
         '请咨询专业医生后再做决定',
       ],
     };
+  }
+
+  /**
+   * 构建详细说明点
+   */
+  private buildDetailPoints(
+    sections: { conclusion?: string; details?: string[]; evidence?: string },
+    retrievalResults?: Array<{
+      content: string;
+      source: SourceCitation;
+    }>,
+    safetyAssessment?: SafetyAssessment,
+  ): Array<{ text: string; sources: SourceCitation[] }> {
+    const points: Array<{ text: string; sources: SourceCitation[] }> = [];
+
+    // 添加安全评估相关信息
+    if (safetyAssessment !== undefined && safetyAssessment.contraindicationMatches.length > 0) {
+      for (const match of safetyAssessment.contraindicationMatches) {
+        points.push({
+          text: match.contraindication.description,
+          sources: [],
+        });
+      }
+    }
+
+    // 添加相互作用信息
+    if (safetyAssessment !== undefined && safetyAssessment.interactions.length > 0) {
+      for (const interaction of safetyAssessment.interactions) {
+        points.push({
+          text: `${interaction.description}。建议：${interaction.recommendation}`,
+          sources: [],
+        });
+      }
+    }
+
+    // 添加检索结果的详细说明
+    if (sections.details !== undefined) {
+      for (const text of sections.details) {
+        points.push({
+          text,
+          sources: retrievalResults?.slice(0, 2).map(r => r.source) ?? [],
+        });
+      }
+    }
+
+    return points;
+  }
+
+  /**
+   * 构建证据等级（从计算而非提取）
+   */
+  private buildEvidenceGrade(
+    evidenceEvaluation?: EvidenceEvaluation[],
+    response?: string,
+  ): { grade: GradeLevel; sourceType: string } {
+    if (evidenceEvaluation && evidenceEvaluation.length > 0) {
+      // 从 EvidenceEvaluation 计算 GRADE
+      const grade = calculateOverallGrade(evidenceEvaluation);
+      const sourceType = evidenceEvaluation[0]?.literatureType ?? 'unknown';
+      return { grade, sourceType };
+    }
+
+    // 降级：从 LLM 响应提取（兼容无证据评估的情况）
+    return {
+      grade: this.extractGrade(response ?? ''),
+      sourceType: 'guideline',
+    };
+  }
+
+  /**
+   * 收集来源引用
+   */
+  private collectSources(
+    retrievalResults?: Array<{
+      content: string;
+      source: SourceCitation;
+    }>,
+    safetyAssessment?: SafetyAssessment,
+  ): SourceCitation[] {
+    const sources: SourceCitation[] = [];
+
+    // 添加检索结果来源
+    if (retrievalResults !== undefined) {
+      sources.push(...retrievalResults.map(r => r.source));
+    }
+
+    // 添加安全评估的指南来源
+    if (safetyAssessment !== undefined && safetyAssessment.sourceGlossary.length > 0) {
+      for (const glossary of safetyAssessment.sourceGlossary) {
+        sources.push({
+          documentName: glossary,
+        });
+      }
+    }
+
+    return sources;
   }
 
   /**
