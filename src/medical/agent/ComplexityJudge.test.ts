@@ -366,4 +366,66 @@ describe('ComplexityJudge', () => {
       }
     });
   });
+
+  // 新增：用药建议意图检测测试
+  describe('drug recommendation intent detection', () => {
+    it('should classify as moderate for drug recommendation query', () => {
+      const entities: MedicalEntities = {
+        diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+        drugs: [],
+        indicators: [],
+        relations: [],
+        rawQuery: '糖尿病用什么药',
+        confidence: 0.5,
+      };
+
+      const result = assessComplexity(entities, '糖尿病用什么药');
+      expect(result.level).toBe('moderate');
+      expect(result.needsPlanning).toBe(true);
+      expect(result.reason).toBe('Drug recommendation intent detected, requires multi-drug retrieval');
+    });
+
+    it('should detect drug recommendation patterns', () => {
+      const queries = [
+        '糖尿病用什么药',
+        '高血压用什么',
+        '甲亢怎么治',
+        '糖尿病治疗方案',
+        '高血压治疗药物',
+        '糖尿病推荐药物',
+        '高血压用药建议',
+        '糖尿病药物选择',
+      ];
+
+      for (const query of queries) {
+        const entities: MedicalEntities = {
+          diseases: [{ id: 'disease_1', canonicalName: '糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+          drugs: [],
+          indicators: [],
+          relations: [],
+          rawQuery: query,
+          confidence: 0.5,
+        };
+
+        const result = assessComplexity(entities, query);
+        expect(result.needsPlanning).toBe(true);
+      }
+    });
+
+    it('should NOT override year filter detection for recommendation query', () => {
+      const entities: MedicalEntities = {
+        diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+        drugs: [],
+        indicators: [],
+        relations: [],
+        rawQuery: '2024年糖尿病用什么药',
+        confidence: 0.5,
+      };
+
+      const result = assessComplexity(entities, '2024年糖尿病用什么药');
+      // 年份过滤优先级高于用药建议
+      expect(result.level).toBe('structured');
+      expect(result.needsPlanning).toBe(true);
+    });
+  });
 });

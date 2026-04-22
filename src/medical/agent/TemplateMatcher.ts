@@ -37,7 +37,8 @@ export const STRUCTURED_TEMPLATES: StructuredTemplate[] = [
         intentAnalysis.queryTypes.includes('decision_support') &&
         entities.diseases.length >= 1 &&
         entities.drugs.length === 0 &&
-        entities.indicators.length === 0
+        // 允许有指标但无指标值的情况（如"高血压"中的"血压"）
+        !entities.indicators.some(i => i.value !== undefined)
       );
     },
     generateDAG: (entities, query, intentAnalysis, queryStrategy) => {
@@ -477,7 +478,7 @@ function getRejectionReason(
       if (!intentAnalysis.queryTypes.includes('decision_support')) return 'no decision_support query type';
       if (entities.diseases.length < 1) return 'no diseases';
       if (entities.drugs.length > 0) return `drugs.length=${entities.drugs.length} (need 0)`;
-      if (entities.indicators.length > 0) return `indicators.length=${entities.indicators.length} (need 0)`;
+      if (entities.indicators.some(i => i.value !== undefined)) return 'has indicator value (need no value)';
       return 'unknown';
     case 'guideline_year_filter':
       return !intentAnalysis.specialNeeds.requireYearFilter ? 'no year filter required' : 'matched';

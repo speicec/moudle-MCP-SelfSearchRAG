@@ -34,13 +34,23 @@ export interface EmbeddingFactoryConfig {
  */
 export function getEmbeddingMode(): EmbeddingMode {
   const mode = process.env.EMBEDDING_MODE?.toLowerCase();
+
+  // 明确设置为 hybrid
+  if (mode === 'hybrid') {
+    console.log('[EmbeddingFactory] Mode detected: HYBRID (EMBEDDING_MODE=hybrid)');
+    return 'hybrid';
+  }
+
   if (mode === 'api') {
     return 'api';
   }
-  // Check if hybrid retrieval is enabled
+
+  // 通过 HYBRID_RETRIEVAL_ENABLED 标志
   if (process.env.HYBRID_RETRIEVAL_ENABLED === 'true') {
+    console.log('[EmbeddingFactory] Mode detected: HYBRID (HYBRID_RETRIEVAL_ENABLED=true)');
     return 'hybrid';
   }
+
   return 'local';
 }
 

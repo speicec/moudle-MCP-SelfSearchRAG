@@ -231,6 +231,37 @@ describe('TemplateMatcher', () => {
         expect(result.templateId).not.toBe('disease_drug_recommendation');
       });
 
+      it('should NOT match when indicators have values', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],
+          indicators: [{ id: 'indicator_egfr', canonicalName: 'eGFR', matchedTerm: 'eGFR', unit: 'mL/min/1.73m²', value: 35 }],
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support'],
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, 'test');
+        // 有指标值时不匹配用药建议模板（应匹配其他模板）
+        expect(result.templateId).not.toBe('disease_drug_recommendation');
+      });
+
+      it('should match when indicators have no values', () => {
+        const entities = createTestEntities({
+          diseases: [{ id: 'disease_hypertension_primary', canonicalName: '原发性高血压', matchedTerm: '高血压', aliases: [] }],
+          indicators: [{ id: 'indicator_bp', canonicalName: '血压', matchedTerm: '血压', unit: 'mmHg' }], // 无 value
+        });
+
+        const intentAnalysis = createIntentAnalysis({
+          queryTypes: ['decision_support'],
+          expectedAnswerFormat: 'recommendation',
+        });
+
+        const result = matchTemplate(entities, intentAnalysis, '高血压怎么治');
+        expect(result.matched).toBe(true);
+        expect(result.templateId).toBe('disease_drug_recommendation');
+      });
+
       it('should NOT match without decision_support query type', () => {
         const entities = createTestEntities({
           diseases: [{ id: 'disease_diabetes_type2', canonicalName: '2型糖尿病', matchedTerm: '糖尿病', aliases: [] }],

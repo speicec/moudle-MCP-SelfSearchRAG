@@ -55,7 +55,7 @@ const DocumentSelector: React.FC<{
       <CardHeader>
         <CardTitle className="text-sm">选择文档查看分块</CardTitle>
       </CardHeader>
-      <CardContent className="max-h-96 overflow-y-auto">
+      <CardContent className="max-h-[592px] overflow-y-auto">
         {isLoading ? (
           <div className="text-center py-4 text-muted-foreground">
             加载中...

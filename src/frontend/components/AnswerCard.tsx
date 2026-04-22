@@ -1,10 +1,10 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import ClinicalMarkdown from './ClinicalMarkdown';
+import { EvidenceCard } from './EvidencePanel';
 import {
   Brain,
   Clock,
-  Pill,
   Activity,
   AlertTriangle,
   ChevronDown,
@@ -13,13 +13,19 @@ import {
   CheckCircle2,
   XCircle,
   Sparkles,
+  Hash,
 } from 'lucide-react';
 
 interface Source {
   smallChunkId?: string;
+  parentChunkId?: string;
   parentChunkContent?: string;
   similarityScore?: number;
   sourceDocumentId?: string;
+  metadata?: {
+    pageNumber?: number;
+    section?: string;
+  };
 }
 
 interface AnswerCardProps {
@@ -162,7 +168,7 @@ const AnswerCard: React.FC<AnswerCardProps> = ({
         />
       </div>
 
-      {/* Sources Section */}
+      {/* Sources Section - Evidence Cards */}
       {sources && sources.length > 0 && (
         <div className="clinical-sources-section">
           <button
@@ -170,7 +176,7 @@ const AnswerCard: React.FC<AnswerCardProps> = ({
             onClick={() => setSourcesExpanded(!sourcesExpanded)}
           >
             <BookOpen className="w-4 h-4" />
-            <span>检索依据</span>
+            <span>证据来源</span>
             <span className="clinical-sources-count">{sources.length} 条</span>
             {sourcesExpanded ? (
               <ChevronDown className="w-4 h-4" />
@@ -186,24 +192,18 @@ const AnswerCard: React.FC<AnswerCardProps> = ({
               transition={{ duration: 0.3 }}
             >
               {sources.map((source, idx) => (
-                <div key={idx} className="clinical-source-item">
-                  <div className="clinical-source-header">
-                    <span className="clinical-source-index">#{idx + 1}</span>
-                    <span className="clinical-source-doc">
-                      {source.sourceDocumentId || '未知来源'}
-                    </span>
-                    {source.similarityScore !== undefined && (
-                      <div className="clinical-source-score">
-                        <Activity className="w-3 h-3" />
-                        {(source.similarityScore * 100).toFixed(1)}%
-                      </div>
-                    )}
-                  </div>
-                  <div className="clinical-source-content">
-                    {source.parentChunkContent?.slice(0, 200)}
-                    {source.parentChunkContent?.length > 200 ? '...' : ''}
-                  </div>
-                </div>
+                <EvidenceCard
+                  key={source.smallChunkId ?? idx}
+                  result={{
+                    smallChunkId: source.smallChunkId ?? `src-${idx}`,
+                    parentChunkId: source.parentChunkId,
+                    parentChunkContent: source.parentChunkContent ?? '',
+                    similarityScore: source.similarityScore ?? 0,
+                    sourceDocumentId: source.sourceDocumentId,
+                    metadata: source.metadata,
+                  }}
+                  index={idx}
+                />
               ))}
             </motion.div>
           )}
