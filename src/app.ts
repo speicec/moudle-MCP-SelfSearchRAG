@@ -3,7 +3,9 @@ import { DocumentStorage } from './core/storage.js';
 import { createMcpServer } from './mcp/server.js';
 import { createMcpRetrievalService } from './mcp/mcp-retrieval-service.js';
 import { HierarchicalStore } from './chunking/hierarchical-store.js';
-import { getEmbeddingFactory } from './embedding/embedding-factory.js';
+import { getEmbeddingFactory, getEmbeddingMode } from './embedding/embedding-factory.js';
+import { getVectorStoreFactory } from './retrieval/vector-store-factory.js';
+import { createHybridSmallToBigRetriever } from './retrieval/hybrid-small-to-big-retriever.js';
 import { createLLMCaller, type LLMCaller } from './config/llm-config.js';
 import type { Harness } from './core/harness.js';
 import type { McpRetrievalService } from './mcp/mcp-retrieval-service.js';
@@ -110,7 +112,7 @@ export class Application {
   }
 
   /**
-   * Create application instance (async factory)
+   * Create application instance (Async factory)
    */
   static async create(config: Partial<AppConfig> = {}): Promise<Application> {
     const fullConfig = { ...DEFAULT_CONFIG, ...config };
@@ -119,6 +121,29 @@ export class Application {
     // Enable persistence for HierarchicalStore (async)
     const storeDataPath = path.resolve(__dirname, '../data/store');
     await app.hierarchicalStore.enablePersistence(storeDataPath, true);
+
+    // Configure Hybrid Retriever if hybrid mode is enabled
+    const mode = getEmbeddingMode();
+    if (mode === 'hybrid') {
+      try {
+        const embeddingFactory = getEmbeddingFactory();
+        const vectorStoreFactory = getVectorStoreFactory();
+        const vectorStoreAdapter = await vectorStoreFactory.createAdapter();
+        const hybridEmbeddingService = embeddingFactory.getHybridEmbeddingService();
+
+        if (hybridEmbeddingService && vectorStoreAdapter) {
+          const hybridRetriever = createHybridSmallToBigRetriever(
+            vectorStoreAdapter,
+            app.hierarchicalStore,
+            hybridEmbeddingService
+          );
+          app.retrieval.setHybridRetriever(hybridRetriever);
+          console.log('[App] Hybrid Retriever configured for MCP Service');
+        }
+      } catch (error) {
+        console.warn('[App] Failed to configure Hybrid for MCP:', error instanceof Error ? error.message : String(error));
+      }
+    }
 
     return app;
   }
