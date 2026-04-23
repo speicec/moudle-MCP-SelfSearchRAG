@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ChatWindow from './ChatWindow';
+import EnhancedChatWindow from './EnhancedChatWindow';
 import ClinicalDocumentManagerWrapper from './ClinicalDocumentManagerWrapper';
 import PipelineTimeline from './PipelineTimeline';
 import ChunkExplorer from './ChunkExplorer';
@@ -9,7 +10,7 @@ import StatsDashboard from './StatsDashboard';
 import RetrievalResultPanel from './RetrievalResultPanel';
 import DocumentSelector from './common/DocumentSelector';
 import { useAppStore } from '../store';
-import { Brain, BookOpen, Clock, FileText, Layers, Search, BarChart3 } from 'lucide-react';
+import { Brain, BookOpen, Clock, FileText, Layers, Search, BarChart3, Settings2 } from 'lucide-react';
 import type { MainTab } from './ClinicalSidebar';
 
 /**
@@ -25,12 +26,14 @@ interface ClinicalContentProps {
   activeTab: MainTab;
   onNavigateToChunks?: (docId: string) => void;
   onNavigateToDocuments?: () => void;
+  useEnhancedChat?: boolean;
 }
 
 const ClinicalContent: React.FC<ClinicalContentProps> = ({
   activeTab,
   onNavigateToChunks,
   onNavigateToDocuments,
+  useEnhancedChat = true,
 }) => {
   const selectedDocumentId = useAppStore((state) => state.selectedDocumentId);
 
@@ -45,7 +48,7 @@ const ClinicalContent: React.FC<ClinicalContentProps> = ({
           transition={{ duration: 0.3, ease: 'easeOut' }}
           className="clinical-fade-in"
         >
-          {renderTabContent(activeTab, selectedDocumentId, onNavigateToChunks, onNavigateToDocuments)}
+          {renderTabContent(activeTab, selectedDocumentId, onNavigateToChunks, onNavigateToDocuments, useEnhancedChat)}
         </motion.div>
       </AnimatePresence>
     </div>
@@ -59,7 +62,8 @@ function renderTabContent(
   tab: MainTab,
   selectedDocumentId: string | null,
   onNavigateToChunks?: (docId: string) => void,
-  onNavigateToDocuments?: () => void
+  onNavigateToDocuments?: () => void,
+  useEnhancedChat?: boolean
 ) {
   switch (tab) {
     case 'documents':
@@ -70,6 +74,27 @@ function renderTabContent(
       );
 
     case 'chat':
+      // Use enhanced chat with integrated retrieval analysis
+      if (useEnhancedChat) {
+        return (
+          <div className="clinical-grid-chat">
+            <ClinicalPanel
+              title="智能诊断对话"
+              icon={<Settings2 className="clinical-panel-icon" />}
+              badge="增强"
+            >
+              <EnhancedChatWindow />
+            </ClinicalPanel>
+            <ClinicalPanel
+              title="检索依据详情"
+              icon={<BookOpen className="clinical-panel-icon" />}
+            >
+              <RetrievalResultPanel />
+            </ClinicalPanel>
+          </div>
+        );
+      }
+      // Original layout
       return (
         <div className="clinical-grid-chat">
           <ClinicalPanel

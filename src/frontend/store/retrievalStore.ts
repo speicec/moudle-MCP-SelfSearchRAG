@@ -1,4 +1,16 @@
 import { create } from 'zustand';
+import type {
+  EntityMatch,
+  KeywordMatch,
+  ComplexityAssessment,
+  QueryRewriting,
+  TemplateAttempt,
+  TaskDAG,
+  ExecutorState,
+  AgentResultSummary,
+  AgentPhase,
+  ExecutionMode,
+} from '../types/visualization.js';
 
 /**
  * Confidence level type
@@ -96,6 +108,22 @@ export interface RetrievalFlowState {
   currentStep: 'idle' | 'embedding' | 'analyzing' | 'searching' | 'reranking' | 'expanding' | 'complete';
   embeddingProgress: number;
 
+  // Agent visualization state
+  agentEnabled: boolean;
+  agentPhase: AgentPhase | null;
+  agentQuery: string | null;
+  entityMatches: EntityMatch[];
+  keywordMatches: KeywordMatch[];
+  complexity: ComplexityAssessment | null;
+  executionMode: ExecutionMode | null;
+  executionReason: string | null;
+  matchedTemplate: string | null;
+  queryRewriting: QueryRewriting | null;
+  templateAttempts: TemplateAttempt[];
+  dag: TaskDAG | null;
+  executorState: ExecutorState | null;
+  agentResult: AgentResultSummary | null;
+
   // Actions
   handleRetrievalStart: (query: string, timestamp: number) => void;
   handleRetrievalMatch: (match: RetrievalMatch) => void;
@@ -110,6 +138,17 @@ export interface RetrievalFlowState {
   setStep: (step: 'idle' | 'embedding' | 'analyzing' | 'searching' | 'reranking' | 'expanding' | 'complete') => void;
   setEmbeddingProgress: (progress: number) => void;
   reset: () => void;
+
+  // Agent visualization actions
+  handleAgentInput: (query: string, timestamp: number) => void;
+  handleAgentEntities: (entityMatches: EntityMatch[], keywordMatches?: KeywordMatch[]) => void;
+  handleAgentComplexity: (complexity: ComplexityAssessment) => void;
+  handleAgentMode: (mode: ExecutionMode, reason: string, matchedTemplate?: string) => void;
+  handleAgentQueryRewriting: (queryRewriting: QueryRewriting) => void;
+  handleAgentTemplate: (templateAttempts: TemplateAttempt[], matchedTemplate?: string) => void;
+  handleAgentDAG: (dag: TaskDAG) => void;
+  handleAgentExecution: (executorState: ExecutorState) => void;
+  handleAgentComplete: (agentResult: AgentResultSummary) => void;
 }
 
 export const useRetrievalStore = create<RetrievalFlowState>((set) => ({
@@ -126,6 +165,22 @@ export const useRetrievalStore = create<RetrievalFlowState>((set) => ({
   contextChunks: [],
   currentStep: 'idle',
   embeddingProgress: 0,
+
+  // Agent visualization initial state
+  agentEnabled: false,
+  agentPhase: null,
+  agentQuery: null,
+  entityMatches: [],
+  keywordMatches: [],
+  complexity: null,
+  executionMode: null,
+  executionReason: null,
+  matchedTemplate: null,
+  queryRewriting: null,
+  templateAttempts: [],
+  dag: null,
+  executorState: null,
+  agentResult: null,
 
   handleRetrievalStart: (query: string, timestamp: number) => {
     set({
@@ -182,6 +237,88 @@ export const useRetrievalStore = create<RetrievalFlowState>((set) => ({
     set({ embeddingProgress: progress });
   },
 
+  // Agent visualization handlers
+  handleAgentInput: (query: string, timestamp: number) => {
+    set({
+      agentEnabled: true,
+      agentPhase: 'input',
+      agentQuery: query,
+      startTime: timestamp,
+      entityMatches: [],
+      keywordMatches: [],
+      complexity: null,
+      executionMode: null,
+      executionReason: null,
+      matchedTemplate: null,
+      queryRewriting: null,
+      templateAttempts: [],
+      dag: null,
+      executorState: null,
+      agentResult: null,
+    });
+  },
+
+  handleAgentEntities: (entityMatches: EntityMatch[], keywordMatches?: KeywordMatch[]) => {
+    set({
+      agentPhase: 'entities',
+      entityMatches,
+      keywordMatches: keywordMatches ?? [],
+    });
+  },
+
+  handleAgentComplexity: (complexity: ComplexityAssessment) => {
+    set({
+      agentPhase: 'complexity',
+      complexity,
+    });
+  },
+
+  handleAgentMode: (mode: ExecutionMode, reason: string, matchedTemplate?: string) => {
+    set({
+      agentPhase: 'mode',
+      executionMode: mode,
+      executionReason: reason,
+      matchedTemplate: matchedTemplate ?? null,
+    });
+  },
+
+  handleAgentQueryRewriting: (queryRewriting: QueryRewriting) => {
+    set({
+      agentPhase: 'query_rewrite',
+      queryRewriting,
+    });
+  },
+
+  handleAgentTemplate: (templateAttempts: TemplateAttempt[], matchedTemplate?: string) => {
+    set({
+      agentPhase: 'template',
+      templateAttempts,
+      matchedTemplate: matchedTemplate ?? null,
+    });
+  },
+
+  handleAgentDAG: (dag: TaskDAG) => {
+    set({
+      agentPhase: 'dag',
+      dag,
+    });
+  },
+
+  handleAgentExecution: (executorState: ExecutorState) => {
+    set({
+      agentPhase: 'execution',
+      executorState,
+    });
+  },
+
+  handleAgentComplete: (agentResult: AgentResultSummary) => {
+    set({
+      agentPhase: 'complete',
+      agentResult,
+      isRunning: false,
+    });
+  },
+
   reset: () => {
     set({
       currentQuery: null,
@@ -197,6 +334,21 @@ export const useRetrievalStore = create<RetrievalFlowState>((set) => ({
       queryAnalysis: null,
       retrievalStats: null,
       contextChunks: [],
+      // Reset Agent state
+      agentEnabled: false,
+      agentPhase: null,
+      agentQuery: null,
+      entityMatches: [],
+      keywordMatches: [],
+      complexity: null,
+      executionMode: null,
+      executionReason: null,
+      matchedTemplate: null,
+      queryRewriting: null,
+      templateAttempts: [],
+      dag: null,
+      executorState: null,
+      agentResult: null,
     });
   },
 }));

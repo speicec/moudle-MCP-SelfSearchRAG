@@ -84,6 +84,31 @@ function createEventHandler() {
     } else if (event.type === 'generation:error' && event.error) {
       useChatStore.getState().handleGenerationError(event.error.message);
     }
+
+    // Handle Agent visualization events
+    if (event.type === 'agent:input' && event.query) {
+      useRetrievalStore.getState().handleAgentInput(event.query, event.timestamp);
+    } else if (event.type === 'agent:entities' && event.entityMatches) {
+      useRetrievalStore.getState().handleAgentEntities(event.entityMatches, event.keywordMatches);
+    } else if (event.type === 'agent:complexity' && event.complexity) {
+      useRetrievalStore.getState().handleAgentComplexity(event.complexity);
+    } else if (event.type === 'agent:mode') {
+      useRetrievalStore.getState().handleAgentMode(
+        event.executionMode ?? 'react',
+        event.executionReason ?? '',
+        event.matchedTemplate
+      );
+    } else if (event.type === 'agent:query_rewrite' && event.queryRewriting) {
+      useRetrievalStore.getState().handleAgentQueryRewriting(event.queryRewriting);
+    } else if (event.type === 'agent:template' && event.templateAttempts) {
+      useRetrievalStore.getState().handleAgentTemplate(event.templateAttempts, event.matchedTemplate);
+    } else if (event.type === 'agent:dag' && event.dag) {
+      useRetrievalStore.getState().handleAgentDAG(event.dag);
+    } else if (event.type === 'agent:execution' && event.executorState) {
+      useRetrievalStore.getState().handleAgentExecution(event.executorState);
+    } else if (event.type === 'agent:complete' && event.agentResult) {
+      useRetrievalStore.getState().handleAgentComplete(event.agentResult);
+    }
   };
 }
 
