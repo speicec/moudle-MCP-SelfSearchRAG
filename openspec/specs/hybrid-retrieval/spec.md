@@ -37,7 +37,7 @@
     │  │  Point:                                                              ││
     │  │    id: chunkId                                                       ││
     │  │    vector: [1024 floats]       ← Dense 语义向量                      ││
-    │  │    sparse_values: {            ← Sparse 关键词向量                   ││
+    │  │    sparse_vector: {            ← Sparse 关键词向量                   ││
     │  │      "优化": 0.85,                                                    ││
     │  │      "架构": 0.72,                                                    ││
     │  │      "性能": 0.68                                                     ││
@@ -108,6 +108,8 @@
 | FR-006 | transformers.js V3/V4 API 兼容 | MUST |
 | FR-007 | 环境变量控制 Hybrid 模式开关 | SHOULD |
 | FR-008 | 检索结果来源标记 (dense/sparse/hybrid) | SHOULD |
+| FR-009 | Sparse 向量使用正确字段名 `sparse_vector` | MUST |
+| FR-010 | 支持 STORE_CONTENT_IN_PAYLOAD 存储内容到 Qdrant payload | SHOULD |
 
 ### Quality Requirements
 
@@ -220,7 +222,7 @@ interface TextChunkPoint {
   vector: number[];
   
   // Sparse vector - 关键词搜索
-  sparse_values: {
+  sparse_vector: {
     indices: number[];           // 词 ID (内部映射)
     values: number[];            // 权重
   };
@@ -248,7 +250,7 @@ interface ParentChunkPoint {
   id: string;                    // parentChunkId
   
   // 只有 Sparse，没有 Dense
-  sparse_values: {
+  sparse_vector: {
     indices: number[];
     values: number[];
   };
@@ -417,7 +419,43 @@ SPARSE_MIN_WEIGHT=0.01
 RRF_K=60
 RRF_DENSE_TOPK=50
 RRF_SPARSE_TOPK=50
+
+# 内容存储到 Qdrant payload (用于恢复)
+STORE_CONTENT_IN_PAYLOAD=false
+MAX_PAYLOAD_CONTENT_SIZE=10000
 ```
+
+## Content Storage in Payload
+
+When `STORE_CONTENT_IN_PAYLOAD=true` is enabled, chunk content is stored in the Qdrant payload for recovery purposes.
+
+### Storage Behavior
+
+| Setting | Behavior |
+|---------|----------|
+| `STORE_CONTENT_IN_PAYLOAD=false` | Content NOT stored in payload (default) |
+| `STORE_CONTENT_IN_PAYLOAD=true` | Content stored in payload for recovery |
+
+### Content Truncation
+
+When content exceeds `MAX_PAYLOAD_CONTENT_SIZE` (default 10000 chars), it is truncated before storage:
+
+```typescript
+interface PayloadWithContent {
+  documentId: string;
+  chunkId: string;
+  parentId: string;
+  level: "small" | "parent";
+  content?: string;        // Added when STORE_CONTENT_IN_PAYLOAD=true
+  // ... other fields
+}
+```
+
+### Recovery Scenario
+
+1. **Upsert**: Content is stored in payload (truncated if needed)
+2. **Retrieve**: `getPoint()` returns payload with `content` field
+3. **Recovery**: Content can be recovered from Qdrant payload
 
 ## Testing Criteria
 
