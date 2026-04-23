@@ -19,6 +19,9 @@ import { getVectorStoreFactory } from '../retrieval/vector-store-factory.js';
 import { createHybridSmallToBigRetriever } from '../retrieval/hybrid-small-to-big-retriever.js';
 import { SmallToBigRetriever } from '../chunking/small-to-big-retriever.js';
 import { createImageEmbeddingService } from '../embedding/image-embedding-service.js';
+import { llmGenerationService } from './services/LLMGenerationService.js';
+import type { LLMCaller } from '../config/llm-config.js';
+import { syncStores } from './storage-sync.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -120,6 +123,21 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
 
       fastify.log.info('=== Hybrid Mode Ready ===');
 
+      // Run storage sync check asynchronously (non-blocking)
+      syncStores(hierarchicalStore, vectorStoreAdapter)
+        .then(syncStatus => {
+          if (!syncStatus.consistent) {
+            fastify.log.warn(`Storage sync: ${syncStatus.qdrantSmallCount - syncStatus.storeSmallCount} small chunks, ${syncStatus.qdrantParentCount - syncStatus.storeParentCount} parent chunks missing in HierarchicalStore`);
+            fastify.log.info('Recovery mechanism will handle missing chunks during retrieval');
+          } else {
+            fastify.log.info('Storage sync: All data consistent');
+          }
+        })
+        .catch(error => {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          fastify.log.warn('Storage sync check failed: ' + errorMsg);
+        });
+
     } catch (error) {
       fastify.log.warn('Failed to initialize Hybrid mode, falling back to in-memory: ' + (error instanceof Error ? error.message : String(error)));
     }
@@ -133,6 +151,26 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
   fastify.decorate('imageStore', imageStore);
   // Store embeddingService as any to avoid type issues with Fastify's decorate
   fastify.decorate('embeddingService', embeddingService as unknown as TextEmbeddingService);
+
+  // Create LLMCaller adapter for Agent use
+  // Wraps LLMGenerationService.generateOnce() to match LLMCaller signature
+  const llmCaller: LLMCaller = async (prompt: string): Promise<string> => {
+    if (!llmGenerationService.isEnabled()) {
+      console.warn('[LLMCaller] LLM generation not configured - returning empty response');
+      return '';
+    }
+
+    const result = await llmGenerationService.generateOnce({
+      query: prompt,
+      context: '',
+      sources: [],
+    });
+
+    // Return answer, optionally prepend thinking if needed
+    return result.answer;
+  };
+  fastify.decorate('llmCaller', llmCaller);
+  fastify.log.info(`LLMCaller adapter created (enabled: ${llmGenerationService.isEnabled()})`);
 
   // Decorate with Hybrid components (if available)
   if (mode === 'hybrid' && vectorStoreAdapter && hybridRetriever && sharedRetriever) {

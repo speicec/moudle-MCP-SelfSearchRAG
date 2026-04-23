@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { StatsUpdateData } from '../types.js';
+import { syncStores, type SyncStatus } from '../storage-sync.js';
+import { COLLECTION_NAMES } from '../../retrieval/vector-store-adapter.js';
 
 /**
  * Stats routes as Fastify plugin
@@ -139,4 +141,126 @@ export async function statsRoutes(fastify: FastifyInstance): Promise<void> {
     statsService.reset();
     return reply.status(200).send({ success: true, message: 'Statistics reset' });
   });
+
+  /**
+   * GET /health/storage - Get storage health status
+   * Returns chunk counts from HierarchicalStore and Qdrant, plus sync status
+   */
+  fastify.get('/health/storage', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const hierarchicalStore = fastify.hierarchicalStore;
+    const vectorStoreAdapter = (fastify as any).vectorStoreAdapter;
+
+    if (!hierarchicalStore) {
+      return reply.status(503).send({ error: 'HierarchicalStore not initialized' });
+    }
+
+    const storeCount = hierarchicalStore.getChunkCount();
+
+    // Build health response
+    const healthResponse: StorageHealthResponse = {
+      hierarchicalStore: {
+        smallChunks: storeCount.small,
+        parentChunks: storeCount.parent,
+        persisted: true, // Persistence enabled in http-server.ts
+      },
+      qdrant: {
+        textChunks: 0,
+        parentChunks: 0,
+        healthy: false,
+      },
+      syncStatus: {
+        consistent: true,
+        missingInStore: [],
+        missingInQdrant: [],
+      },
+    };
+
+    // Check Qdrant if available
+    if (vectorStoreAdapter) {
+      try {
+        const smallStats = await vectorStoreAdapter.getStats(COLLECTION_NAMES.TEXT_CHUNKS);
+        const parentStats = await vectorStoreAdapter.getStats(COLLECTION_NAMES.PARENT_CHUNKS);
+
+        healthResponse.qdrant = {
+          textChunks: smallStats.vectorCount,
+          parentChunks: parentStats.vectorCount,
+          healthy: smallStats.indexStatus === 'green' && parentStats.indexStatus === 'green',
+        };
+
+        // Check sync status
+        const missingSmall = smallStats.vectorCount - storeCount.small;
+        const missingParent = parentStats.vectorCount - storeCount.parent;
+
+        healthResponse.syncStatus = {
+          consistent: missingSmall <= 0 && missingParent <= 0,
+          missingInStore: missingSmall > 0 ? [`~${missingSmall} small chunks`, `~${missingParent} parent chunks`] : [],
+          missingInQdrant: [],
+        };
+      } catch (error) {
+        healthResponse.qdrant.healthy = false;
+        healthResponse.syncStatus.consistent = false;
+      }
+    } else {
+      // No Qdrant - sync status is unknown
+      healthResponse.syncStatus.consistent = false;
+      healthResponse.qdrant.healthy = false;
+    }
+
+    return reply.status(200).send(healthResponse);
+  });
+
+  /**
+   * POST /health/storage/sync - Trigger manual sync check
+   * Runs syncStores() to compare and optionally recover data
+   */
+  fastify.post('/health/storage/sync', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const hierarchicalStore = fastify.hierarchicalStore;
+    const vectorStoreAdapter = (fastify as any).vectorStoreAdapter;
+
+    if (!hierarchicalStore) {
+      return reply.status(503).send({ error: 'HierarchicalStore not initialized' });
+    }
+
+    if (!vectorStoreAdapter) {
+      return reply.status(503).send({ error: 'VectorStore not initialized (Hybrid mode required)' });
+    }
+
+    try {
+      const syncStatus = await syncStores(hierarchicalStore, vectorStoreAdapter);
+
+      return reply.status(200).send({
+        success: true,
+        syncStatus,
+        message: syncStatus.consistent
+          ? 'Storage is consistent'
+          : 'Storage inconsistency detected. Recovery mechanism will handle missing chunks during retrieval.',
+      });
+    } catch (error) {
+      return reply.status(500).send({
+        error: 'Sync check failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+}
+
+/**
+ * Storage health response structure
+ */
+interface StorageHealthResponse {
+  hierarchicalStore: {
+    smallChunks: number;
+    parentChunks: number;
+    persisted: boolean;
+  };
+  qdrant: {
+    textChunks: number;
+    parentChunks: number;
+    healthy: boolean;
+  };
+  syncStatus: {
+    consistent: boolean;
+    missingInStore: string[];
+    missingInQdrant: string[];
+  };
 }

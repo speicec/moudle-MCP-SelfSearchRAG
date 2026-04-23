@@ -25,7 +25,17 @@ export type PipelineEventType =
   | 'startup:progress'
   | 'startup:ready'
   | 'startup:error'
-  | 'error';
+  | 'error'
+  // Agent visualization events
+  | 'agent:input'
+  | 'agent:entities'
+  | 'agent:complexity'
+  | 'agent:mode'
+  | 'agent:query_rewrite'
+  | 'agent:template'
+  | 'agent:dag'
+  | 'agent:execution'
+  | 'agent:complete';
 
 /**
  * Startup progress stage
@@ -136,6 +146,82 @@ export interface PipelineEvent {
   totalDuration?: number;
   // Startup event fields
   model?: string;
+
+  // Agent visualization event fields
+  agentPhase?: 'input' | 'entities' | 'complexity' | 'mode' | 'query_rewrite' | 'template' | 'dag' | 'execution' | 'complete';
+  // Entity matches
+  entityMatches?: Array<{
+    matchedTerm: string;
+    canonicalName: string;
+    entityType: 'disease' | 'drug' | 'indicator';
+    confidence: number;
+    value?: number;
+    unit?: string;
+  }>;
+  keywordMatches?: Array<{
+    keyword: string;
+    type: 'contraindication' | 'precaution' | 'interaction' | 'indication';
+    position: [number, number];
+  }>;
+  // Complexity assessment
+  complexity?: {
+    level: 'simple' | 'moderate' | 'complex';
+    needsPlanning: boolean;
+    entityCount: number;
+    hasComparison: boolean;
+    hasConditions: boolean;
+    hasInteraction: boolean;
+    reason: string;
+  };
+  // Execution mode
+  executionMode?: 'react' | 'planning';
+  executionReason?: string;
+  matchedTemplate?: string;
+  // Query rewriting
+  queryRewriting?: {
+    primaryQuery: string;
+    expandedTerms: string[];
+    filters?: {
+      yearRange?: [number, number];
+      sources?: string[];
+    };
+  };
+  // Template attempts
+  templateAttempts?: Array<{
+    templateId: string;
+    templateName: string;
+    matched: boolean;
+    rejectionReason?: string;
+  }>;
+  // DAG structure
+  dag?: {
+    tasks: Array<{
+      id: string;
+      type: string;
+      params?: Record<string, unknown>;
+      dependencies: string[];
+      priority: number;
+    }>;
+    entryTasks: string[];
+    exitTasks: string[];
+    parallelGroups: string[][];
+  };
+  // Execution state
+  executorState?: {
+    status: 'pending' | 'running' | 'completed' | 'failed';
+    currentRound: number;
+    completedCount: number;
+    failedCount: number;
+    runningTasks: string[];
+  };
+  // Agent result summary
+  agentResult?: {
+    satisfied: boolean;
+    retrievalCount: number;
+    totalTimeMs: number;
+    iterations?: number;
+    llmCallCount?: number;
+  };
 }
 
 /**
@@ -274,5 +360,6 @@ declare module 'fastify' {
     imageStore?: import('../chunking/image-store.js').ImageStore;
     embeddingService?: import('../embedding/embedding-service.js').TextEmbeddingService;
     statsService?: import('./stats-aggregation-service.js').StatsAggregationService;
+    llmCaller?: import('../config/llm-config.js').LLMCaller;
   }
 }

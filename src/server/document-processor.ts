@@ -23,6 +23,7 @@ import type { VectorPoint } from '../retrieval/vector-store-adapter.js';
 import type { QdrantVectorStoreAdapter } from '../retrieval/qdrant-client.js';
 import type { HybridEmbeddingService } from '../embedding/hybrid-embedding-service.js';
 import type { ImageEmbeddingService } from '../embedding/image-embedding-service.js';
+import { DEFAULT_PAYLOAD_STORAGE_CONFIG } from '../config/vector-db-config.js';
 
 /**
  * Processing options
@@ -365,6 +366,9 @@ async function storeVectorsInQdrant(
           pageNumber: smallChunk.metadata.pageNumber,
           contentType: smallChunk.metadata.contentType,
           position: smallChunk.position,
+          content: DEFAULT_PAYLOAD_STORAGE_CONFIG.storeContentInPayload
+            ? truncateContent(smallChunk.content, DEFAULT_PAYLOAD_STORAGE_CONFIG.maxContentSizeBytes)
+            : undefined,
         },
       });
     } catch (error) {
@@ -400,6 +404,9 @@ async function storeVectorsInQdrant(
           contentType: 'text',
           position: parentChunk.position,
           childIds: parentChunk.childIds,
+          content: DEFAULT_PAYLOAD_STORAGE_CONFIG.storeContentInPayload
+            ? truncateContent(parentChunk.content, DEFAULT_PAYLOAD_STORAGE_CONFIG.maxContentSizeBytes)
+            : undefined,
         },
       });
     } catch (error) {
@@ -552,6 +559,24 @@ async function storeImagesInImageStore(
 function estimateTotalTokens(chunks: TextChunk[] | undefined): number {
   if (!chunks) return 0;
   return chunks.reduce((sum, c) => sum + Math.ceil(c.text.length / 4), 0);
+}
+
+/**
+ * Truncate content to maximum size for payload storage
+ * Returns truncated content with ellipsis if exceeds max size
+ */
+function truncateContent(content: string, maxBytes: number): string {
+  const byteLength = Buffer.byteLength(content, 'utf-8');
+  if (byteLength <= maxBytes) {
+    return content;
+  }
+  // Truncate to maxBytes, accounting for potential multi-byte characters
+  const truncated = content.slice(0, Math.floor(maxBytes / 3)); // Conservative estimate for UTF-8
+  // Ensure we don't exceed maxBytes after encoding
+  while (Buffer.byteLength(truncated + '...', 'utf-8') > maxBytes) {
+    truncated.slice(0, -1);
+  }
+  return truncated + '...';
 }
 
 /**

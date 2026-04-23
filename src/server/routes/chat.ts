@@ -10,6 +10,9 @@ import type { EnhancedChatResponse } from '../../retrieval/types.js';
 import { createEnhancedLLMGenerationService } from '../services/enhanced-llm-generation-service.js';
 import type { EnhancedRetrievalConfig } from '../../retrieval/config.js';
 import { DEFAULT_ENHANCED_RETRIEVAL_CONFIG } from '../../retrieval/config.js';
+import { MedicalAgent, createMedicalAgent } from '../../medical/agent/MedicalAgent.js';
+import { AgentEmitter, createAgentEmitter } from '../agent-emitter.js';
+import type { AgentResult } from '../../medical/agent/types.js';
 
 /**
  * Chat routes as Fastify plugin
@@ -221,13 +224,13 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
 
   /**
    * POST /generate - Submit query for RAG + LLM generation with streaming
-   * Two-phase flow: retrieval → generation
+   * Three-phase flow: Agent analysis → retrieval → generation
    * Results broadcast via WebSocket events
    */
-  fastify.post('/generate', async (request: FastifyRequest<{ Body: ChatQueryRequest }>, reply: FastifyReply) => {
-    const { query, topK = 5, similarityThreshold = 0.0, maxContextTokens = 4000 } = request.body;
+  fastify.post('/generate', async (request: FastifyRequest<{ Body: ChatQueryRequest & { enableAgent?: boolean } }>, reply: FastifyReply) => {
+    const { query, topK = 5, similarityThreshold = 0.0, maxContextTokens = 4000, enableAgent = true } = request.body;
 
-    console.log(`[ChatRoute:Generate] Query received: "${query}"`);
+    console.log(`[ChatRoute:Generate] Query received: "${query}" (agent: ${enableAgent})`);
 
     if (!query || query.trim().length === 0) {
       return reply.status(400).send({ error: 'Query is required' });
@@ -307,10 +310,117 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
 
     const startTime = Date.now();
 
+    // Agent phase execution (if enabled)
+    let agentResult: AgentResult | null = null;
+    let agentEmitter: AgentEmitter | null = null;
+
+    if (enableAgent && wsHandler && fastify.llmCaller) {
+      console.log('[ChatRoute:Generate] Executing Medical Agent phase...');
+
+      // Create AgentEmitter for visualization events
+      agentEmitter = createAgentEmitter(wsHandler);
+
+      // Create MedicalAgent with LLMCaller
+      const llmCaller = fastify.llmCaller;
+
+      // Create retrieval function for Agent
+      const agentRetrieval = async (agentQuery: string, options?: { topK?: number; threshold?: number }) => {
+        const { results } = await retriever.retrieveWithMetadata(agentQuery);
+        return results.map(r => ({
+          content: r.parentChunkContent,
+          source: {
+            documentId: r.sourceDocumentId,
+            documentName: r.sourceDocumentId,
+            chunkId: r.smallChunkId,
+            ...(r.metadata?.pageNumber ? { pageNumber: r.metadata.pageNumber } : {}),
+          } as import('../../medical/agent/types.js').SourceCitation,
+        }));
+      };
+
+      const medicalAgent = createMedicalAgent(llmCaller, agentRetrieval, {
+        maxIterations: 3,
+        confidenceThreshold: 0.7,
+      });
+
+      // Register visualization callback
+      medicalAgent.setVisualizationCallback((phase: string, data: unknown) => {
+        switch (phase) {
+          case 'input':
+            agentEmitter?.emitInput((data as { query: string }).query);
+            break;
+          case 'entities':
+            agentEmitter?.emitEntities(data as any);
+            break;
+          case 'complexity':
+            agentEmitter?.emitComplexity(data as any);
+            break;
+          case 'mode':
+            const modeData = data as { mode: 'react' | 'planning'; reason: string; matchedTemplate?: string };
+            agentEmitter?.emitMode(modeData.mode, modeData.reason, modeData.matchedTemplate);
+            break;
+          case 'query_rewrite':
+            agentEmitter?.emitQueryRewriting(data as any);
+            break;
+          case 'template':
+            const templateData = data as { attempts: any[]; matched?: string };
+            agentEmitter?.emitTemplate(templateData.attempts, templateData.matched);
+            break;
+          case 'dag':
+            agentEmitter?.emitDAG(data as any);
+            break;
+          case 'execution':
+            agentEmitter?.emitExecution(data as any);
+            break;
+          case 'complete':
+            agentEmitter?.emitComplete(data as AgentResult);
+            break;
+        }
+      });
+
+      try {
+        // Execute Agent
+        agentResult = await medicalAgent.run({ query, domain: 'all' });
+        console.log(`[ChatRoute:Generate] Agent complete: satisfied=${agentResult.satisfied}, iterations=${agentResult.stats.iterations}`);
+      } catch (agentError) {
+        console.error('[ChatRoute:Generate] Agent failed:', agentError);
+        // Continue without Agent result
+        agentResult = null;
+      }
+    }
+
     try {
-      // Phase 1: Retrieval
+      // Phase 1: Retrieval (use Agent results if available)
       console.log(`[ChatRoute:Generate] Executing retrieval...`);
-      const { results, context } = await retriever.retrieveWithMetadata(query);
+
+      // Determine query for retrieval
+      let retrievalQuery = query;
+
+      if (agentResult?.visualization?.queryRewriting?.primaryQuery) {
+        const rewrittenQuery = agentResult.visualization
+          .queryRewriting.primaryQuery.trim();
+
+        if (rewrittenQuery.length > 0) {
+          retrievalQuery = rewrittenQuery;
+          console.log(`[ChatRoute:Generate] Using Agent rewritten query: "${retrievalQuery}"`);
+        } else {
+          console.warn(`[ChatRoute:Generate] Agent rewritten query is empty, using original: "${query}"`);
+        }
+      }
+
+      // Final validation: ensure query is not empty
+      if (!retrievalQuery || retrievalQuery.trim().length === 0) {
+        broadcastGeneration({
+          type: 'generation:error',
+          error: 'Invalid query: empty query after Agent processing',
+          timestamp: Date.now(),
+        });
+        return reply.status(400).send({
+          error: 'Invalid query',
+          message: 'Query became empty after Agent processing',
+        });
+      }
+
+      const { results, context } = await retriever.retrieveWithMetadata(retrievalQuery);
 
       // Emit retrieval:match events
       if (emitter) {
@@ -407,6 +517,8 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           answer: generationResult.answer,
           duration: Date.now() - startTime,
           imageCount: imageContexts.length,
+          agentUsed: enableAgent && agentResult !== null,
+          agentSatisfied: agentResult?.satisfied,
         });
       } else {
         // LLM disabled - return retrieval results only
@@ -425,6 +537,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           answer: 'LLM generation not configured. Configure DEEPSEEK_API_KEY to enable.',
           context: context.content,
           duration: Date.now() - startTime,
+          agentUsed: enableAgent && agentResult !== null,
         });
       }
 
