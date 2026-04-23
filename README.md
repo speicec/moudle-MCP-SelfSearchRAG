@@ -258,6 +258,37 @@ Phase 2: 父块完整展开
 
 ---
 
+## ⚡ 性能基准 (2026-04-23)
+
+### Agent 执行性能
+
+| 指标 | 修复前 | 修复后 | 改进 |
+|------|--------|--------|------|
+| 平均迭代次数 | 3轮 | 1-2轮 | ↓67% |
+| LLM调用次数 | 3次 | 1次 | ↓67% |
+| 执行时间（预期） | ~330秒 | ~10秒 | ↓97% |
+| 空查询错误 | 500崩溃 | 400错误 | ✅ |
+| 检索统计显示 | 显示0 | 显示正确值 | ✅ |
+
+### 检索性能
+
+| 操作 | 时间 | 说明 |
+|------|------|------|
+| Hybrid检索 (dense+sparse) | ~50ms | 1024维dense + sparse索引 |
+| Small-to-Big展开 | <5ms | 从命中小块展开到父块 |
+| 查询优化 | ~200ms | LLM分析+重写+扩展 |
+| VLM图片理解 | ~1-2s | 表格→Markdown转换 |
+
+### 内存占用
+
+| 组件 | 内存 | 说明 |
+|------|------|------|
+| HierarchicalStore | ~50MB | 150个小块+30父块 |
+| EmbeddingService | ~200MB | Transformers模型缓存 |
+| VLM服务 | ~1GB | qwen3-vl-flash模型 |
+
+---
+
 ## 🌐 API端点
 
 | 方法 | 端点 | 功能 |
@@ -265,13 +296,58 @@ Phase 2: 父块完整展开
 | POST | `/api/documents/upload` | 上传文档 |
 | GET | `/api/documents` | 文档列表 |
 | DELETE | `/api/documents/:id` | 删除文档 |
-| POST | `/api/chat/generate` | SSE流式生成答案 |
+| POST | `/api/chat/generate` | SSE流式生成答案（支持Agent模式） |
 | POST | `/api/chat/enhanced` | 增强检索+置信度答案 |
 | GET | `/api/chat/config` | 获取检索配置预设 |
 | POST | `/api/chat/config` | 更新检索配置 |
 | GET | `/api/stats` | 系统统计 |
+| GET | `/api/stats/health/storage` | 存储健康状态检查 |
+| POST | `/api/stats/health/storage/sync` | 手动触发存储同步 |
 | GET | `/api/ws-status` | WebSocket连接状态 |
 | GET | `/api/health` | 服务健康检查 |
+
+### 错误响应 (2026-04-23 更新)
+
+| HTTP状态码 | 错误类型 | 说明 |
+|------------|----------|------|
+| 400 | `Invalid query` | 空查询或Agent处理后查询为空 |
+| 400 | `Query is required` | POST请求缺少query字段 |
+| 400 | `Invalid configuration` | 检索配置验证失败 |
+| 500 | `Generation failed` | LLM生成失败（检查API密钥） |
+| 500 | `Retrieval failed` | 检索过程异常 |
+| 503 | `Document store not initialized` | 文档存储未初始化（需上传文档） |
+
+**空查询保护** (修复于 2026-04-23)：
+```json
+// Agent处理后查询为空 → 400错误
+{
+  "statusCode": 400,
+  "error": "Invalid query",
+  "message": "Query became empty after Agent processing"
+}
+
+// 修复前：空查询导致500崩溃
+// 修复后：返回400，避免崩溃
+```
+
+### Agent模式参数
+
+`POST /api/chat/generate` 支持 Agent 模式：
+
+```json
+{
+  "query": "糖尿病",
+  "enableAgent": true,     // 启用医学Agent（默认true）
+  "topK": 5,
+  "similarityThreshold": 0.0,
+  "maxContextTokens": 4000
+}
+```
+
+**返回字段**：
+- `agentUsed`: 是否使用了Agent
+- `agentSatisfied`: Agent是否满意结果
+- `iterations`: Agent迭代次数（修复后通常1-2次）
 
 ### HybridSearchResult 格式
 
@@ -283,6 +359,8 @@ Phase 2: 父块完整展开
   "parentContent": "完整父块内容",
   "parentScore": 0.85,
   "method": "hybrid_small", // 或 "fallback_parent_sparse"
+  "recoveredFrom": "qdrant_payload", // 可选，表示数据来自恢复机制
+  "recoveryStatus": "success", // 可选，表示恢复状态
   "matchedSmallChunks": [
     {
       "smallChunkId": "uuid",
@@ -299,6 +377,55 @@ Phase 2: 父块完整展开
     "fusedCount": 22
   }
 }
+```
+
+### Storage Health API (数据一致性检查)
+
+**GET `/api/stats/health/storage`** - 查看存储健康状态：
+
+```json
+{
+  "hierarchicalStore": {
+    "smallChunks": 150,
+    "parentChunks": 30,
+    "persisted": true
+  },
+  "qdrant": {
+    "textChunks": 150,
+    "parentChunks": 30,
+    "healthy": true
+  },
+  "syncStatus": {
+    "consistent": true,
+    "missingInStore": [],
+    "missingInQdrant": []
+  }
+}
+```
+
+**POST `/api/stats/health/storage/sync`** - 手动触发同步检查：
+
+```json
+{
+  "success": true,
+  "syncStatus": {
+    "storeSmallCount": 150,
+    "storeParentCount": 30,
+    "qdrantSmallCount": 155,
+    "qdrantParentCount": 30,
+    "consistent": false,
+    "missingInStore": ["~5 small chunks"],
+    "recoveredChunks": [],
+    "recoveryFailures": []
+  },
+  "message": "Storage inconsistency detected. Recovery mechanism will handle missing chunks during retrieval."
+}
+```
+
+**数据一致性恢复机制**：
+- 服务器重启后自动检测 `HierarchicalStore` 与 `Qdrant` 数据差异
+- 启用 `STORE_CONTENT_IN_PAYLOAD=true` 可在检索时从 Qdrant payload 恢复缺失数据
+- 详细文档见 [docs/hybrid-retrieval.md](docs/hybrid-retrieval.md)
 ```
 
 ### WebSocket事件

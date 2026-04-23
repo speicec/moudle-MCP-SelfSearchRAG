@@ -115,3 +115,22 @@ export const DEFAULT_HYBRID_CONFIG: HybridRetrievalConfig = {
     fallbackTopK: 20,
   },
 };
+
+/**
+ * Payload storage configuration
+ * Controls whether chunk content is stored in Qdrant payload for recovery
+ */
+export interface PayloadStorageConfig {
+  /** Store chunk content in Qdrant payload (enables recovery from Qdrant) */
+  storeContentInPayload: boolean;
+  /** Maximum content size to store (in bytes, default 10KB) */
+  maxContentSizeBytes: number;
+}
+
+/**
+ * Default payload storage configuration
+ */
+export const DEFAULT_PAYLOAD_STORAGE_CONFIG: PayloadStorageConfig = {
+  storeContentInPayload: process.env.STORE_CONTENT_IN_PAYLOAD === 'true',
+  maxContentSizeBytes: parseInt(process.env.MAX_PAYLOAD_CONTENT_SIZE ?? '10240', 10),
+};

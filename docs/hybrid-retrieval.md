@@ -128,6 +128,8 @@ Benefits of RRF:
 | `QDRANT_API_KEY` | Qdrant API key (optional) | - |
 | `HYBRID_RETRIEVAL_ENABLED` | Enable hybrid mode | 'true' |
 | `EMBEDDING_MODE` | Embedding mode ('hybrid', 'local', 'api') | 'local' |
+| `STORE_CONTENT_IN_PAYLOAD` | Store chunk content in Qdrant payload for recovery | 'false' |
+| `MAX_PAYLOAD_CONTENT_SIZE` | Maximum content size to store in payload (bytes) | '10240' (10KB) |
 
 ### Hybrid Config (src/config/vector-db-config.ts)
 
@@ -240,6 +242,64 @@ const sparse = await embeddingService.embedSparseOnly(text);
 - New format (v2) stores only metadata, embeddings in Qdrant
 - Migration script required for existing data
 
+### Collection Recreation (Sparse Vector Fix)
+
+**⚠️ IMPORTANT: After upgrading to named vector format, you MUST recreate all collections and reprocess documents.**
+
+The sparse vector fix (2026-04-23) changed the Qdrant collection architecture to use **named vectors**:
+
+**Old Architecture (WRONG - sparse search fails):**
+```
+text_chunks: vectors: {size: 1024} (unnamed) + sparse_vectors: {text_sparse}
+```
+
+**New Architecture (CORRECT - sparse search works):**
+```
+text_chunks: vectors: {text_dense: {size: 1024}} + sparse_vectors: {text_sparse}
+```
+
+**Root Cause**: When using named sparse vectors, Qdrant requires named dense vectors too. Both must be in the same `vector` object.
+
+**Migration Steps:**
+
+1. **Backup existing data** (if needed):
+   ```bash
+   # Export documents from Qdrant if you need to preserve them
+   curl http://localhost:6333/collections/text_chunks/points/export > text_backup.json
+   curl http://localhost:6333/collections/parent_chunks/points/export > parent_backup.json
+   curl http://localhost:6333/collections/image_chunks/points/export > image_backup.json
+   ```
+
+2. **Delete existing collections**:
+   ```bash
+   curl -X DELETE http://localhost:6333/collections/text_chunks
+   curl -X DELETE http://localhost:6333/collections/parent_chunks
+   curl -X DELETE http://localhost:6333/collections/image_chunks
+   ```
+
+3. **Restart the server** - collections will be recreated with correct named vector format:
+   ```bash
+   npm run dev
+   ```
+
+4. **Reprocess ALL documents** to populate vectors with new format:
+   ```bash
+   # Use MCP tool or HTTP API to re-upload documents
+   ```
+
+5. **Verify sparse search works**:
+   ```bash
+   # Test with keyword query like "加班" or "禁忌"
+   curl -X POST http://localhost:3000/api/chat/generate \
+     -H "Content-Type: application/json" \
+     -d '{"query": "加班", "topK": 5}'
+   ```
+
+**Why This is Required:**
+- Old documents lack sparse vectors (bug caused field name mismatch)
+- Even if sparse vectors existed, they were stored in wrong format (`sparse_vector` field instead of inside `vector` object)
+- Named vector format is a fundamental architecture change that cannot be migrated in-place
+
 ## Performance Considerations
 
 ### Search Performance
@@ -269,8 +329,175 @@ const sparse = await embeddingService.embedSparseOnly(text);
    - Use `HF_ENDPOINT` for China mirror
 
 3. **Sparse search returns no results**
-   - Check sparse vector dimension matches collection config
+   - **Most Likely Cause**: Using old collection architecture with unnamed dense vectors
+   - **Check collection configuration**:
+     ```bash
+     curl http://localhost:6333/collections/text_chunks
+     # Should show: vectors: {"text_dense": {...}}
+     # NOT: vectors: {size: 1024} (unnamed format)
+     ```
+   - **Fix**: Recreate collections with named vector format (see "Collection Recreation" section above)
+   - Verify sparse vector dimension matches collection config
    - Verify `sparseMinWeight` threshold is appropriate
+
+4. **Named vector format explanation**
+   
+   **Qdrant Named Vector Requirements:**
+   - When using named sparse vectors, dense vectors MUST also be named
+   - Both vectors go in the SAME `vector` object, not separate fields
+   
+   **Correct Format (Upsert):**
+   ```json
+   {
+     "id": "point_id",
+     "vector": {
+       "text_dense": [0.1, 0.2, ..., 0.1024],  // Named dense vector
+       "text_sparse": {                          // Named sparse vector
+         "indices": [123, 456, 789],
+         "values": [0.5, 0.8, 0.3]
+       }
+     },
+     "payload": {...}
+   }
+   ```
+   
+   **Wrong Format (Will Fail):**
+   ```json
+   {
+     "id": "point_id",
+     "vector": [0.1, 0.2, ..., 0.1024],         // ❌ Unnamed dense (array)
+     "sparse_vector": {                          // ❌ Separate field
+       "indices": [123, 456, 789],
+       "values": [0.5, 0.8, 0.3]
+     }
+   }
+   ```
+   
+   **Collection Configuration:**
+   ```json
+   {
+     "vectors": {
+       "text_dense": {"size": 1024, "distance": "Cosine"}
+     },
+     "sparse_vectors": {
+       "text_sparse": {"modifier": "idf"}
+     }
+   }
+   ```
+   
+   **Search Format:**
+   ```json
+   // Dense search
+   {
+     "vector": {
+       "name": "text_dense",
+       "vector": [0.1, 0.2, ..., 0.1024]
+     }
+   }
+   
+   // Sparse search
+   {
+     "vector": {
+       "name": "text_sparse",
+       "vector": {
+         "indices": [123, 456, 789],
+         "values": [0.5, 0.8, 0.3]
+       }
+     }
+   }
+   ```
+
+5. **Parent chunk not found in HierarchicalStore**
+   - Enable `STORE_CONTENT_IN_PAYLOAD=true` for recovery capability
+   - Check storage sync status at `/api/stats/health/storage`
+   - Recovery mechanism will automatically recover from Qdrant during retrieval
+
+## Recovery Mechanism (Data Consistency)
+
+### Problem: HierarchicalStore and Qdrant Inconsistency
+
+When the server restarts or document processing is interrupted, `HierarchicalStore` may lose chunk metadata while `Qdrant` retains the vectors. This causes retrieval to fail when trying to expand small chunks to parent content.
+
+### Solution: Three-Level Recovery
+
+1. **Startup Sync Check** (Automatic)
+   - Compares chunk counts between `HierarchicalStore` and `Qdrant`
+   - Logs warnings if data is inconsistent
+   - Runs asynchronously without blocking server startup
+
+2. **On-Demand Recovery** (During Retrieval)
+   - When `HierarchicalStore.getChunk()` returns undefined, `HybridSmallToBigRetriever` attempts to recover from Qdrant payload
+   - Recovered chunks are temporarily added to `HierarchicalStore`
+   - Requires `STORE_CONTENT_IN_PAYLOAD=true`
+
+3. **Health Check API** (Monitoring)
+   - `/api/stats/health/storage` - View storage status
+   - `/api/stats/health/storage/sync` - Trigger manual sync check
+
+### Payload Enhancement
+
+To enable recovery, chunk content must be stored in Qdrant payload:
+
+```typescript
+// VectorPayload interface with content field
+interface VectorPayload {
+  documentId: string;
+  chunkId: string;
+  level: 'small' | 'parent' | 'image';
+  modality: 'text' | 'image';
+  content?: string;  // Recovery content (requires STORE_CONTENT_IN_PAYLOAD=true)
+  // ... other fields
+}
+```
+
+Configuration:
+```bash
+export STORE_CONTENT_IN_PAYLOAD=true
+export MAX_PAYLOAD_CONTENT_SIZE=10240  # 10KB max per chunk
+```
+
+### Recovery Flow
+
+```
+Retrieval Request
+       │
+       ▼
+┌─────────────────────────────┐
+│  HybridSmallToBigRetriever  │
+│  searchHybrid()             │
+└─────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────┐
+│  expandToParents()          │
+│  Get parent chunk from      │
+│  HierarchicalStore          │
+└─────────────────────────────┘
+       │
+       ├──── Chunk Found ────► Return Content
+       │
+       ▼ (Chunk Not Found)
+┌─────────────────────────────┐
+│  recoverFromQdrant()        │
+│  1. Get point from Qdrant   │
+│  2. Extract content from    │
+│     payload                 │
+│  3. Create HierarchicalChunk│
+│  4. Add to HierarchicalStore│
+└─────────────────────────────┘
+       │
+       ├──── Recovery Success ───► Return Recovered Content
+       │
+       ▼ (Recovery Failed)
+   Skip Result + Log Warning
+```
+
+### Limitations
+
+- **Content truncation**: Content exceeding `MAX_PAYLOAD_CONTENT_SIZE` is truncated
+- **No embedding recovery**: Embeddings remain in Qdrant; recovered chunks have empty embeddings
+- **Quality score default**: Recovered chunks use default quality score (0.5)
+- **Full recovery**: Requires document reprocessing for complete data restoration
 
 ## References
 

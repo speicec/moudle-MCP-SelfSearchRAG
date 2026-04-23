@@ -47,7 +47,9 @@
       "Bash(python -c \"import ocr_service; print\\('OCR service imports OK'\\)\")",
       "Bash(python -c ' *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git checkout *)",
+      "Bash(git commit *)"
     ]
   }
 }

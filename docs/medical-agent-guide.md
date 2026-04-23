@@ -6,11 +6,26 @@ Medical Agent 是一个专门针对内分泌领域医学知识检索的智能 Ag
 - **ReAct 模式**：完整循环（Think → Act → Observe → Decide → Answer）
 - **Planning 模式**：PlanAndExecute 流程，支持任务分解、并行检索、动态重规划
 
+### 最近更新 (2026-04-23)
+
+修复了 Agent 执行中的关键 Bug：
+- ✅ 循环终止优化：`satisfied=true` 后立即终止循环
+- ✅ ReAct 模式添加 queryRewriting：确保可视化数据完整
+- ✅ 空查询保护：防止检索崩溃，返回 400 错误
+- ✅ LLM 解析优化：精确提取 ACTION 和 CONFIDENCE
+- ✅ 统计显示修复：正确显示检索数量
+
+**性能影响**：
+- 迭代次数：从 3 轨降至 1-2 轨（减少 67%）
+- 执行时间：从 ~330 秒降至 ~10 秒（预期）
+- LLM 调用：从 3 次降至 1 次（减少 67%）
+
 ## 功能特性
 
 - **医学实体识别**：自动识别疾病、药物、指标等专业术语
 - **智能检索策略**：基于实体构建查询策略，支持术语扩展
-- **ReAct 循环**：多轮推理决策，逐步完善检索结果
+- **查询重写优化**：ReAct 和 Planning 模式都支持查询策略构建
+- **ReAct 循环**：多轮推理决策，`satisfied` 状态立即终止
 - **Planning 模式**：任务 DAG 分解，并行检索，动态调整
 - **LLM 推理**：使用 Claude/OpenAI/Ollama 进行临床推理
 - **结构化回答**：包含结论、详细说明、证据等级、来源引用
@@ -90,7 +105,7 @@ Medical Agent 是一个专门针对内分泌领域医学知识检索的智能 Ag
 
 ### 模板匹配
 
-Planning 模式内置 4 个结构化模板，零 LLM 调用：
+Planning 模式内置 6 个结构化模板，零 LLM 调用：
 
 | 模板名称 | 适用场景 | 任务数 |
 |----------|----------|--------|
@@ -98,6 +113,13 @@ Planning 模式内置 4 个结构化模板，零 LLM 调用：
 | 药物禁忌检查 | 单药禁忌症查询 | 3 |
 | 药物对比 | 多药物对比查询 | 5（含并行） |
 | 指标药物查询 | 带指标值的禁忌检查 | 5（含并行） |
+| 指标决策支持 | 决策支持 + 指标值 + 禁忌检查 | 5（含并行） |
+| 疾病用药建议 | 疾病 + 无药物 + 无指标值 | 3（含并行） |
+
+**新增模板说明**：
+
+- **指标决策支持** (`decision_support_with_indicator`)：针对"eGFR=35能否使用二甲双胍"类查询，优先级高于指标药物查询模板
+- **疾病用药建议** (`disease_drug_recommendation`)：针对"糖尿病用什么药"类用药推荐查询
 
 ### 配置参数
 
@@ -171,6 +193,22 @@ OPENAI_API_KEY=your-api-key
 ### ReAct 模式
 
 ```markdown
+## 🔍 检索分析
+
+**原始查询**: "二甲双胍禁忌症"
+
+**识别结果**:
+- 药物: 二甲双胍
+- 意图: 禁忌检查
+
+**优化查询**: "二甲双胍 禁忌症 用法注意事项"
+
+**执行路径**: ReAct → 实体识别 → 查询优化 → 多轮检索
+
+**检索结果**: 5条相关文献
+
+---
+
 ## 结论
 二甲双胍在肾功能不全患者中使用需谨慎，具体取决于eGFR水平。
 
@@ -200,6 +238,23 @@ Grade B - ADA指南推荐
 ### Planning 模式
 
 ```markdown
+## 🔍 检索分析
+
+**原始查询**: "利拉鲁肽在肾功能不全患者中安全性优于二甲双胍"
+
+**识别结果**:
+- 药物: 利拉鲁肽, 二甲双胍
+- 指标: eGFR
+- 意图: 对比查询 (安全性评估)
+
+**优化查询**: "利拉鲁肽 二甲双胍 eGFR 肾功能安全性 禁忌症对比"
+
+**执行路径**: Planning → 模板匹配 → 药物对比DAG → 并行检索
+
+**检索结果**: 8条相关文献
+
+---
+
 ## 结论
 利拉鲁肽在肾功能不全患者中安全性优于二甲双胍。
 
@@ -235,6 +290,239 @@ Grade B - ADA指南推荐
 | B | 中等质量证据（观察性研究、指南推荐） |
 | C | 低质量证据（专家意见、病例报告） |
 | D | 极低质量证据 |
+
+## HTTP Chat 路径集成
+
+### API 端点
+
+Medical Agent 已集成到 HTTP Chat `/api/chat/generate` 路径，支持前端可视化。
+
+**请求参数**：
+```json
+{
+  "query": "二甲双胍禁忌症",
+  "enableAgent": true,  // 可选，默认 true
+  "topK": 5,
+  "similarityThreshold": 0.0,
+  "maxContextTokens": 4000
+}
+```
+
+**响应结构**：
+```json
+{
+  "query": "二甲双胍禁忌症",
+  "results": [...],
+  "thinking": "推理过程...",
+  "answer": "最终回答...",
+  "duration": 2500,
+  "agentUsed": true,
+  "agentSatisfied": true
+}
+```
+
+### enableAgent 开关
+
+- `enableAgent: true` - 启用 Agent 分析，发送可视化事件
+- `enableAgent: false` - 禁用 Agent，直接进行检索
+
+### LLMCaller 适配器
+
+HTTP Chat 使用 LLMGenerationService 作为 Agent 的 LLMCaller：
+```typescript
+const llmCaller: LLMCaller = async (prompt: string) => {
+  const result = await llmGenerationService.generateOnce({
+    query: prompt,
+    context: '',
+    sources: [],
+  });
+  return result.answer;
+};
+```
+
+## WebSocket 可视化事件
+
+### agent:* 事件类型
+
+Agent 执行过程通过 WebSocket 实时广播：
+
+| 事件类型 | 触发时机 | 数据字段 |
+|----------|----------|----------|
+| `agent:input` | Agent 开始执行 | query |
+| `agent:entities` | 实体识别完成 | entityMatches, keywordMatches |
+| `agent:complexity` | 复杂度评估完成 | complexity |
+| `agent:mode` | 执行模式选择 | executionMode, executionReason, matchedTemplate |
+| `agent:query_rewrite` | 查询改写完成 | queryRewriting, query |
+| `agent:template` | 模板匹配完成 | templateAttempts, matchedTemplate |
+| `agent:dag` | DAG 构建（Planning） | dag |
+| `agent:execution` | 执行进度更新 | executorState |
+| `agent:complete` | Agent 执行完成 | agentResult |
+
+### 事件数据格式
+
+**agent:input**:
+```json
+{
+  "type": "agent:input",
+  "agentPhase": "input",
+  "query": "二甲双胍禁忌症",
+  "timestamp": 1234567890
+}
+```
+
+**agent:entities**:
+```json
+{
+  "type": "agent:entities",
+  "agentPhase": "entities",
+  "entityMatches": [
+    {
+      "matchedTerm": "二甲双胍",
+      "canonicalName": "二甲双胍",
+      "entityType": "drug",
+      "confidence": 0.9
+    }
+  ],
+  "timestamp": 1234567891
+}
+```
+
+**agent:complexity**:
+```json
+{
+  "type": "agent:complexity",
+  "agentPhase": "complexity",
+  "complexity": {
+    "level": "simple",
+    "needsPlanning": false,
+    "entityCount": 1,
+    "hasComparison": false,
+    "hasConditions": false,
+    "hasInteraction": false,
+    "reason": "单实体查询，无需规划"
+  },
+  "timestamp": 1234567892
+}
+```
+
+**agent:mode**:
+```json
+{
+  "type": "agent:mode",
+  "agentPhase": "mode",
+  "executionMode": "react",
+  "executionReason": "简单查询，使用 ReAct 循环",
+  "matchedTemplate": null,
+  "timestamp": 1234567893
+}
+```
+
+**agent:query_rewrite**:
+```json
+{
+  "type": "agent:query_rewrite",
+  "agentPhase": "query_rewrite",
+  "queryRewriting": {
+    "primaryQuery": "二甲双胍 禁忌症 用法",
+    "expandedTerms": ["Metformin", "格华止"]
+  },
+  "query": "二甲双胍禁忌症",
+  "timestamp": 1234567894
+}
+```
+
+**agent:complete**:
+```json
+{
+  "type": "agent:complete",
+  "agentPhase": "complete",
+  "agentResult": {
+    "satisfied": true,
+    "retrievalCount": 5,
+    "totalTimeMs": 1500,
+    "iterations": 2,
+    "llmCallCount": 3
+  },
+  "timestamp": 1234567990
+}
+```
+
+### 前端订阅方式
+
+前端通过 WebSocket 连接后，自动接收 agent:* 事件：
+```typescript
+// useWebSocket.ts 自动处理
+if (event.type === 'agent:input') {
+  useRetrievalStore.getState().handleAgentInput(event.query, event.timestamp);
+}
+if (event.type === 'agent:entities') {
+  useRetrievalStore.getState().handleAgentEntities(event.entityMatches, event.keywordMatches);
+}
+// ... 其他事件
+```
+
+## Agent 执行阶段可视化
+
+### 阶段说明
+
+Agent 执行过程分为以下阶段，每个阶段都有对应的可视化输出：
+
+| 阶段 | 说明 | 输出内容 |
+|------|------|----------|
+| **输入解析** | 接收用户查询 | 原始查询、时间戳 |
+| **实体识别** | 识别医学实体 | 匹配术语、实体类型、置信度 |
+| **复杂度评估** | 评估查询复杂度 | 复杂度级别、是否需要Planning |
+| **模式选择** | 选择执行模式 | ReAct/Planning、选择原因 |
+| **查询优化** | 构建检索策略 | 优化查询词、扩展术语 |
+| **模板匹配** | Planning模式匹配模板 | 模板尝试过程、匹配结果 |
+| **DAG构建** | Planning模式构建任务DAG | DAG结构、并行组 |
+| **执行** | 执行检索任务 | 执行进度、任务状态 |
+| **回答生成** | 生成结构化回答 | 最终答案、证据等级 |
+
+### 双通道输出
+
+Agent 提供两种可视化输出：
+
+**1. MCP Tool 简要版（用户可见）**
+- 在回答前插入"🔍 检索分析"章节
+- 展示关键决策点：原始查询 → 实体识别 → 查询优化 → 执行路径
+- 适合快速了解 Agent 决策过程
+
+**2. Logger 完整版（调试可见）**
+- 详细记录每个阶段的完整数据
+- 包含模板匹配尝试过程（成功和失败）
+- JSON格式的结构化日志
+- 适合问题排查和性能分析
+
+### 模板匹配过程可视化
+
+Planning 模式的模板匹配过程会记录：
+
+**简要版**:
+```
+**执行路径**: Planning → 模板匹配 → 药物对比DAG → 并行检索
+```
+
+**完整版** (通过 Logger 查看):
+```
+### 模板匹配尝试
+- guideline_year_filter: ✗ (no year filter)
+- drug_contraindication: ✗ (multiple drugs)
+- decision_support_with_indicator: ✗ (no decision_support pattern)
+- drug_comparison: ✓ 匹配成功
+```
+
+### 启用详细日志
+
+```typescript
+const executor = createAgentExecutor({
+  enableTraceLogging: true,  // 启用完整可视化
+}, context);
+```
+
+详细日志输出到 AgentLogger，可通过以下方式查看：
+- Console 输出（debug级别）
+- Logger 报告文件（如有配置）
 
 ## API 集成
 
@@ -337,3 +625,76 @@ Planning 失败会自动回退到 ReAct 模式，结果中包含 `fallbackReason
 - 不构成医疗诊断或治疗建议
 - 实际用药请咨询专业医生
 - 系统可能存在知识更新滞后问题
+
+## 故障排除
+
+### 常见问题修复 (2026-04-23)
+
+以下问题已在最近更新中修复：
+
+#### Q: Agent 执行时间过长 (330秒+)？
+
+**已修复**：Agent 循环现在在 `satisfied=true` 后立即终止。
+
+修复前：循环不检查 `satisfied` 状态，导致 3 轮迭代
+修复后：`satisfied=true` → 立即退出循环（1-2 轨）
+
+```typescript
+// AgentState.ts:154-161
+export function canContinue(state: AgentState): boolean {
+  return (
+    state.status !== 'completed' &&
+    state.status !== 'failed' &&
+    !isMaxIterationsReached(state) &&
+    !state.satisfied &&  // ✅ 新增检查
+    !state.error
+  );
+}
+```
+
+#### Q: 空查询导致 500 错误？
+
+**已修复**：空查询现在返回 400 错误而非崩溃。
+
+修复前：`queryRewriting.primaryQuery=""` → HybridRetriever 崩溃 → 500 错误
+修复后：空查询检测 → fallback 到原始查询 → 或返回 400 错误
+
+```typescript
+// chat.ts
+if (!retrievalQuery || retrievalQuery.trim().length === 0) {
+  return reply.status(400).send({ error: 'Invalid query' });
+}
+```
+
+#### Q: 前端显示 "检索数量: 0" 但实际有结果？
+
+**已修复**：ReAct 模式现在正确设置 `retrievalCount`。
+
+修复前：ReAct 模式不调用 `setRetrievalResultCount` → count=0
+修复后：循环结束时设置正确的 count
+
+```typescript
+// AgentExecutor.ts
+const finalRetrievalCount = state.retrievalResults?.length ?? 0;
+this.collector.setRetrievalResultCount(finalRetrievalCount);
+```
+
+#### Q: Agent 执行日志显示 queryRewriting 为空？
+
+**已修复**：ReAct 模式现在生成 `queryRewriting` 可视化数据。
+
+修复前：只有 Planning 模式调用 `collectQueryRewriting`
+修复后：ReAct 模式在循环开始前也调用
+
+### 仍然存在的问题
+
+如果遇到以下问题：
+
+- **LLM 响应超时**：检查 LLM API 连接，尝试使用本地模型
+- **检索结果不相关**：上传更多领域相关的医学指南
+- **实体识别错误**：检查术语词典配置 `config/synonyms.json`
+
+---
+
+**文档版本**: 2026-04-23
+**最后更新**: Agent 检索循环 Bug 修复
