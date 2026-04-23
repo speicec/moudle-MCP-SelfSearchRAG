@@ -16,9 +16,11 @@ import type { VectorStoreAdapter, SearchQuery, SearchResult, VectorPayload } fro
 import { COLLECTION_NAMES } from './vector-store-adapter.js';
 import { rrfFusion, getFusionStats, type FusionResult, type FusionStats } from './rrf-fusion.js';
 import type { HierarchicalStore } from '../chunking/hierarchical-store.js';
+import type { HierarchicalChunk } from '../chunking/types.js';
+import { createHierarchicalChunk, createDefaultQualityScore } from '../chunking/types.js';
 import type { HybridEmbeddingService } from '../embedding/hybrid-embedding-service.js';
 import type { HybridRetrievalConfig } from '../config/vector-db-config.js';
-import { DEFAULT_HYBRID_CONFIG } from '../config/vector-db-config.js';
+import { DEFAULT_HYBRID_CONFIG, DEFAULT_PAYLOAD_STORAGE_CONFIG } from '../config/vector-db-config.js';
 
 /**
  * Hybrid search result with parent expansion
@@ -36,6 +38,10 @@ export interface HybridSearchResult {
   matchedSmallChunks: SmallChunkMatch[];
   /** Fusion statistics */
   fusionInfo?: FusionInfo | undefined;
+  /** Recovery source if chunk was recovered from Qdrant */
+  recoveredFrom?: 'qdrant_payload' | undefined;
+  /** Recovery status */
+  recoveryStatus?: 'success' | 'partial' | 'failed' | undefined;
 }
 
 /**
@@ -108,6 +114,84 @@ export class HybridSmallToBigRetriever {
     this.hierarchicalStore = hierarchicalStore;
     this.hybridEmbedding = hybridEmbedding;
     this.config = { ...DEFAULT_HYBRID_RETRIEVER_CONFIG, ...config };
+  }
+
+  /**
+   * Recover chunk from Qdrant payload when HierarchicalStore is missing data
+   * This is the fallback mechanism for data inconsistency scenarios
+   *
+   * @param chunkId - The chunk ID to recover
+   * @returns Recovered chunk or null if recovery failed
+   */
+  private async recoverFromQdrant(chunkId: string): Promise<HierarchicalChunk | undefined> {
+    if (!DEFAULT_PAYLOAD_STORAGE_CONFIG.storeContentInPayload) {
+      console.warn(`[HybridRetriever] Recovery attempted for ${chunkId} but STORE_CONTENT_IN_PAYLOAD is disabled`);
+      return undefined;
+    }
+
+    try {
+      // Try to get from TEXT_CHUNKS collection first (for small chunks)
+      let point = await this.vectorStore.getPoint(COLLECTION_NAMES.TEXT_CHUNKS, chunkId);
+
+      // If not found, try PARENT_CHUNKS (for parent chunks)
+      if (!point) {
+        point = await this.vectorStore.getPoint(COLLECTION_NAMES.PARENT_CHUNKS, chunkId);
+      }
+
+      if (!point || !point.payload) {
+        console.warn(`[HybridRetriever] Recovery failed: point ${chunkId} not found in Qdrant`);
+        return undefined;
+      }
+
+      const payload = point.payload;
+
+      // Check if content is available in payload
+      if (!payload.content) {
+        console.warn(`[HybridRetriever] Recovery partial: point ${chunkId} found but no content in payload`);
+        return undefined;
+      }
+
+      // Create a recovered chunk from payload
+      const metadata: import('../chunking/types.js').ChunkMetadata = {
+        contentType: (payload.contentType as 'text' | 'table' | 'image' | 'formula') ?? 'text',
+        boundaryConfidence: 0.5, // Default for recovered chunks
+        ...(payload.pageNumber !== undefined ? { pageNumber: payload.pageNumber } : {}),
+      };
+
+      const recoveredChunk = createHierarchicalChunk(
+        payload.content,
+        [], // Empty embedding - stored in Qdrant
+        payload.level as 'small' | 'parent',
+        payload.position ?? { start: 0, end: payload.content.length },
+        payload.documentId,
+        {
+          composite: payload.qualityScore ?? 0.5,
+          dimensions: {
+            informationDensity: 0.5,
+            repetitionRatio: 0.5,
+            semanticCompleteness: 0.5,
+            documentRelevance: 0.5,
+          },
+          evaluatedAt: new Date(),
+        },
+        metadata,
+        payload.parentId ?? undefined,
+        payload.childIds
+      );
+
+      // Use the original chunk ID instead of generating new one
+      recoveredChunk.id = chunkId;
+
+      // Add recovered chunk to HierarchicalStore temporarily
+      this.hierarchicalStore.addChunk(recoveredChunk);
+
+      console.log(`[HybridRetriever] Recovery success: chunk ${chunkId} recovered from Qdrant payload`);
+
+      return recoveredChunk;
+    } catch (error) {
+      console.error(`[HybridRetriever] Recovery failed for ${chunkId}:`, error);
+      return undefined;
+    }
   }
 
   /**
@@ -192,6 +276,7 @@ export class HybridSmallToBigRetriever {
 
   /**
    * Phase 2: Parent Expansion
+   * Includes fallback recovery from Qdrant when HierarchicalStore is missing data
    */
   private async expandToParents(smallResults: FusionResult[]): Promise<HybridSearchResult[]> {
     // Group by parentId
@@ -204,16 +289,39 @@ export class HybridSmallToBigRetriever {
     const expandedResults: HybridSearchResult[] = [];
 
     for (const [parentId, scoreInfo] of parentScores) {
-      const parentChunk = this.hierarchicalStore.getChunk(parentId);
+      let parentChunk = this.hierarchicalStore.getChunk(parentId);
+      let recoveryStatus: 'success' | 'partial' | 'failed' | undefined = undefined;
+      let recoveredFrom: 'qdrant_payload' | undefined = undefined;
+
+      // Fallback: Try to recover from Qdrant if parent chunk not found
       if (!parentChunk) {
-        console.warn(`[HybridRetriever] Parent chunk not found: ${parentId}`);
-        continue;
+        console.warn(`[HybridRetriever] Parent chunk not found in store: ${parentId}, attempting recovery from Qdrant`);
+        parentChunk = await this.recoverFromQdrant(parentId);
+
+        if (parentChunk) {
+          recoveryStatus = 'success';
+          recoveredFrom = 'qdrant_payload';
+          console.log(`[HybridRetriever] Recovery event: success for parent ${parentId}`);
+        } else {
+          recoveryStatus = 'failed';
+          console.warn(`[HybridRetriever] Recovery event: failed for parent ${parentId}, skipping result`);
+          continue; // Skip this result if recovery failed
+        }
       }
 
       // Collect matched small chunks info
       const matchedSmallChunks: SmallChunkMatch[] = [];
       for (const smallResult of scoreInfo.smallResults) {
-        const smallChunk = this.hierarchicalStore.getChunk(smallResult.id);
+        let smallChunk = this.hierarchicalStore.getChunk(smallResult.id);
+
+        // Fallback: Try to recover small chunk from Qdrant if not found
+        if (!smallChunk) {
+          smallChunk = await this.recoverFromQdrant(smallResult.id);
+          if (smallChunk) {
+            console.log(`[HybridRetriever] Recovery event: success for small chunk ${smallResult.id}`);
+          }
+        }
+
         if (smallChunk) {
           matchedSmallChunks.push({
             smallChunkId: smallResult.id,
@@ -232,6 +340,8 @@ export class HybridSmallToBigRetriever {
         parentScore: scoreInfo.score,
         method: 'hybrid_small', // Will be set by caller
         matchedSmallChunks,
+        recoveredFrom,
+        recoveryStatus,
         fusionInfo: {
           denseHits: scoreInfo.smallResults.filter(r => r.sources.includes('dense')).length,
           sparseHits: scoreInfo.smallResults.filter(r => r.sources.includes('sparse')).length,
@@ -334,10 +444,24 @@ export class HybridSmallToBigRetriever {
     const expandedResults: HybridSearchResult[] = [];
 
     for (const result of parentResults) {
-      const parentChunk = this.hierarchicalStore.getChunk(result.id);
+      let parentChunk = this.hierarchicalStore.getChunk(result.id);
+      let recoveryStatus: 'success' | 'partial' | 'failed' | undefined = undefined;
+      let recoveredFrom: 'qdrant_payload' | undefined = undefined;
+
+      // Fallback: Try to recover from Qdrant if parent chunk not found
       if (!parentChunk) {
-        console.warn(`[HybridRetriever] Parent chunk not found in fallback: ${result.id}`);
-        continue;
+        console.warn(`[HybridRetriever] Parent chunk not found in fallback: ${result.id}, attempting recovery from Qdrant`);
+        parentChunk = await this.recoverFromQdrant(result.id);
+
+        if (parentChunk) {
+          recoveryStatus = 'success';
+          recoveredFrom = 'qdrant_payload';
+          console.log(`[HybridRetriever] Recovery event: success for parent ${result.id} in fallback`);
+        } else {
+          recoveryStatus = 'failed';
+          console.warn(`[HybridRetriever] Recovery event: failed for parent ${result.id} in fallback, skipping result`);
+          continue; // Skip this result if recovery failed
+        }
       }
 
       expandedResults.push({
@@ -346,6 +470,8 @@ export class HybridSmallToBigRetriever {
         parentScore: result.score,
         method: 'fallback_parent_sparse', // Will be set by caller
         matchedSmallChunks: [], // No small chunks in fallback
+        recoveredFrom,
+        recoveryStatus,
         fusionInfo: undefined,
       });
     }

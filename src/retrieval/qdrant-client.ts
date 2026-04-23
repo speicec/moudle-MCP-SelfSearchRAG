@@ -96,20 +96,24 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
 
   private async createTextChunksCollection(): Promise<void> {
     const config = DEFAULT_COLLECTION_CONFIG.text;
+    // Use NAMED dense vector so sparse vectors work correctly
+    // When using named sparse vectors, dense vectors must also be named
     await this.client.createCollection(COLLECTION_NAMES.TEXT_CHUNKS, {
       vectors: {
-        size: config.dimension,
-        distance: 'Cosine',
-        hnsw_config: {
-          m: config.hnsw.m,
-          ef_construct: config.hnsw.efConstruct,
+        'text_dense': {
+          size: config.dimension,
+          distance: 'Cosine',
+          hnsw_config: {
+            m: config.hnsw.m,
+            ef_construct: config.hnsw.efConstruct,
+          },
         },
       },
       sparse_vectors: {
         'text_sparse': { modifier: 'idf' },
       },
     });
-    console.log(`[QdrantAdapter] Created ${COLLECTION_NAMES.TEXT_CHUNKS}`);
+    console.log(`[QdrantAdapter] Created ${COLLECTION_NAMES.TEXT_CHUNKS} with named vectors (text_dense + text_sparse)`);
   }
 
   private async createParentChunksCollection(): Promise<void> {
@@ -119,22 +123,25 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
         'parent_sparse': { modifier: 'idf' },
       },
     });
-    console.log(`[QdrantAdapter] Created ${COLLECTION_NAMES.PARENT_CHUNKS}`);
+    console.log(`[QdrantAdapter] Created ${COLLECTION_NAMES.PARENT_CHUNKS} with sparse vectors only (parent_sparse)`);
   }
 
   private async createImageChunksCollection(): Promise<void> {
     const config = DEFAULT_COLLECTION_CONFIG.image;
+    // Use named dense vector for consistency
     await this.client.createCollection(COLLECTION_NAMES.IMAGE_CHUNKS, {
       vectors: {
-        size: config.dimension,
-        distance: 'Cosine',
-        hnsw_config: {
-          m: config.hnsw.m,
-          ef_construct: config.hnsw.efConstruct,
+        'image_dense': {
+          size: config.dimension,
+          distance: 'Cosine',
+          hnsw_config: {
+            m: config.hnsw.m,
+            ef_construct: config.hnsw.efConstruct,
+          },
         },
       },
     });
-    console.log(`[QdrantAdapter] Created ${COLLECTION_NAMES.IMAGE_CHUNKS}`);
+    console.log(`[QdrantAdapter] Created ${COLLECTION_NAMES.IMAGE_CHUNKS} with named dense vector (image_dense)`);
   }
 
   async shutdown(): Promise<void> {
@@ -182,8 +189,9 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
   }
 
   async upsert(collection: string, points: VectorPoint[]): Promise<void> {
-    const isSparseOnlyCollection = collection === COLLECTION_NAMES.PARENT_CHUNKS;
-    const isTextChunksCollection = collection === COLLECTION_NAMES.TEXT_CHUNKS;
+    const isTextChunks = collection === COLLECTION_NAMES.TEXT_CHUNKS;
+    const isParentChunks = collection === COLLECTION_NAMES.PARENT_CHUNKS;
+    const isImageChunks = collection === COLLECTION_NAMES.IMAGE_CHUNKS;
 
     const qdrantPoints = points.map(p => {
       const point: any = {
@@ -191,27 +199,38 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
         payload: this.payloadToQdrant(p.payload),
       };
 
-      // Handle vector field based on collection type:
-      // - text_chunks: unnamed dense (1024d) + named sparse (text_sparse)
-      // - parent_chunks: no dense, named sparse only (parent_sparse)
-      // - image_chunks: unnamed dense (512d) only
-      if (isSparseOnlyCollection) {
-        // parent_chunks: no dense vectors, only sparse
-        // Use empty object for vector field
+      // Use single vector object with named keys for all collections
+      // This is required for named sparse vectors to work correctly
+      if (isTextChunks) {
+        // text_chunks: named dense + named sparse in single vector object
         point.vector = {};
-      } else {
-        // text_chunks / image_chunks: unnamed dense vector (plain array)
         if (p.vector) {
-          point.vector = p.vector;
+          point.vector['text_dense'] = p.vector;
         }
-      }
-
-      // Add sparse vectors in sparse_values field
-      if (p.sparseVector) {
-        const sparseName = p.payload.level === 'parent' ? 'parent_sparse' : 'text_sparse';
-        point.sparse_values = {
-          [sparseName]: p.sparseVector,
-        };
+        if (p.sparseVector) {
+          point.vector['text_sparse'] = p.sparseVector;
+        }
+      } else if (isParentChunks) {
+        // parent_chunks: sparse only, empty vector object
+        point.vector = {};
+        if (p.sparseVector) {
+          point.vector['parent_sparse'] = p.sparseVector;
+        }
+      } else if (isImageChunks) {
+        // image_chunks: named dense only
+        point.vector = {};
+        if (p.vector) {
+          point.vector['image_dense'] = p.vector;
+        }
+      } else {
+        // Dynamic collections: use default names
+        point.vector = {};
+        if (p.vector) {
+          point.vector['default_dense'] = p.vector;
+        }
+        if (p.sparseVector) {
+          point.vector['default_sparse'] = p.sparseVector;
+        }
       }
 
       return point;
@@ -241,6 +260,7 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
     if (payload.childIds !== undefined) result.childIds = payload.childIds;
     if (payload.vlmText !== undefined) result.vlmText = payload.vlmText;
     if (payload.blockType !== undefined) result.blockType = payload.blockType;
+    if (payload.content !== undefined) result.content = payload.content;
 
     return result;
   }
@@ -259,8 +279,19 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
   async searchDense(collection: string, query: SearchQuery): Promise<SearchResult[]> {
     if (!query.vector) return [];
 
+    // Determine the dense vector name based on collection
+    const denseName = collection === COLLECTION_NAMES.TEXT_CHUNKS
+      ? 'text_dense'
+      : collection === COLLECTION_NAMES.IMAGE_CHUNKS
+        ? 'image_dense'
+        : 'default_dense';
+
+    // Use NamedVector format: { name: string, vector: number[] }
     const searchParams: any = {
-      vector: query.vector,
+      vector: {
+        name: denseName,
+        vector: query.vector,
+      },
       limit: query.topK,
     };
 
@@ -277,9 +308,12 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
 
     const sparseName = collection === COLLECTION_NAMES.PARENT_CHUNKS ? 'parent_sparse' : 'text_sparse';
 
+    // Qdrant SearchRequest requires 'vector' field (NamedSparseVector format)
+    // NamedSparseVector: { name: string, vector: { indices, values } }
     const searchParams: any = {
-      sparse_vector: {
-        [sparseName]: query.sparseVector,
+      vector: {
+        name: sparseName,
+        vector: query.sparseVector,
       },
       limit: query.topK,
     };
@@ -335,6 +369,7 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
         childIds: payload.childIds as string[] | undefined,
         vlmText: payload.vlmText as string | undefined,
         blockType: payload.blockType as 'figure' | 'table' | 'formula' | undefined,
+        content: payload.content as string | undefined,
       },
       matchSource: source,
     };
@@ -365,10 +400,38 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
       const p = points[0] as any;
       const payload = p.payload as Record<string, any>;
 
+      // Parse named vectors from response
+      // vector is now an object with named keys: {text_dense: [...], text_sparse: {...}}
+      const vectorObj = p.vector as Record<string, any> | undefined;
+
+      // Determine vector names based on collection
+      const denseName = collection === COLLECTION_NAMES.TEXT_CHUNKS
+        ? 'text_dense'
+        : collection === COLLECTION_NAMES.IMAGE_CHUNKS
+          ? 'image_dense'
+          : 'default_dense';
+      const sparseName = collection === COLLECTION_NAMES.PARENT_CHUNKS
+        ? 'parent_sparse'
+        : 'text_sparse';
+
+      // Extract dense vector
+      let denseVector: number[] | undefined = undefined;
+      if (vectorObj) {
+        if (vectorObj[denseName]) {
+          denseVector = vectorObj[denseName] as number[];
+        }
+      }
+
+      // Extract sparse vector
+      let sparseVector = undefined;
+      if (vectorObj && vectorObj[sparseName]) {
+        sparseVector = vectorObj[sparseName];
+      }
+
       return {
         id: String(p.id),
-        vector: p.vector ? (Array.isArray(p.vector) ? p.vector : Object.values(p.vector)[0] as number[]) : undefined,
-        sparseVector: undefined,
+        vector: denseVector,
+        sparseVector,
         payload: {
           documentId: payload.documentId as string,
           chunkId: payload.chunkId as string,
@@ -385,6 +448,7 @@ export class QdrantVectorStoreAdapter implements VectorStoreAdapter {
           childIds: payload.childIds as string[] | undefined,
           vlmText: payload.vlmText as string | undefined,
           blockType: payload.blockType as 'figure' | 'table' | 'formula' | undefined,
+          content: payload.content as string | undefined,
         },
       };
     } catch {

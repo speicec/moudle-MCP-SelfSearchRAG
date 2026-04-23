@@ -69,6 +69,8 @@ export interface VectorPayload {
   vlmText?: string | undefined;
   /** Block type (figure, table, formula, image - for image chunks) */
   blockType?: 'figure' | 'table' | 'formula' | 'image' | undefined;
+  /** Chunk content for recovery from Qdrant (optional, configurable) */
+  content?: string | undefined;
 }
 
 /**
