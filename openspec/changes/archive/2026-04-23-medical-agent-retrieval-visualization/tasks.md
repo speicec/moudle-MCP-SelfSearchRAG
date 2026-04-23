@@ -29,10 +29,10 @@
 
 ## 6. Tests
 
-- [ ] 6.1 Update IntentAnalyzer tests - add test cases for extended contraindication detection patterns
-- [ ] 6.2 Update TemplateMatcher tests - add test cases for decision_support_with_indicator template
+- [x] 6.1 Update IntentAnalyzer tests - add test cases for extended contraindication detection patterns
+- [x] 6.2 Update TemplateMatcher tests - add test cases for decision_support_with_indicator template
 
 ## 7. Documentation
 
-- [ ] 7.1 Update medical-agent-guide.md - document new visualization output format and phases
-- [ ] 7.2 Add inline comments - explain key changes in executePlanningMode(), matchTemplate(), detectSpecialNeeds()
+- [x] 7.1 Update medical-agent-guide.md - document new visualization output format and phases
+- [x] 7.2 Add inline comments - explain key changes in executePlanningMode(), matchTemplate(), detectSpecialNeeds()
