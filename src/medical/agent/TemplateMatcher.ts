@@ -427,19 +427,22 @@ export interface TemplateMatchResult {
 
 /**
  * 匹配模板（记录所有尝试）
+ * 关键修改：新增 attempts 数组记录每个模板的匹配尝试过程
+ * 目的：让用户看到为什么某个模板被选择或拒绝，提升透明度
  */
 export function matchTemplate(
   entities: MedicalEntities,
   intentAnalysis: IntentAnalysis,
   query: string,
-  queryStrategy?: QueryStrategy
+  queryStrategy?: QueryStrategy // 新增：传递优化查询策略，确保模板DAG使用优化查询
 ): TemplateMatchResult {
-  const attempts: TemplateAttemptRecord[] = [];
+  const attempts: TemplateAttemptRecord[] = []; // 记录所有模板匹配尝试
 
   for (const template of STRUCTURED_TEMPLATES) {
     const matched = template.matchCriteria(entities, intentAnalysis);
 
-    // 记录尝试
+    // 新增：记录每个模板的尝试结果，包括拒绝原因
+    // 用户可通过可视化看到完整的模板匹配过程
     attempts.push({
       templateId: template.id,
       templateName: template.name,
@@ -448,13 +451,15 @@ export function matchTemplate(
     });
 
     if (matched) {
+      // 关键修改：传递 queryStrategy 给模板 DAG 生成器
+      // 确保模板生成的 retrieve 任务使用优化后的查询词
       const dag = template.generateDAG(entities, query, intentAnalysis, queryStrategy);
       return {
         matched: true,
         templateId: template.id,
         templateName: template.name,
         dag,
-        attempts,
+        attempts, // 返回所有尝试记录，用于可视化
       };
     }
   }

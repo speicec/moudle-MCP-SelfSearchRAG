@@ -2,7 +2,7 @@
  * AgentExecutor Integration Tests
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createAgentExecutor, AgentExecutor, ExtendedAgentConfig } from './AgentExecutor.js';
 import type { AgentContext } from './types.js';
 import type { MedicalEntities, MedicalAnswer, SourceCitation } from '../types.js';
@@ -41,6 +41,132 @@ describe('AgentExecutor Integration', () => {
       }),
     };
   };
+
+  describe('Visualization Callback', () => {
+    it('should call visualizationCallback during execution phases', async () => {
+      const callbackCalls: Array<{ phase: string; data: unknown }> = [];
+      const visualizationCallback = (phase: string, data: unknown) => {
+        callbackCalls.push({ phase, data });
+      };
+
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+      };
+
+      const executor = createAgentExecutor(config, createMockContext(), visualizationCallback);
+      await executor.run('二甲双胍用法');
+
+      // Verify callback was called for key phases
+      expect(callbackCalls.length).toBeGreaterThan(0);
+
+      // Check for input phase
+      const inputCall = callbackCalls.find(c => c.phase === 'input');
+      expect(inputCall).toBeDefined();
+      expect((inputCall?.data as any).query).toBe('二甲双胍用法');
+
+      // Check for complete phase
+      const completeCall = callbackCalls.find(c => c.phase === 'complete');
+      expect(completeCall).toBeDefined();
+    });
+
+    it('should setVisualizationCallback method work', async () => {
+      const callbackCalls: Array<{ phase: string; data: unknown }> = [];
+      const visualizationCallback = (phase: string, data: unknown) => {
+        callbackCalls.push({ phase, data });
+      };
+
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+      };
+
+      const executor = createAgentExecutor(config, createMockContext());
+      executor.setVisualizationCallback(visualizationCallback);
+      await executor.run('测试查询');
+
+      expect(callbackCalls.length).toBeGreaterThan(0);
+    });
+
+    it('should call entities callback with entity data', async () => {
+      const entitiesCalls: Array<unknown> = [];
+      const visualizationCallback = (phase: string, data: unknown) => {
+        if (phase === 'entities') {
+          entitiesCalls.push(data);
+        }
+      };
+
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+      };
+
+      const executor = createAgentExecutor(config, createMockContext(), visualizationCallback);
+      await executor.run('二甲双胍');
+
+      expect(entitiesCalls.length).toBeGreaterThan(0);
+      const entitiesData = entitiesCalls[0] as any;
+      expect(entitiesData.drugs).toBeDefined();
+    });
+
+    it('should call complexity callback in planning mode', async () => {
+      const complexityCalls: Array<unknown> = [];
+      const visualizationCallback = (phase: string, data: unknown) => {
+        if (phase === 'complexity') {
+          complexityCalls.push(data);
+        }
+      };
+
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: true,
+      };
+
+      const executor = createAgentExecutor(config, createMockContext(), visualizationCallback);
+      await executor.run('二甲双胍');
+
+      // Complexity should be assessed
+      expect(complexityCalls.length).toBeGreaterThan(0);
+    });
+
+    it('should work without visualizationCallback (optional)', async () => {
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+      };
+
+      // No callback provided
+      const executor = createAgentExecutor(config, createMockContext());
+      const result = await executor.run('二甲双胍');
+
+      expect(result.success).toBe(true);
+    });
+  });
 
   describe('ReAct mode (default)', () => {
     it('should execute ReAct mode when planning disabled', async () => {

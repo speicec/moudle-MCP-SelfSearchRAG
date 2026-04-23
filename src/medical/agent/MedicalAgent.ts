@@ -36,6 +36,7 @@ export class MedicalAgent {
   private config: AgentConfig;
   private reasoner: MedicalReasoner;
   private retrieval?: RetrievalFunction;
+  private visualizationCallback?: (phase: string, data: unknown) => void;
 
   constructor(
     llmCaller: LLMCaller,
@@ -55,6 +56,13 @@ export class MedicalAgent {
     if (retrieval !== undefined) {
       this.retrieval = retrieval;
     }
+  }
+
+  /**
+   * 设置可视化回调
+   */
+  setVisualizationCallback(cb: (phase: string, data: unknown) => void): void {
+    this.visualizationCallback = cb;
   }
 
   /**
@@ -139,7 +147,7 @@ export class MedicalAgent {
     };
 
     // 执行 Agent
-    const executor = new AgentExecutor(this.config, context);
+    const executor = new AgentExecutor(this.config, context, this.visualizationCallback);
     return await executor.run(input.query);
   }
 

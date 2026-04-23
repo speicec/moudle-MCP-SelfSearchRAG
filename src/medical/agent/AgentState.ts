@@ -156,6 +156,7 @@ export function canContinue(state: AgentState): boolean {
     state.status !== 'completed' &&
     state.status !== 'failed' &&
     !isMaxIterationsReached(state) &&
+    !state.satisfied &&
     !state.error
   );
 }

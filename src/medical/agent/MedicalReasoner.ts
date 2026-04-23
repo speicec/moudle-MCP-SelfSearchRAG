@@ -176,25 +176,30 @@ export class MedicalReasoner {
    * 解析推理决策
    */
   private parseDecision(response: string): ReasoningDecision {
-    // 简化的解析逻辑
-    const lowerResponse = response.toLowerCase();
-
+    // 精确提取 ACTION (使用正则而非includes)
+    const actionMatch = response.match(/ACTION:\s+(\w+)/i);
     let action: ReasoningDecision['action'] = 'answer';
-    if (lowerResponse.includes('retrieve') || lowerResponse.includes('检索')) {
-      action = 'retrieve';
-    } else if (lowerResponse.includes('expand') || lowerResponse.includes('扩展')) {
-      action = 'expand_query';
-    } else if (lowerResponse.includes('need_more') || lowerResponse.includes('需要更多信息')) {
-      action = 'need_more';
+
+    if (actionMatch && actionMatch[1]) {
+      const extractedAction = actionMatch[1].toLowerCase();
+      // 验证action是否合法
+      const validActions = ['retrieve', 'expand_query', 'answer', 'need_more'];
+      if (validActions.includes(extractedAction)) {
+        action = extractedAction as ReasoningDecision['action'];
+      }
     }
 
-    // 提取置信度（如果有）
-    const confidenceMatch = response.match(/confidence[:\s]+(\d+\.?\d*)/i);
-    const confidence = confidenceMatch && confidenceMatch[1] ? parseFloat(confidenceMatch[1]) : 0.7;
+    // 精确提取 CONFIDENCE
+    const confMatch = response.match(/CONFIDENCE:\s+([\d.]+)/i);
+    const confidence = confMatch && confMatch[1] ? parseFloat(confMatch[1]) : 0.5;
+
+    // 精确提取 REASON
+    const reasonMatch = response.match(/REASON:\s+(.+?)(?=CONFIDENCE|$)/is);
+    const reason = reasonMatch && reasonMatch[1] ? reasonMatch[1].trim() : response.slice(0, 200);
 
     return {
       action,
-      reason: response.slice(0, 200),
+      reason,
       confidence,
     };
   }

@@ -56,6 +56,9 @@ export interface ExtendedAgentConfig extends AgentConfig {
   enablePlanning?: boolean;
   maxReplanRounds?: number;
   // confidenceThreshold 继承自 AgentConfig，不再重复声明
+
+  // 低置信度直接检索阈值（默认 0.3）
+  lowConfidenceThreshold?: number;
 }
 
 /**
@@ -89,14 +92,37 @@ export class AgentExecutor {
   private logger: AgentLogger;
   private collector: VisualizationCollector;
   private tracer: TraceVisualizer;
+  private visualizationCallback?: (phase: string, data: unknown) => void;
 
-  constructor(config: ExtendedAgentConfig, context: AgentContext) {
+  constructor(config: ExtendedAgentConfig, context: AgentContext, visualizationCallback?: (phase: string, data: unknown) => void) {
     this.config = config;
     this.context = context;
     this.startTime = 0;
     this.logger = createAgentLogger(config.enableTraceLogging ? 'debug' : 'info');
     this.collector = createVisualizationCollector();
     this.tracer = createTraceVisualizer();
+    if (visualizationCallback !== undefined) {
+      this.visualizationCallback = visualizationCallback;
+    }
+  }
+
+  /**
+   * 获取低置信度阈值（带默认值）
+   */
+  private getLowConfidenceThreshold(): number {
+    const threshold = this.config.lowConfidenceThreshold ?? 0.3;
+    // 验证阈值范围 [0, 1]
+    if (threshold < 0 || threshold > 1) {
+      return 0.3; // 无效值使用默认
+    }
+    return threshold;
+  }
+
+  /**
+   * 设置可视化回调
+   */
+  setVisualizationCallback(cb: (phase: string, data: unknown) => void): void {
+    this.visualizationCallback = cb;
   }
 
   /**
@@ -112,6 +138,7 @@ export class AgentExecutor {
     // 收集输入阶段
     this.collector.collectInputPhase(query);
     this.tracer.collectInputPhase(query);
+    this.visualizationCallback?.('input', { query });
 
     // 选择执行模式
     const entities = this.context.extractEntities(query);
@@ -119,6 +146,25 @@ export class AgentExecutor {
     // 收集实体识别阶段
     this.collector.collectEntityMatches(entities);
     this.tracer.collectEntityRecognitionPhase(query, entities);
+    this.visualizationCallback?.('entities', entities);
+
+    // 智能判断：低置信度时跳过 Agent 循环，直接检索
+    const lowConfidenceThreshold = this.getLowConfidenceThreshold();
+    if (entities.confidence < lowConfidenceThreshold) {
+      // 收集模式选择阶段
+      this.collector.collectModeSelectionPhase('direct_retrieval', `Low confidence (${entities.confidence}) < threshold (${lowConfidenceThreshold})`);
+      this.tracer.collectModeSelectionPhase(
+        { level: 'simple', needsPlanning: false, reason: 'Low confidence', entityCount: 0, hasComparison: false, hasConditions: false, hasInteraction: false },
+        'direct_retrieval',
+        `Low confidence (${entities.confidence}) < threshold (${lowConfidenceThreshold})`
+      );
+      this.visualizationCallback?.('mode', {
+        mode: 'direct_retrieval',
+        reason: `Low confidence (${entities.confidence.toFixed(2)}) < threshold (${lowConfidenceThreshold.toFixed(2)})`,
+      });
+
+      return this.executeDirectRetrieval(query, entities);
+    }
 
     const mode = this.chooseExecutionMode(entities, query);
 
@@ -152,6 +198,7 @@ export class AgentExecutor {
         'react',
         'Planning mode disabled in config'
       );
+      this.visualizationCallback?.('mode', { mode: 'react', reason: 'Planning mode disabled in config' });
       return 'react';
     }
 
@@ -161,17 +208,20 @@ export class AgentExecutor {
     // 收集复杂度评估阶段
     this.collector.collectComplexityPhase(complexity);
     this.tracer.collectComplexityAssessmentPhase(entities, complexity);
+    this.visualizationCallback?.('complexity', complexity);
 
     if (!complexity.needsPlanning) {
       // 收集模式选择阶段
       this.collector.collectModeSelectionPhase('react', complexity.reason);
       this.tracer.collectModeSelectionPhase(complexity, 'react', complexity.reason);
+      this.visualizationCallback?.('mode', { mode: 'react', reason: complexity.reason });
       return 'react';
     }
 
     // 收集模式选择阶段
     this.collector.collectModeSelectionPhase('planning', complexity.reason);
     this.tracer.collectModeSelectionPhase(complexity, 'planning', complexity.reason);
+    this.visualizationCallback?.('mode', { mode: 'planning', reason: complexity.reason });
 
     return 'planning';
   }
@@ -180,12 +230,15 @@ export class AgentExecutor {
    * 执行 Planning 模式
    */
   private async executePlanningMode(query: string, entities: MedicalEntities): Promise<PlanningModeResult> {
-    // 0. 构建优化查询策略（在规划前完成）
+    // 关键修复：在规划前调用 buildQueryStrategy() 优化检索查询
+    // 原因：之前的实现使用硬编码的假LLM，直接返回原始query作为检索参数
+    // 修复：使用 query-planner 构建优化策略，确保所有retrieve任务使用优化后的查询词
     const queryStrategy = this.context.buildQueryStrategy(entities);
     const optimizedQuery = queryStrategy.primaryQuery;
 
     // 收集查询重写
     this.collector.collectQueryRewriting(queryStrategy);
+    this.visualizationCallback?.('query_rewrite', { primaryQuery: optimizedQuery, expandedTerms: queryStrategy.expandedTerms });
 
     this.logger.log(0, 'think', 'Query optimization', {
       originalQuery: query,
@@ -194,9 +247,11 @@ export class AgentExecutor {
     });
 
     // 1. 规划（传递优化查询策略）
+    // 关键修改：将优化后的查询传递给 plan() 和模板 DAG 生成器
+    // 所有 retrieve 任务现在使用 optimizedQuery，而非原始 query
     const planningResult = await plan(entities, query, {
       llmCall: async (prompt: string) => {
-        // 使用优化查询生成基础 DAG
+        // 假LLM实现：使用优化查询生成基础 DAG（确保检索任务使用优化词）
         return JSON.stringify({
           tasks: [
             { id: 'retrieve_1', type: 'retrieve', params: { query: optimizedQuery }, dependencies: [], priority: 1 },
@@ -207,7 +262,7 @@ export class AgentExecutor {
         });
       },
       enableLLMFallback: true,
-      queryStrategy, // 传递优化查询策略给模板
+      queryStrategy, // 传递优化查询策略给模板生成器，确保模板DAG也使用优化查询
     });
 
     if (!planningResult.success || !planningResult.dag) {
@@ -224,6 +279,8 @@ export class AgentExecutor {
     );
 
     // 收集模板匹配阶段
+    // 新增：记录模板匹配尝试过程（包括成功和失败的），用于可视化输出
+    // 用户可看到每个模板的匹配结果和拒绝原因
     const templateAttempts: TemplateAttempt[] = planningResult.templateAttempts?.map(a => ({
       templateId: a.templateId,
       templateName: a.templateName,
@@ -231,6 +288,7 @@ export class AgentExecutor {
       rejectionReason: a.rejectionReason,
     })) ?? [];
     this.collector.collectTemplatePhase(templateAttempts, planningResult.matchedTemplate);
+    this.visualizationCallback?.('template', { attempts: templateAttempts, matched: planningResult.matchedTemplate });
 
     // 2. 验证 DAG
     const validation = validateDAG(planningResult.dag);
@@ -246,6 +304,7 @@ export class AgentExecutor {
 
     // 收集 DAG 阶段
     this.collector.collectDAGPhase(dag);
+    this.visualizationCallback?.('dag', dag);
 
     // 3. 执行 DAG（支持重规划）
     const replanningHistory: ReplanningDecision[] = [];
@@ -263,6 +322,7 @@ export class AgentExecutor {
     // 收集执行阶段
     this.collector.collectExecutionPhase(executorState);
     this.tracer.collectExecutionPhase(dag, executorState);
+    this.visualizationCallback?.('execution', executorState);
 
     // 4. 重规划循环
     while (currentRound < maxRounds) {
@@ -286,6 +346,7 @@ export class AgentExecutor {
         // 执行补充任务
         executorState = await execute(dag, executionContext);
         this.collector.collectExecutionPhase(executorState);
+        this.visualizationCallback?.('execution', executorState);
       }
 
       currentRound++;
@@ -320,6 +381,19 @@ export class AgentExecutor {
    * 执行 ReAct 模式
    */
   private async executeReactMode(query: string, entities: MedicalEntities, fallbackReason?: string): Promise<AgentResult> {
+    // 0. 构建查询策略（在循环前完成）
+    const queryStrategy = this.context.buildQueryStrategy(entities);
+    this.collector.collectQueryRewriting(queryStrategy);
+    this.visualizationCallback?.('query_rewrite', {
+      primaryQuery: queryStrategy.primaryQuery,
+      expandedTerms: queryStrategy.expandedTerms
+    });
+
+    this.logger.log(0, 'think', 'Query strategy built for ReAct', {
+      primaryQuery: queryStrategy.primaryQuery,
+      expandedTerms: queryStrategy.expandedTerms,
+    });
+
     // 1. 初始化状态
     let state = createInitialState(query, entities, this.config.maxIterations);
 
@@ -403,6 +477,13 @@ export class AgentExecutor {
       }
     }
 
+    // 2.5. 设置检索结果数量（在生成回答前）
+    const finalRetrievalCount = state.retrievalResults?.length ?? 0;
+    this.collector.setRetrievalResultCount(finalRetrievalCount);
+    this.logger.log(state.iteration, 'complete', 'Final retrieval count set', {
+      count: finalRetrievalCount,
+    });
+
     // 3. 生成回答
     state = setStatus(state, 'answering');
     const answer = await this.generateAnswer(state);
@@ -431,6 +512,7 @@ export class AgentExecutor {
     // 添加可视化数据到结果
     result.visualization = this.collector.buildVisualization();
     result.executionTrace = this.tracer.buildTrace();
+    this.visualizationCallback?.('complete', result);
 
     return result;
   }
@@ -488,6 +570,76 @@ export class AgentExecutor {
     // 添加可视化数据
     result.visualization = this.collector.buildVisualization();
     result.executionTrace = this.tracer.buildTrace();
+    this.visualizationCallback?.('complete', result);
+
+    return result;
+  }
+
+  /**
+   * 执行直接检索模式
+   *
+   * 当实体识别置信度低于阈值时，跳过 Agent 循环，直接用原始查询检索
+   */
+  private async executeDirectRetrieval(query: string, entities: MedicalEntities): Promise<AgentResult> {
+    this.logger.log(0, 'think', 'Direct retrieval mode triggered', {
+      query,
+      confidence: entities.confidence,
+      threshold: this.getLowConfidenceThreshold(),
+    });
+
+    // 收集查询重写（直接使用原始查询）
+    const queryStrategy = {
+      primaryQuery: query,
+      expandedTerms: [],
+    };
+    this.collector.collectQueryRewriting(queryStrategy);
+    this.visualizationCallback?.('query_rewrite', {
+      primaryQuery: query,
+      expandedTerms: [],
+    });
+
+    // 执行检索
+    const results = await this.context.retrieval(query, {
+      topK: this.config.retrievalTopK,
+      threshold: this.config.retrievalThreshold,
+    });
+
+    this.logger.log(0, 'act', 'Direct retrieval completed', {
+      resultCount: results.length,
+    });
+
+    // 执行安全检查
+    const safetyAssessment = performSafetyCheck(entities, []);
+
+    // 生成答案
+    const answer = await this.context.reasoner.generateAnswer(
+      entities,
+      results,
+      safetyAssessment,
+      [],
+    );
+
+    // 构建结果
+    const result: AgentResult = {
+      answer,
+      entities,
+      stats: {
+        iterations: 0,
+        actionsExecuted: 1,
+        retrievalCalls: 1,
+        llmCalls: 1,
+        totalTimeMs: Date.now() - this.startTime,
+      },
+      reasoningTrace: [],
+      success: results.length > 0,
+      satisfied: results.length > 0,
+      retrievalResults: results,
+    };
+
+    // 添加可视化数据
+    result.visualization = this.collector.buildVisualization();
+    result.executionTrace = this.tracer.buildTrace();
+    this.visualizationCallback?.('complete', result);
 
     return result;
   }
@@ -717,6 +869,10 @@ export class AgentExecutor {
 /**
  * 创建 AgentExecutor
  */
-export function createAgentExecutor(config: ExtendedAgentConfig, context: AgentContext): AgentExecutor {
-  return new AgentExecutor(config, context);
+export function createAgentExecutor(
+  config: ExtendedAgentConfig,
+  context: AgentContext,
+  visualizationCallback?: (phase: string, data: unknown) => void
+): AgentExecutor {
+  return new AgentExecutor(config, context, visualizationCallback);
 }

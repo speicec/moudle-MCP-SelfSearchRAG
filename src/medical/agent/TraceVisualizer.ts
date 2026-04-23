@@ -46,7 +46,7 @@ export interface ExecutionTrace {
   phases: TraceNode[];
   summary: {
     totalDurationMs: number;
-    executionMode: 'react' | 'planning';
+    executionMode: 'react' | 'planning' | 'direct_retrieval';
     totalTaskCount: number;
     replanningRounds: number;
     llmCallCount: number;
@@ -62,7 +62,7 @@ export class TraceVisualizer {
   private currentPhaseStart: number = 0;
   private currentPhaseName: TracePhase | null = null;
   private llmCallCount: number = 0;
-  private executionMode: 'react' | 'planning' = 'react';
+  private executionMode: 'react' | 'planning' | 'direct_retrieval' = 'react';
   private totalTaskCount: number = 0;
   private replanningRounds: number = 0;
 
@@ -155,7 +155,7 @@ export class TraceVisualizer {
    */
   collectModeSelectionPhase(
     complexity: ComplexityAssessment,
-    mode: 'react' | 'planning',
+    mode: 'react' | 'planning' | 'direct_retrieval',
     reason: string
   ): void {
     this.executionMode = mode;

@@ -224,7 +224,17 @@ function detectDecisionSupport(query: string, entities: MedicalEntities): boolea
 
 /**
  * 检测决策支持禁忌意图（扩展）
- * 识别"能否使用"、"可以服用"等背后的禁忌检查需求
+ * 关键新增：识别"能否使用"、"可以服用"等背后的禁忌检查需求
+ *
+ * 背景：之前只检测"禁忌"关键词，无法识别决策支持查询的禁忌检查意图
+ * 修复：扩展模式匹配，识别决策支持表达背后的安全检查需求
+ *
+ * 覆盖模式：
+ * - "能否使用"："eGFR=35能否使用二甲双胍" → 禁忌检查
+ * - "可以服用"："肾功能不全可以服用二甲双胍吗" → 禁忌检查
+ * - "能不能用"："eGFR=30能不能用二甲双胍" → 禁忌检查
+ * - "是否可以"："胰腺炎病史是否可以使用利拉鲁肽" → 禁忌检查
+ * - "适合用"："肾病患者适合用SGLT2抑制剂吗" → 禁忌检查
  */
 function detectDecisionSupportContraindication(query: string, entities: MedicalEntities): boolean {
   const decisionContraindicationPatterns = [
@@ -239,7 +249,8 @@ function detectDecisionSupportContraindication(query: string, entities: MedicalE
     /可以.*用/,
   ];
 
-  // 模式匹配 + 有药物或指标实体 → 禁忌检查需求
+  // 关键逻辑：模式匹配 + 有相关实体（药物或指标） → 禁忌检查需求
+  // 防止：没有实体时的误检测（如"能否使用"本身无语境）
   const hasPattern = decisionContraindicationPatterns.some(p => p.test(query));
   const hasRelevantEntities = entities.drugs.length >= 1 || entities.indicators.length >= 1;
 
@@ -360,6 +371,7 @@ function predictRetrievalNeeds(entities: MedicalEntities, queryTypes: QueryType[
 
 /**
  * 检测特殊需求
+ * 关键修改：扩展禁忌意图检测，不再仅依赖"禁忌"关键词
  */
 function detectSpecialNeeds(
   entities: MedicalEntities,
@@ -369,10 +381,12 @@ function detectSpecialNeeds(
   return {
     calculateIndicator: entities.indicators.some(i => i.value !== undefined),
     checkInteraction: entities.drugs.length >= 2 || /相互作用|合用/.test(query),
-    // 扩展：检测"禁忌"关键词或决策支持禁忌意图
+    // 关键扩展：检测"禁忌"关键词或决策支持禁忌意图
+    // 新增 detectDecisionSupportContraindication() 函数
+    // 目的：识别"能否使用"、"可以服用"等背后的禁忌检查需求
     checkContraindication: /禁忌/.test(query)
       || entities.relations.some(r => r.type === 'contraindication')
-      || detectDecisionSupportContraindication(query, entities),
+      || detectDecisionSupportContraindication(query, entities), // 新增：决策支持禁忌检测
     requireYearFilter: detectYearFilter(query),
     yearValue: yearValue ?? undefined,
   };
