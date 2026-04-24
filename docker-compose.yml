@@ -32,11 +32,33 @@ services:
       - QDRANT__LOG_LEVEL=INFO
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:6333/health')\" || exit 1"]
+      test: ["CMD-SHELL", "timeout 5 bash -c 'cat < /dev/tcp/0.0.0.0/6333 > /dev/null' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - rag-network
+
+  # ============================================================================
+  # Redis 服务
+  # - 用于 Bull 队列的任务调度
+  # - 评估任务异步处理
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: rag-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - rag-network
 
@@ -47,8 +69,8 @@ services:
   # ============================================================================
   ocr-service:
     build:
-      context: ./ocr
-      dockerfile: Dockerfile
+      context: ./scripts
+      dockerfile: Dockerfile.ocr
     container_name: rag-ocr
     ports:
       - "8080:8080"
@@ -59,7 +81,7 @@ services:
       - ocr_models:/root/.paddleocr
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-sf", "http://0.0.0.0:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -96,6 +118,8 @@ services:
       - EMBEDDING_MODE=hybrid
       - LOCAL_TEXT_MODEL=bge-m3
       - LOCAL_MULTIMODAL_MODEL=clip-vit-base-patch32
+      - HF_ENDPOINT=https://hf-mirror.com                    # Hugging Face 国内镜像
+      - LOCAL_FILES_ONLY=true                                 # 强制使用本地模型
 
       # LLM API (从宿主机环境变量或.env传入)
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
@@ -119,23 +143,73 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - HOST=0.0.0.0
+
+      # Redis 配置 (评估队列)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - EVALUATION_CONCURRENCY=${EVALUATION_CONCURRENCY:-2}
+      - EVALUATION_ATTEMPTS=${EVALUATION_ATTEMPTS:-3}
     volumes:
       - ./data:/app/data                    # 文档存储持久化
-      - hf_cache:/root/.cache/huggingface   # 嵌入模型缓存
+      # 模型已内置到镜像中，无需挂载 volume
     depends_on:
       qdrant:
         condition: service_started
       ocr-service:
         condition: service_started
+      redis:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      test: ["CMD", "curl", "-sf", "http://0.0.0.0:3001/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 180s  # 嵌入模型加载需要时间
     networks:
       - rag-network
+
+  # ============================================================================
+  # Evaluation Worker 服务
+  # - 处理异步评估任务
+  # - 可扩展 (replicas: 2)
+  # ============================================================================
+  evaluation-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-evaluation-worker
+    command: node dist/workers/evaluation-worker.js
+    # Worker 不是 HTTP 服务，禁用继承的健康检查
+    healthcheck:
+      disable: true
+    environment:
+      # Redis 配置
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - EVALUATION_CONCURRENCY=${EVALUATION_CONCURRENCY:-2}
+      - EVALUATION_ATTEMPTS=${EVALUATION_ATTEMPTS:-3}
+
+      # LLM API (用于评估)
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-reasoner}
+
+      # 存储配置
+      - TRACE_DB_PATH=/app/data/traces.db
+
+      # 服务配置
+      - NODE_ENV=production
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - rag-network
+    deploy:
+      replicas: 1  # 可根据负载调整
 
 # ==============================================================================
 # 数据卷定义
@@ -145,13 +219,16 @@ volumes:
     name: rag_qdrant_data
     driver: local
 
+  redis_data:
+    name: rag_redis_data
+    driver: local
+    # driver: local
+
   ocr_models:
     name: rag_ocr_models
     driver: local
 
-  hf_cache:
-    name: rag_hf_cache
-    driver: local
+  # hf_cache 已移除 - 模型内置到镜像中
 
 # ==============================================================================
 # 网络定义
