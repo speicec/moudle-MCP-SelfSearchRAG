@@ -1,10 +1,11 @@
 import React, { useEffect } from 'react';
 import { useStatsStore } from '../store';
-import { Check, Lightbulb, BarChart3, Database, Zap, FileText, Search, Clock } from 'lucide-react';
+import { Check, Lightbulb, BarChart3, Database, Zap, FileText, Search, Clock, Activity } from 'lucide-react';
 import Skeleton, { SkeletonGroup } from './ui/Skeleton';
 import StatCard from './stats/StatCard';
 import QualityDistributionChart from './stats/QualityDistributionChart';
 import StageTimeChart from './stats/StageTimeChart';
+import EvaluationCard from './stats/EvaluationCard';
 import { Card, CardContent } from './ui/card';
 
 /**
@@ -17,12 +18,14 @@ const StatsDashboard: React.FC = () => {
     retrievalStats,
     chunkStats,
     stageTimeDistribution,
+    evaluationMetrics,
     lastUpdate,
     isLoading,
     error,
     pipelinePerformance,
     retrievalPerformance,
     chunkQualityPerformance,
+    evaluationPerformance,
     fetchStats,
   } = useStatsStore();
 
@@ -188,6 +191,23 @@ const StatsDashboard: React.FC = () => {
             <StageTimeChart distribution={stageTimeDistribution} />
           </CardContent>
         </Card>
+      </div>
+
+      {/* Evaluation Metrics (新增) */}
+      <div>
+        <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center">
+          <Activity className="w-4 h-4 mr-2" />
+          医疗评估指标
+        </h3>
+        <EvaluationCard
+          avgOverall={evaluationMetrics.avgOverall}
+          dimensionScores={evaluationMetrics.dimensionScores}
+          layerScores={evaluationMetrics.layerScores}
+          riskDistribution={evaluationMetrics.riskDistribution}
+          totalEvaluations={evaluationMetrics.totalEvaluations}
+          lastEvaluationTime={evaluationMetrics.lastEvaluationTime}
+          performance={evaluationPerformance}
+        />
       </div>
     </div>
   );

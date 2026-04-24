@@ -141,6 +141,14 @@ export class HybridEmbeddingService {
       env.remoteHost = process.env.HF_ENDPOINT;
       console.log(`[HybridEmbedding] Using HuggingFace mirror: ${env.remoteHost}`);
     }
+
+    // Prefer local models to avoid network issues
+    // When models are cached, use them without remote requests
+    env.allowLocalModels = true;
+    if (process.env.LOCAL_FILES_ONLY === 'true') {
+      env.allowRemoteModels = false;
+      console.log('[HybridEmbedding] Local-only mode: no remote downloads');
+    }
   }
 
   /**
@@ -169,9 +177,11 @@ export class HybridEmbeddingService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(`[HybridEmbedding] Failed to load model: ${errorMessage}`);
+      console.warn('[HybridEmbedding] Service will run in degraded mode without embeddings');
       this.initError = new Error(`Failed to initialize hybrid embedding model: ${errorMessage}`);
       this.initializing = false;
-      throw this.initError;
+      // Don't throw - allow service to continue without embeddings
+      return;
     }
 
     this.initializing = false;
@@ -181,7 +191,10 @@ export class HybridEmbeddingService {
    * Ensure model is initialized
    */
   private async ensureInitialized(): Promise<void> {
-    if (this.initError) throw this.initError;
+    if (this.initError) {
+      console.warn('[HybridEmbedding] Embedding unavailable due to initialization error');
+      throw this.initError;
+    }
     if (!this.initialized) await this.initialize();
     if (!this.extractor) throw new Error('Hybrid embedding model not initialized');
   }

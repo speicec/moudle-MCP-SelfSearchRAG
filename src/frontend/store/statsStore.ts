@@ -41,6 +41,52 @@ export interface StageTimeDistribution {
 }
 
 /**
+ * Evaluation dimension scores (8 dimensions)
+ */
+export interface EvaluationDimensionScores {
+  faithfulness: number;
+  contextRelevance: number;
+  answerRelevance: number;
+  medicalAccuracy: number;
+  safetyAssessment: number;
+  evidenceTraceability: number;
+  completeness: number;
+  terminologyAccuracy: number;
+}
+
+/**
+ * Layer scores (3 layers)
+ */
+export interface LayerScores {
+  layer1: number; // 基础 RAGAS
+  layer2: number; // 医疗核心
+  layer3: number; // 医疗增强
+}
+
+/**
+ * Risk level distribution
+ */
+export interface RiskLevelDistribution {
+  safe: number;
+  caution: number;
+  warning: number;
+  danger: number;
+  total: number;
+}
+
+/**
+ * Evaluation metrics (新增)
+ */
+export interface EvaluationMetrics {
+  avgOverall: number;
+  dimensionScores: EvaluationDimensionScores;
+  layerScores: LayerScores;
+  riskDistribution: RiskLevelDistribution;
+  totalEvaluations: number;
+  lastEvaluationTime: number | null;
+}
+
+/**
  * Statistics update event data from WebSocket
  */
 export interface StatsUpdateEvent {
@@ -48,6 +94,7 @@ export interface StatsUpdateEvent {
   retrievalStats: RetrievalStats;
   chunkStats: ChunkStats;
   stageTimeDistribution: StageTimeDistribution;
+  evaluationMetrics?: EvaluationMetrics;
 }
 
 /**
@@ -64,6 +111,7 @@ export interface StatsState {
   retrievalStats: RetrievalStats;
   chunkStats: ChunkStats;
   stageTimeDistribution: StageTimeDistribution;
+  evaluationMetrics: EvaluationMetrics; // 新增
 
   // Last update timestamp
   lastUpdate: number | null;
@@ -74,10 +122,12 @@ export interface StatsState {
   pipelinePerformance: PerformanceIndicator;
   retrievalPerformance: PerformanceIndicator;
   chunkQualityPerformance: PerformanceIndicator;
+  evaluationPerformance: PerformanceIndicator; // 新增
 
   // Actions
   fetchStats: () => Promise<void>;
   handleStatsUpdate: (stats: StatsUpdateEvent) => void;
+  handleEvaluationUpdate: (metrics: EvaluationMetrics) => void; // 新增
   reset: () => void;
 }
 
@@ -109,6 +159,34 @@ const defaultStageTimeDistribution: StageTimeDistribution = {
   index: 0,
 };
 
+const defaultEvaluationMetrics: EvaluationMetrics = {
+  avgOverall: 0,
+  dimensionScores: {
+    faithfulness: 0,
+    contextRelevance: 0,
+    answerRelevance: 0,
+    medicalAccuracy: 0,
+    safetyAssessment: 0,
+    evidenceTraceability: 0,
+    completeness: 0,
+    terminologyAccuracy: 0,
+  },
+  layerScores: {
+    layer1: 0,
+    layer2: 0,
+    layer3: 0,
+  },
+  riskDistribution: {
+    safe: 0,
+    caution: 0,
+    warning: 0,
+    danger: 0,
+    total: 0,
+  },
+  totalEvaluations: 0,
+  lastEvaluationTime: null,
+};
+
 /**
  * Compute performance indicator based on metrics
  */
@@ -136,17 +214,26 @@ function computeChunkQualityPerformance(stats: ChunkStats): PerformanceIndicator
   return 'needs_optimization';
 }
 
+function computeEvaluationPerformance(metrics: EvaluationMetrics): PerformanceIndicator {
+  if (metrics.totalEvaluations === 0) return 'good';
+  if (metrics.avgOverall >= 0.85) return 'excellent';
+  if (metrics.avgOverall >= 0.70) return 'good';
+  return 'needs_optimization';
+}
+
 export const useStatsStore = create<StatsState>((set) => ({
   pipelineStats: defaultPipelineStats,
   retrievalStats: defaultRetrievalStats,
   chunkStats: defaultChunkStats,
   stageTimeDistribution: defaultStageTimeDistribution,
+  evaluationMetrics: defaultEvaluationMetrics,
   lastUpdate: null,
   isLoading: false,
   error: null,
   pipelinePerformance: 'good',
   retrievalPerformance: 'good',
   chunkQualityPerformance: 'good',
+  evaluationPerformance: 'good',
 
   fetchStats: async () => {
     set({ isLoading: true, error: null });
@@ -162,9 +249,11 @@ export const useStatsStore = create<StatsState>((set) => ({
         retrievalStats: stats.retrievalStats,
         chunkStats: stats.chunkStats,
         stageTimeDistribution: stats.stageTimeDistribution,
+        evaluationMetrics: stats.evaluationMetrics ?? defaultEvaluationMetrics,
         pipelinePerformance: computePipelinePerformance(stats.pipelineStats),
         retrievalPerformance: computeRetrievalPerformance(stats.retrievalStats),
         chunkQualityPerformance: computeChunkQualityPerformance(stats.chunkStats),
+        evaluationPerformance: stats.evaluationMetrics ? computeEvaluationPerformance(stats.evaluationMetrics) : 'good',
         lastUpdate: Date.now(),
         isLoading: false,
       });
@@ -179,9 +268,19 @@ export const useStatsStore = create<StatsState>((set) => ({
       retrievalStats: stats.retrievalStats,
       chunkStats: stats.chunkStats,
       stageTimeDistribution: stats.stageTimeDistribution,
+      evaluationMetrics: stats.evaluationMetrics ?? defaultEvaluationMetrics,
       pipelinePerformance: computePipelinePerformance(stats.pipelineStats),
       retrievalPerformance: computeRetrievalPerformance(stats.retrievalStats),
       chunkQualityPerformance: computeChunkQualityPerformance(stats.chunkStats),
+      evaluationPerformance: stats.evaluationMetrics ? computeEvaluationPerformance(stats.evaluationMetrics) : 'good',
+      lastUpdate: Date.now(),
+    });
+  },
+
+  handleEvaluationUpdate: (metrics: EvaluationMetrics) => {
+    set({
+      evaluationMetrics: metrics,
+      evaluationPerformance: computeEvaluationPerformance(metrics),
       lastUpdate: Date.now(),
     });
   },
@@ -192,12 +291,14 @@ export const useStatsStore = create<StatsState>((set) => ({
       retrievalStats: defaultRetrievalStats,
       chunkStats: defaultChunkStats,
       stageTimeDistribution: defaultStageTimeDistribution,
+      evaluationMetrics: defaultEvaluationMetrics,
       lastUpdate: null,
       isLoading: false,
       error: null,
       pipelinePerformance: 'good',
       retrievalPerformance: 'good',
       chunkQualityPerformance: 'good',
+      evaluationPerformance: 'good',
     });
   },
 }));

@@ -46,10 +46,10 @@ const ChatWindow: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* Messages area */}
       <div
-        className="flex-1 overflow-y-auto p-4 min-h-[300px]"
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4"
         role="log"
         aria-label="对话历史"
         aria-live="polite"
