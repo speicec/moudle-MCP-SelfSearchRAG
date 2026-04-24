@@ -8,27 +8,139 @@ Medical Agent 是一个专门针对内分泌领域医学知识检索的智能 Ag
 
 ### 最近更新 (2026-04-23)
 
-修复了 Agent 执行中的关键 Bug：
-- ✅ 循环终止优化：`satisfied=true` 后立即终止循环
-- ✅ ReAct 模式添加 queryRewriting：确保可视化数据完整
-- ✅ 空查询保护：防止检索崩溃，返回 400 错误
-- ✅ LLM 解析优化：精确提取 ACTION 和 CONFIDENCE
-- ✅ 统计显示修复：正确显示检索数量
+**新增优化特性**：
+- ✅ **规则化决策系统**：替代 LLM decide() 调用，减少 LLM 调用次数
+- ✅ **早终止机制**：绝对禁忌直接返回答案，跳过完整 ReAct 循环
+- ✅ **增强证据评估**：新增权威度、时效性、一致性维度
 
 **性能影响**：
-- 迭代次数：从 3 轨降至 1-2 轨（减少 67%）
-- 执行时间：从 ~330 秒降至 ~10 秒（预期）
-- LLM 调用：从 3 次降至 1 次（减少 67%）
+- LLM 调用：从 5-15 次降至 1-3 次（减少 80%+）
+- 执行时间：从 10-40 秒降至 2-10 秒（预期）
+- 绝对禁忌场景：立即返回（0 LLM 调用）
+
+## 规则化决策系统
+
+### 概述
+
+原有的 `decide()` 阶段需要调用 LLM 判断是否满足回答条件。现在使用规则化决策替代，大幅减少 LLM 调用。
+
+### 满足规则（按优先级）
+
+1. **检索数量阈值** (`retrieval_count`)：检索结果 ≥ 3 条时满足
+2. **高相似度阈值** (`high_similarity`)：最高相似度 > 0.7 时满足
+3. **实体覆盖率** (`entity_coverage`)：检索内容覆盖 ≥ 80% 实体时满足
+4. **绝对禁忌命中** (`absolute_contraindication`)：SafetyLayer 检测到绝对禁忌时满足
+
+### 配置选项
+
+```typescript
+interface RuleThresholds {
+  minRetrievalCount: number;      // 默认 3
+  minSimilarityScore: number;     // 默认 0.7
+  minEntityCoverage: number;      // 默认 0.8
+}
+
+// Agent 配置
+const config = {
+  useRuleBasedDecide: true,       // 启用规则化决策（默认 true）
+  ruleThresholds: {               // 自定义阈值
+    minRetrievalCount: 5,
+    minSimilarityScore: 0.85,
+  }
+};
+```
+
+## 早终止机制
+
+### 概述
+
+当 SafetyLayer 检测到绝对禁忌时，直接生成答案，跳过整个 ReAct 循环。
+
+### 执行流程
+
+```
+输入 → 实体识别 → SafetyLayer → [绝对禁忌?] → 立即返回答案
+                                    ↓ 否
+                            ReAct 循环 → 最终答案
+```
+
+### 适用场景
+
+- 禁忌症查询：如 "肾功能不全患者能用二甲双胍吗"
+- 相互作用查询：如 "二甲双胍和西咪替丁能合用吗"
+- 危险组合检测
+
+### 性能收益
+
+- **LLM 调用**：0 次（直接返回）
+- **响应时间**：< 1 秒（无需检索）
+
+## 增强证据评估
+
+### 新增评估维度
+
+原有的证据评估仅考虑文献类型和 GRADE 等级。新增以下维度：
+
+| 维度 | 权重 | 说明 |
+|------|------|------|
+| GRADE 等级 | 40% | 原有维度，证据质量等级 |
+| 来源权威度 | 20% | 国际/国家/地方指南权重 |
+| 时效性 | 20% | 文献年份线性衰减 |
+| 一致性 | 10% | 多来源结论一致性 |
+| 适用性 | 10% | 与查询场景匹配度 |
+
+### 权威度分类
+
+| 级别 | 权重 | 示例来源 |
+|------|------|----------|
+| 国际 | 1.0 | ADA, KDIGO, ESC, ATA, EASD |
+| 国家 | 0.8 | CDS, CSH, CETA, 中国指南 |
+| 地方 | 0.6 | 其他来源 |
+
+### 时效性计算
+
+```typescript
+// 线性衰减公式
+weight = 1.0 - (yearsSincePublication * 0.05);
+// 最低权重 0.5
+// 无年份信息默认 0.7
+```
+
+### 一致性检测
+
+通过关键词冲突检测：
+- 正向词：推荐、建议、可用、首选
+- 反向词：禁用、不推荐、避免、慎用
+
+当来源间存在冲突时，一致性分数降低。
+
+### 综合评分
+
+```typescript
+compositeScore =
+  GRADE_WEIGHT * gradeScore +
+  AUTHORITY_WEIGHT * authorityWeight +
+  TIME_WEIGHT * timeWeight +
+  CONSISTENCY_WEIGHT * consistencyScore +
+  APPLICABILITY_WEIGHT * applicabilityScore;
+```
+
+### 低质量证据警告
+
+当证据综合评分 < 0.5 或一致性分数 < 0.5 时，自动添加警告：
+- "证据质量较低，建议查阅权威指南确认"
+- "不同来源存在证据分歧，请综合判断"
 
 ## 功能特性
 
 - **医学实体识别**：自动识别疾病、药物、指标等专业术语
 - **智能检索策略**：基于实体构建查询策略，支持术语扩展
 - **查询重写优化**：ReAct 和 Planning 模式都支持查询策略构建
-- **ReAct 循环**：多轮推理决策，`satisfied` 状态立即终止
+- **ReAct 循环**：多轮推理决策，规则化决策减少 LLM 调用
 - **Planning 模式**：任务 DAG 分解，并行检索，动态调整
 - **LLM 推理**：使用 Claude/OpenAI/Ollama 进行临床推理
 - **结构化回答**：包含结论、详细说明、证据等级、来源引用
+- **早终止**：绝对禁忌场景立即返回
 
 ## MCP 工具
 
@@ -694,7 +806,139 @@ this.collector.setRetrievalResultCount(finalRetrievalCount);
 - **检索结果不相关**：上传更多领域相关的医学指南
 - **实体识别错误**：检查术语词典配置 `config/synonyms.json`
 
+## RAG 评估体系集成
+
+### 概述
+
+Medical Agent 已集成 8 维度 RAG 评估体系，自动评估每次查询的回答质量。
+
+### 评估维度
+
+| 维度 | 说明 | 权重 |
+|------|------|------|
+| Faithfulness (忠实度) | 答案是否忠实于检索内容，检测幻觉 | 20% |
+| Context Relevance | 检索内容是否与问题相关 | 10% |
+| Answer Relevance | 答案是否回答了问题 | 10% |
+| Medical Accuracy | 术语使用正确性、指南符合度 | 20% |
+| Safety Assessment | 禁忌检测、相互作用风险 | 20% |
+| Evidence Traceability | 来源标注、引用准确性 | 10% |
+| Completeness | 实体覆盖、问题覆盖 | 5% |
+| Terminology Accuracy | 医疗术语使用准确性 | 5% |
+
+### 风险等级
+
+| 等级 | 阈值 | 处理建议 |
+|------|------|----------|
+| Safe | 综合分数 ≥ 85%, 安全 ≥ 85% | 正常发布 |
+| Caution | 综合分数 ≥ 70%, 安全 ≥ 70% | 添加提示标记 |
+| Warning | 综合分数 < 70% 或 安全 < 70% | 需人工审核 |
+| Danger | 安全评估 < 50% | 阻止发布 |
+
+### 异步评估模式
+
+评估任务通过 Redis + Bull 队列异步执行，不阻塞 Agent 主流程。
+
+```typescript
+// Agent 执行后自动提交评估任务
+import { createEvaluationQueue } from './queue/EvaluationQueue.js';
+import { createTraceContext } from './tracing/TraceContext.js';
+
+// 创建追踪上下文
+const traceContext = createTraceContext();
+traceContext.setQuery(query, queryRewriting.primaryQuery);
+traceContext.setEntities(entities);
+traceContext.recordRetrieval(retrievalResults);
+traceContext.setAnswer(answer, confidence);
+traceContext.complete();
+
+// 提交评估任务（不阻塞，< 50ms）
+const queue = await createEvaluationQueue();
+const job = await queue.addJob(traceContext.build(), 'normal');
+
+// Agent 立即返回，评估在后台执行
+```
+
+### 评估结果查询
+
+```typescript
+// 查询评估状态
+const status = await queue.getJobStatus(job.id);
+
+// 查询队列统计
+const stats = await queue.getQueueStats();
+console.log('等待:', stats.waiting);
+console.log('执行:', stats.active);
+console.log('完成:', stats.completed);
+```
+
+### 追踪数据持久化
+
+追踪数据存储在 SQLite (`./data/traces.db`)：
+
+```typescript
+import { createTraceStorage } from './tracing/TraceStorage.js';
+
+const storage = await createTraceStorage();
+
+// 查询最近追踪记录
+const traces = await storage.getRecentTraces(100);
+
+// 查询评估趋势
+const trends = await storage.getEvaluationTrends('7d');
+```
+
+### WebSocket 实时推送
+
+评估进度和结果通过 WebSocket 实时推送：
+
+```typescript
+// 前端订阅
+import { useStatsStore } from './store/statsStore';
+
+const { evaluationMetrics, handleEvaluationUpdate } = useStatsStore();
+
+// WebSocket 自动处理 'metrics:update' 事件
+```
+
+### 配置选项
+
+```typescript
+// 自定义权重配置
+const customConfig = {
+  weights: {
+    faithfulness: 0.25,
+    safetyAssessment: 0.25,
+    medicalAccuracy: 0.20,
+    // ... 其他维度
+  },
+  thresholds: {
+    faithfulness: 0.75,
+    safetyCritical: 0.60,
+  },
+};
+```
+
+### Docker 部署
+
+```bash
+# 启动所有服务（Redis + Worker）
+docker-compose up -d
+
+# 扩展 Worker 数量
+docker-compose up -d --scale evaluation-worker=3
+
+# 查看 Worker 日志
+docker-compose logs -f evaluation-worker
+```
+
+### 监控界面
+
+访问 `/admin/queues` 查看：
+- 任务状态 (pending/active/completed/failed)
+- 任务详情
+- 手动重试/删除任务
+
 ---
 
 **文档版本**: 2026-04-23
-**最后更新**: Agent 检索循环 Bug 修复
+**最后更新**: RAG 评估体系集成
