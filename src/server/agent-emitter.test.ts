@@ -236,6 +236,121 @@ describe('AgentEmitter', () => {
       expect(event.agentResult?.totalTimeMs).toBe(1500);
       expect(event.agentResult?.iterations).toBe(2);
     });
+
+    it('should broadcast agent:complete event with evidence grade data', () => {
+      const result: AgentResult = {
+        success: true,
+        satisfied: true,
+        answer: {
+          conclusion: { text: '测试答案', confidence: 'high' },
+          details: { points: [] },
+          evidenceGrade: { grade: 'A', sourceType: 'guideline' },
+          sources: [],
+          warnings: [],
+        },
+        stats: {
+          iterations: 2,
+          actionsExecuted: 3,
+          retrievalCalls: 2,
+          llmCalls: 3,
+          totalTimeMs: 1500,
+        },
+        visualization: {
+          retrievalResultCount: 5,
+        } as any,
+        // Evidence data
+        overallEvidenceGrade: 'A',
+        evidenceStatistics: {
+          gradeDistribution: { A: 2, B: 1, C: 0, D: 0 },
+          averageCompositeScore: 0.85,
+          conflictDetected: false,
+        },
+      };
+
+      agentEmitter.emitComplete(result);
+
+      expect(mockWsHandler.broadcast).toHaveBeenCalledTimes(1);
+      const event = mockWsHandler.broadcast.mock.calls[0][0] as PipelineEvent;
+      expect(event.type).toBe('agent:complete');
+      expect(event.agentResult?.overallEvidenceGrade).toBe('A');
+      expect(event.agentResult?.evidenceStatistics?.gradeDistribution).toEqual({ A: 2, B: 1, C: 0, D: 0 });
+      expect(event.agentResult?.evidenceStatistics?.averageCompositeScore).toBe(0.85);
+      expect(event.agentResult?.evidenceStatistics?.conflictDetected).toBe(false);
+    });
+  });
+
+  describe('emitEvidenceEvaluated', () => {
+    it('should broadcast evidence:evaluated event with GRADE data', () => {
+      const evidenceEvaluation = [
+        {
+          literatureType: 'rct',
+          grade: 'A',
+          isCurrent: true,
+          year: 2024,
+          sourceAuthority: 'international',
+          authorityWeight: 1.0,
+          timeWeight: 0.95,
+          compositeScore: 0.95,
+          chunkIndex: 0,
+        },
+        {
+          literatureType: 'meta_analysis',
+          grade: 'A',
+          isCurrent: true,
+          year: 2023,
+          sourceAuthority: 'international',
+          authorityWeight: 1.0,
+          timeWeight: 0.85,
+          compositeScore: 0.92,
+          chunkIndex: 1,
+        },
+      ];
+
+      agentEmitter.emitEvidenceEvaluated(evidenceEvaluation, 'A');
+
+      expect(mockWsHandler.broadcast).toHaveBeenCalledTimes(1);
+      const event = mockWsHandler.broadcast.mock.calls[0][0] as PipelineEvent;
+      expect(event.type).toBe('evidence:evaluated');
+      expect(event.evidenceEvaluation).toHaveLength(2);
+      expect(event.evidenceEvaluation?.[0]?.literatureType).toBe('rct');
+      expect(event.evidenceEvaluation?.[0]?.grade).toBe('A');
+      expect(event.evidenceEvaluation?.[0]?.chunkIndex).toBe(0);
+      expect(event.overallEvidenceGrade).toBe('A');
+    });
+
+    it('should broadcast evidence:evaluated event with mixed grades', () => {
+      const evidenceEvaluation = [
+        {
+          literatureType: 'guideline',
+          grade: 'A',
+          isCurrent: true,
+          year: 2024,
+          chunkIndex: 0,
+        },
+        {
+          literatureType: 'observational',
+          grade: 'B',
+          isCurrent: true,
+          year: 2022,
+          chunkIndex: 1,
+        },
+        {
+          literatureType: 'case_report',
+          grade: 'D',
+          isCurrent: false,
+          year: 2018,
+          chunkIndex: 2,
+        },
+      ];
+
+      agentEmitter.emitEvidenceEvaluated(evidenceEvaluation, 'B');
+
+      expect(mockWsHandler.broadcast).toHaveBeenCalledTimes(1);
+      const event = mockWsHandler.broadcast.mock.calls[0][0] as PipelineEvent;
+      expect(event.type).toBe('evidence:evaluated');
+      expect(event.evidenceEvaluation).toHaveLength(3);
+      expect(event.overallEvidenceGrade).toBe('B');
+    });
   });
 
   describe('createAgentEmitter', () => {

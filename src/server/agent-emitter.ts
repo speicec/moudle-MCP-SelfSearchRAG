@@ -204,8 +204,40 @@ export class AgentEmitter {
         totalTimeMs: result.stats.totalTimeMs,
         iterations: result.stats.iterations,
         llmCallCount: result.stats.llmCalls,
+        // Evidence fields (new)
+        overallEvidenceGrade: result.overallEvidenceGrade,
+        evidenceStatistics: result.evidenceStatistics,
       },
     });
+  }
+
+  /**
+   * 发送证据评估事件 (new)
+   */
+  emitEvidenceEvaluated(
+    evidenceEvaluation: Array<{
+      literatureType: 'rct' | 'meta_analysis' | 'guideline' | 'observational' | 'case_report' | 'expert_opinion';
+      grade: 'A' | 'B' | 'C' | 'D';
+      isCurrent: boolean;
+      year?: number | undefined;
+      sourceGuideline?: string | undefined;
+      expirationWarning?: string | undefined;
+      sourceAuthority?: 'international' | 'national' | 'local' | undefined;
+      authorityWeight?: number | undefined;
+      timeWeight?: number | undefined;
+      consistencyScore?: number | undefined;
+      compositeScore?: number | undefined;
+      chunkIndex?: number | undefined;
+    }>,
+    overallGrade?: 'A' | 'B' | 'C' | 'D' | undefined
+  ): void {
+    const event: PipelineEvent = {
+      type: 'evidence:evaluated',
+      timestamp: Date.now(),
+      evidenceEvaluation,
+      overallEvidenceGrade: overallGrade,
+    };
+    this.wsHandler.broadcast(event);
   }
 }
 

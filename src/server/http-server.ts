@@ -9,6 +9,10 @@ import { DEFAULT_HTTP_SERVER_CONFIG } from './types.js';
 import { documentRoutes } from './routes/documents.js';
 import { chatRoutes } from './routes/chat.js';
 import { statsRoutes } from './routes/stats.js';
+import { alertRoutes } from './routes/alerts.js';
+import { reviewRoutes } from './routes/review.js';
+import { queueRoutes } from './routes/queue.js';
+import { scalerRoutes } from './routes/scaler.js';
 import { WebSocketHandler } from './websocket-handler.js';
 import { HierarchicalStore } from '../chunking/hierarchical-store.js';
 import { ImageStore, createImageStore } from '../chunking/image-store.js';
@@ -22,6 +26,7 @@ import { createImageEmbeddingService } from '../embedding/image-embedding-servic
 import { llmGenerationService } from './services/LLMGenerationService.js';
 import type { LLMCaller } from '../config/llm-config.js';
 import { syncStores } from './storage-sync.js';
+import { createTraceStorage } from '../tracing/TraceStorage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -191,6 +196,23 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
   await fastify.register(chatRoutes, { prefix: '/api/chat' });
   await fastify.register(statsRoutes, { prefix: '/api/stats' });
 
+  // Initialize TraceStorage for alert and review queue functionality
+  const traceStorage = await createTraceStorage('./data/traces.db');
+  fastify.decorate('traceStorage', traceStorage);
+  fastify.log.info('TraceStorage initialized for alerts and review queue');
+
+  // Register alert routes
+  await fastify.register(alertRoutes, { prefix: '/api/alerts' });
+
+  // Register review routes
+  await fastify.register(reviewRoutes, { prefix: '/api/review' });
+
+  // Register queue routes (for queue health monitoring)
+  await fastify.register(queueRoutes, { prefix: '/api/queue' });
+
+  // Register scaler routes (for autoscaler status and control)
+  await fastify.register(scalerRoutes, { prefix: '/api/scaler' });
+
   // Create stats aggregation service and start periodic emission
   const statsService = createStatsAggregationService(fastify, hierarchicalStore, 5000);
   statsService.start();
@@ -227,14 +249,14 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
     };
   });
 
-  return { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter };
+  return { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter, traceStorage };
 }
 
 /**
  * Start HTTP server
  */
 export async function startHttpServer(config: Partial<HttpServerConfig> = {}): Promise<void> {
-  const { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter } = await createHttpServer(config);
+  const { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter, traceStorage } = await createHttpServer(config);
   const finalConfig = { ...DEFAULT_HTTP_SERVER_CONFIG, ...config };
 
   // Store wsHandler, hierarchicalStore, and imageStore globally for pipeline emitter access
@@ -242,17 +264,26 @@ export async function startHttpServer(config: Partial<HttpServerConfig> = {}): P
     wsHandler: WebSocketHandler;
     hierarchicalStore: HierarchicalStore;
     imageStore: ImageStore;
+    traceStorage: typeof traceStorage;
   }).wsHandler = wsHandler;
   (globalThis as unknown as {
     wsHandler: WebSocketHandler;
     hierarchicalStore: HierarchicalStore;
     imageStore: ImageStore;
+    traceStorage: typeof traceStorage;
   }).hierarchicalStore = hierarchicalStore;
   (globalThis as unknown as {
     wsHandler: WebSocketHandler;
     hierarchicalStore: HierarchicalStore;
     imageStore: ImageStore;
+    traceStorage: typeof traceStorage;
   }).imageStore = imageStore;
+  (globalThis as unknown as {
+    wsHandler: WebSocketHandler;
+    hierarchicalStore: HierarchicalStore;
+    imageStore: ImageStore;
+    traceStorage: typeof traceStorage;
+  }).traceStorage = traceStorage;
 
   try {
     await fastify.listen({ port: finalConfig.port, host: finalConfig.host });
