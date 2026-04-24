@@ -492,6 +492,8 @@ docker-compose logs -f evaluation-worker
 | 04-20 | 检索升级 | Qdrant 向量库、Hybrid 检索、层级存储同步 |
 | 04-21~22 | Agent 集成 | Medical Agent、Safety Layer、DAG 编排 |
 | 04-23 | 性能优化 | 规则化决策、早终止、8 维度评估系统 |
+| 04-24 | 存储可靠性 | HierarchicalStore-Qdrant 同步修复、Fallback 恢复机制、存储健康检查 API |
+| 04-24 | 元数据提取 | PDF 元数据提取、年份推断、医疗指南来源识别、SourceCitation 人类可读标题显示 |
 
 ---
 
@@ -503,6 +505,7 @@ docker-compose logs -f evaluation-worker
 | [rag-evaluation-guide.md](docs/rag-evaluation-guide.md) | RAG 评估体系使用指南 |
 | [rag-evaluation-system-evolution.md](docs/rag-evaluation-system-evolution.md) | 评估系统架构演进 |
 | [hybrid-retrieval.md](docs/hybrid-retrieval.md) | Hybrid 检索详细说明 |
+| [document-metadata.md](docs/document-metadata.md) | 文档元数据提取系统 |
 | [architecture-diagrams.md](docs/architecture-diagrams.md) | 系统架构图 |
 | [interview-qa.md](docs/interview-qa.md) | 技术面试问答 |
 

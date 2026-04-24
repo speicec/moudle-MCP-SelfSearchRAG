@@ -172,13 +172,15 @@ services:
   # ============================================================================
   # Evaluation Worker 服务
   # - 处理异步评估任务
-  # - 可扩展 (replicas: 2)
+  # - 可扩展 (replicas: 2, concurrency: 4)
+  # - 告警系统 P0 配置: 提升 Worker 处理能力
   # ============================================================================
   evaluation-worker:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rag-evaluation-worker
+    # 移除 container_name 以支持多副本
+    # container_name: rag-evaluation-worker
     command: node dist/workers/evaluation-worker.js
     # Worker 不是 HTTP 服务，禁用继承的健康检查
     healthcheck:
@@ -187,8 +189,9 @@ services:
       # Redis 配置
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - EVALUATION_CONCURRENCY=${EVALUATION_CONCURRENCY:-2}
+      - EVALUATION_CONCURRENCY=${EVALUATION_CONCURRENCY:-4}  # P0: 提升并发数
       - EVALUATION_ATTEMPTS=${EVALUATION_ATTEMPTS:-3}
+      - EVALUATION_RATE_LIMIT=${EVALUATION_RATE_LIMIT:-0}    # P0: 移除速率限制
 
       # LLM API (用于评估)
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
@@ -209,7 +212,7 @@ services:
     networks:
       - rag-network
     deploy:
-      replicas: 1  # 可根据负载调整
+      replicas: 2  # P0: 默认 2 个副本
 
 # ==============================================================================
 # 数据卷定义
