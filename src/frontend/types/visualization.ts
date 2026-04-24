@@ -5,6 +5,48 @@
  */
 
 /**
+ * Literature type for GRADE evaluation
+ */
+export type LiteratureType = 'rct' | 'meta_analysis' | 'guideline' | 'observational' | 'case_report' | 'expert_opinion';
+
+/**
+ * GRADE level
+ */
+export type GradeLevel = 'A' | 'B' | 'C' | 'D';
+
+/**
+ * Source authority level
+ */
+export type SourceAuthorityLevel = 'international' | 'national' | 'local';
+
+/**
+ * Evidence evaluation result (GRADE)
+ */
+export interface EvidenceEvaluation {
+  literatureType: LiteratureType;
+  grade: GradeLevel;
+  isCurrent: boolean;
+  year?: number;
+  sourceGuideline?: string;
+  expirationWarning?: string;
+  sourceAuthority?: SourceAuthorityLevel;
+  authorityWeight?: number;
+  timeWeight?: number;
+  consistencyScore?: number;
+  compositeScore?: number;
+  chunkIndex?: number;  // Index of the corresponding retrieval result
+}
+
+/**
+ * Evidence statistics
+ */
+export interface EvidenceStatistics {
+  gradeDistribution: Record<GradeLevel, number>;
+  averageCompositeScore: number;
+  conflictDetected: boolean;
+}
+
+/**
  * Entity match from Agent entity recognition
  */
 export interface EntityMatch {
@@ -101,6 +143,9 @@ export interface AgentResultSummary {
   totalTimeMs: number;
   iterations?: number;
   llmCallCount?: number;
+  // Evidence fields (new)
+  overallEvidenceGrade?: GradeLevel;
+  evidenceStatistics?: EvidenceStatistics;
 }
 
 /**

@@ -14,7 +14,23 @@ import {
   XCircle,
   Sparkles,
   Hash,
+  ShieldCheck,
+  AlertCircle,
 } from 'lucide-react';
+
+/**
+ * GRADE level type
+ */
+type GradeLevel = 'A' | 'B' | 'C' | 'D';
+
+/**
+ * Evidence statistics from backend
+ */
+interface EvidenceStatistics {
+  gradeDistribution: Record<GradeLevel, number>;
+  averageCompositeScore: number;
+  conflictDetected: boolean;
+}
 
 interface Source {
   smallChunkId?: string;
@@ -28,6 +44,20 @@ interface Source {
     documentTitle?: string;  // Human-readable document title
     documentYear?: number;   // Publication year
   };
+  // GRADE evidence evaluation (new)
+  evidenceEvaluation?: {
+    literatureType: 'rct' | 'meta_analysis' | 'guideline' | 'observational' | 'case_report' | 'expert_opinion';
+    grade: GradeLevel;
+    isCurrent: boolean;
+    year?: number;
+    sourceGuideline?: string;
+    expirationWarning?: string;
+    sourceAuthority?: 'international' | 'national' | 'local';
+    authorityWeight?: number;
+    timeWeight?: number;
+    consistencyScore?: number;
+    compositeScore?: number;
+  };
 }
 
 interface AnswerCardProps {
@@ -39,6 +69,9 @@ interface AnswerCardProps {
   timestamp?: number;
   streaming?: boolean;
   isUser?: boolean;
+  // Evidence summary fields (new)
+  overallEvidenceGrade?: GradeLevel;
+  evidenceStatistics?: EvidenceStatistics;
 }
 
 /**
@@ -60,6 +93,8 @@ const AnswerCard: React.FC<AnswerCardProps> = ({
   timestamp,
   streaming = false,
   isUser = false,
+  overallEvidenceGrade,
+  evidenceStatistics,
 }) => {
   const [thinkingExpanded, setThinkingExpanded] = React.useState(false);
   const [sourcesExpanded, setSourcesExpanded] = React.useState(false);
@@ -203,6 +238,7 @@ const AnswerCard: React.FC<AnswerCardProps> = ({
                     similarityScore: source.similarityScore ?? 0,
                     sourceDocumentId: source.sourceDocumentId,
                     metadata: source.metadata,
+                    evidenceEvaluation: source.evidenceEvaluation,
                   }}
                   index={idx}
                 />
@@ -212,9 +248,39 @@ const AnswerCard: React.FC<AnswerCardProps> = ({
         </div>
       )}
 
-      {/* Footer */}
+      {/* Footer with Evidence Summary */}
       <div className="clinical-answer-footer">
         <div className="clinical-answer-meta">
+          {/* Overall evidence grade */}
+          {overallEvidenceGrade && (
+            <div className={`clinical-answer-grade-badge ${overallEvidenceGrade}`}>
+              <ShieldCheck className="w-3 h-3" />
+              <span>GRADE {overallEvidenceGrade}</span>
+            </div>
+          )}
+          {/* Grade distribution */}
+          {evidenceStatistics && (
+            <div className="clinical-answer-grade-distribution">
+              {(['A', 'B', 'C', 'D'] as GradeLevel[]).map(grade => {
+                const count = evidenceStatistics.gradeDistribution[grade];
+                if (count > 0) {
+                  return (
+                    <span key={grade} className={`clinical-grade-count ${grade}`}>
+                      {grade}: {count}
+                    </span>
+                  );
+                }
+                return null;
+              })}
+            </div>
+          )}
+          {/* Conflict warning */}
+          {evidenceStatistics?.conflictDetected && (
+            <div className="clinical-answer-conflict-warning">
+              <AlertCircle className="w-3 h-3" />
+              <span>证据存在冲突</span>
+            </div>
+          )}
           {iterationCount !== undefined && (
             <div className="clinical-answer-meta-item">
               <Activity className="w-3 h-3" />

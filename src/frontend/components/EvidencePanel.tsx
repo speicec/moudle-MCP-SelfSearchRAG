@@ -9,12 +9,43 @@ import {
   Hash,
   Copy,
   Check,
+  Globe,
+  Flag,
+  Building,
+  Clock,
 } from 'lucide-react';
+
+/**
+ * Literature types for GRADE evaluation
+ */
+type LiteratureType = 'rct' | 'meta_analysis' | 'guideline' | 'observational' | 'case_report' | 'expert_opinion';
+
+/**
+ * Source authority levels
+ */
+type SourceAuthorityLevel = 'international' | 'national' | 'local';
 
 /**
  * Evidence Quality Levels - Clinical lab result style
  */
 type EvidenceQuality = 'A' | 'B' | 'C' | 'D';
+
+/**
+ * GRADE Evidence Evaluation (from backend)
+ */
+interface EvidenceEvaluation {
+  literatureType: LiteratureType;
+  grade: EvidenceQuality;
+  isCurrent: boolean;
+  year?: number;
+  sourceGuideline?: string;
+  expirationWarning?: string;
+  sourceAuthority?: SourceAuthorityLevel;
+  authorityWeight?: number;
+  timeWeight?: number;
+  consistencyScore?: number;
+  compositeScore?: number;
+}
 
 interface EvidenceResult {
   smallChunkId: string;
@@ -31,7 +62,30 @@ interface EvidenceResult {
     documentTitle?: string;  // Human-readable document title
     documentYear?: number;   // Publication year
   };
+  // GRADE evidence evaluation (new)
+  evidenceEvaluation?: EvidenceEvaluation;
 }
+
+/**
+ * Literature type labels
+ */
+const LITERATURE_TYPE_LABELS: Record<LiteratureType, string> = {
+  rct: 'RCT 研究',
+  meta_analysis: 'Meta 分析',
+  guideline: '临床指南',
+  observational: '观察研究',
+  case_report: '病例报告',
+  expert_opinion: '专家意见',
+};
+
+/**
+ * Authority level labels and icons
+ */
+const AUTHORITY_CONFIG: Record<SourceAuthorityLevel, { label: string; icon: React.ElementType }> = {
+  international: { label: '国际', icon: Globe },
+  national: { label: '国家', icon: Flag },
+  local: { label: '本地', icon: Building },
+};
 
 /**
  * Calculate evidence quality grade based on similarity
@@ -45,6 +99,36 @@ function getEvidenceQuality(score: number): EvidenceQuality {
   if (score >= 0.70) return 'B';
   if (score >= 0.50) return 'C';
   return 'D';
+}
+
+/**
+ * Get grade from backend GRADE evaluation, fallback to similarityScore
+ * Priority: backend GRADE > similarityScore threshold
+ */
+function getGradeFromEvaluation(result: EvidenceResult): EvidenceQuality {
+  // If backend GRADE is available, use it
+  if (result.evidenceEvaluation?.grade) {
+    return result.evidenceEvaluation.grade;
+  }
+  // Fallback to similarityScore threshold
+  return getEvidenceQuality(result.similarityScore);
+}
+
+/**
+ * Check if result has GRADE evaluation data
+ */
+function hasGradeEvaluation(result: EvidenceResult): boolean {
+  return result.evidenceEvaluation !== undefined;
+}
+
+/**
+ * Check if result has time decay warning
+ */
+function hasTimeDecayWarning(result: EvidenceResult): boolean {
+  const evaluation = result.evidenceEvaluation;
+  if (!evaluation) return false;
+  // Time weight below 0.7 or has expiration warning
+  return (evaluation.timeWeight !== undefined && evaluation.timeWeight < 0.7) || evaluation.expirationWarning !== undefined;
 }
 
 function getQualityConfig(quality: EvidenceQuality) {
@@ -82,6 +166,9 @@ function getQualityConfig(quality: EvidenceQuality) {
  *
  * Design: Clinical lab report aesthetic
  * - Evidence quality grading (A/B/C/D)
+ * - GRADE literature type badge
+ * - Authority level indicator
+ * - Time decay warning
  * - Sample ID style numbering
  * - Confidence bar visualization
  * - Source document tracking
@@ -98,12 +185,24 @@ const EvidenceCard: React.FC<{
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Use GRADE evaluation if available, fallback to similarity
   const quality = useMemo(
-    () => getEvidenceQuality(result.similarityScore),
-    [result.similarityScore]
+    () => getGradeFromEvaluation(result),
+    [result]
   );
   const qualityConfig = getQualityConfig(quality);
   const QualityIcon = qualityConfig.icon;
+
+  // GRADE-specific data
+  const hasGRADE = hasGradeEvaluation(result);
+  const literatureTypeLabel = result.evidenceEvaluation?.literatureType
+    ? LITERATURE_TYPE_LABELS[result.evidenceEvaluation.literatureType]
+    : null;
+  const authorityConfig = result.evidenceEvaluation?.sourceAuthority
+    ? AUTHORITY_CONFIG[result.evidenceEvaluation.sourceAuthority]
+    : null;
+  const AuthorityIcon = authorityConfig?.icon;
+  const hasTimeWarning = hasTimeDecayWarning(result);
 
   // Generate sample-style ID
   const sampleId = `EV-${String(index + 1).padStart(3, '0')}`;
@@ -163,15 +262,45 @@ const EvidenceCard: React.FC<{
             </span>
           </div>
 
-          {/* Quality badge */}
+          {/* Quality badge with GRADE type */}
           {showQualityBadge && (
-            <div className={`clinical-evidence-quality-badge ${qualityConfig.color}`}>
-              <QualityIcon className="w-3 h-3" />
-              <span className="clinical-evidence-quality-grade">{quality}</span>
+            <div className="clinical-evidence-quality-badge-container">
+              <div className={`clinical-evidence-quality-badge ${qualityConfig.color}`}>
+                <QualityIcon className="w-3 h-3" />
+                <span className="clinical-evidence-quality-grade">{quality}</span>
+              </div>
+              {/* GRADE literature type badge */}
+              {hasGRADE && literatureTypeLabel && (
+                <div className="clinical-evidence-grade-type-badge">
+                  <span>{literatureTypeLabel}</span>
+                </div>
+              )}
+              {/* Authority indicator */}
+              {hasGRADE && authorityConfig && AuthorityIcon && (
+                <div className={`clinical-evidence-authority-badge ${result.evidenceEvaluation?.sourceAuthority}`}>
+                  <AuthorityIcon className="w-3 h-3" />
+                  <span>{authorityConfig.label}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
+
+      {/* Time decay warning */}
+      {hasTimeWarning && (
+        <div className="clinical-evidence-time-warning">
+          <Clock className="w-3 h-3" />
+          <span>
+            {result.evidenceEvaluation?.expirationWarning ?? '证据时效性降低'}
+            {result.evidenceEvaluation?.timeWeight && (
+              <span className="clinical-evidence-time-weight">
+                (时效权重: {result.evidenceEvaluation.timeWeight.toFixed(2)})
+              </span>
+            )}
+          </span>
+        </div>
+      )}
 
       {/* Toggle button */}
       <button
@@ -220,6 +349,7 @@ const EvidenceCard: React.FC<{
                 <span className="clinical-evidence-meta-label">质量评级</span>
                 <span className="clinical-evidence-meta-value">
                   {quality} - {qualityConfig.description}
+                  {hasGRADE && <span className="clinical-evidence-grade-source"> (GRADE)</span>}
                 </span>
               </div>
               <div className="clinical-evidence-meta-item">
@@ -228,6 +358,54 @@ const EvidenceCard: React.FC<{
                   {(result.similarityScore * 100).toFixed(1)}%
                 </span>
               </div>
+              {/* GRADE-specific metadata */}
+              {hasGRADE && (
+                <>
+                  <div className="clinical-evidence-meta-item">
+                    <span className="clinical-evidence-meta-label">文献类型</span>
+                    <span className="clinical-evidence-meta-value">
+                      {literatureTypeLabel ?? '未知'}
+                    </span>
+                  </div>
+                  {result.evidenceEvaluation?.sourceAuthority && (
+                    <div className="clinical-evidence-meta-item">
+                      <span className="clinical-evidence-meta-label">权威级别</span>
+                      <span className="clinical-evidence-meta-value">
+                        {authorityConfig?.label ?? result.evidenceEvaluation.sourceAuthority}
+                        {result.evidenceEvaluation.authorityWeight && (
+                          <span className="clinical-evidence-meta-weight">
+                            (权重: {result.evidenceEvaluation.authorityWeight.toFixed(2)})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                  {result.evidenceEvaluation?.compositeScore !== undefined && (
+                    <div className="clinical-evidence-meta-item">
+                      <span className="clinical-evidence-meta-label">综合评分</span>
+                      <span className="clinical-evidence-meta-value">
+                        {(result.evidenceEvaluation.compositeScore * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                  {result.evidenceEvaluation?.timeWeight !== undefined && (
+                    <div className="clinical-evidence-meta-item">
+                      <span className="clinical-evidence-meta-label">时效权重</span>
+                      <span className="clinical-evidence-meta-value">
+                        {(result.evidenceEvaluation.timeWeight * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                  {result.evidenceEvaluation?.consistencyScore !== undefined && (
+                    <div className="clinical-evidence-meta-item">
+                      <span className="clinical-evidence-meta-label">一致性评分</span>
+                      <span className="clinical-evidence-meta-value">
+                        {(result.evidenceEvaluation.consistencyScore * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Content preview */}
@@ -270,7 +448,6 @@ const EvidenceCard: React.FC<{
     </motion.div>
   );
 };
-
 /**
  * EvidencePanel - Container for multiple evidence cards
  *
@@ -290,26 +467,37 @@ const EvidencePanel: React.FC<{
 }) => {
   const [sortBy, setSortBy] = useState<'quality' | 'score'>('score');
 
-  // Calculate statistics
+  // Calculate statistics - use GRADE when available
   const stats = useMemo(() => {
     const qualityCounts = { A: 0, B: 0, C: 0, D: 0 };
     results.forEach(r => {
-      qualityCounts[getEvidenceQuality(r.similarityScore)]++;
+      // Use GRADE evaluation if available, fallback to similarity
+      qualityCounts[getGradeFromEvaluation(r)]++;
     });
     const avgScore = results.length > 0
       ? results.reduce((sum, r) => sum + r.similarityScore, 0) / results.length
       : 0;
-    return { qualityCounts, avgScore };
+
+    // Calculate average compositeScore from GRADE data
+    const gradeResults = results.filter(r => r.evidenceEvaluation?.compositeScore !== undefined);
+    const avgCompositeScore = gradeResults.length > 0
+      ? gradeResults.reduce((sum, r) => sum + (r.evidenceEvaluation?.compositeScore ?? 0), 0) / gradeResults.length
+      : null;
+
+    // Check if any results have GRADE data
+    const hasGradeData = results.some(r => hasGradeEvaluation(r));
+
+    return { qualityCounts, avgScore, avgCompositeScore, hasGradeData };
   }, [results]);
 
-  // Sort results
+  // Sort results - use GRADE when available
   const sortedResults = useMemo(() => {
     return [...results].sort((a, b) => {
       if (sortBy === 'score') {
         return b.similarityScore - a.similarityScore;
       }
-      return getEvidenceQuality(b.similarityScore).localeCompare(
-        getEvidenceQuality(a.similarityScore)
+      return getGradeFromEvaluation(b).localeCompare(
+        getGradeFromEvaluation(a)
       );
     });
   }, [results, sortBy]);
@@ -348,6 +536,22 @@ const EvidencePanel: React.FC<{
                 {Math.round(stats.avgScore * 100)}%
               </span>
             </div>
+            {/* Average compositeScore from GRADE */}
+            {stats.avgCompositeScore !== null && (
+              <div className="clinical-evidence-stat-item">
+                <span className="clinical-evidence-stat-label">平均综合评分</span>
+                <span className="clinical-evidence-stat-value">
+                  {Math.round(stats.avgCompositeScore * 100)}%
+                </span>
+              </div>
+            )}
+            {/* GRADE indicator */}
+            {stats.hasGradeData && (
+              <div className="clinical-evidence-grade-indicator">
+                <ShieldCheck className="w-3 h-3" />
+                <span>GRADE</span>
+              </div>
+            )}
           </div>
         )}
       </div>
