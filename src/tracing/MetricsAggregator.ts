@@ -12,6 +12,8 @@ import type {
   EvaluationTrendData,
   RiskLevel,
 } from './types.js';
+import { AlertHandler, type EvaluationResultInput } from '../alert/AlertHandler.js';
+import type { AlertEvent } from '../alert/types.js';
 
 /**
  * 风险等级分布
@@ -41,6 +43,8 @@ export class MetricsAggregator {
   private storage: TraceStorage;
   private broadcastFn?: (event: AggregationEvent) => void;
   private comprehensiveBroadcastFn?: (metrics: ComprehensiveMetrics) => void;
+  private alertHandler?: AlertHandler;
+  private alertBroadcastFn?: (event: { type: string; alert: AlertEvent }) => void;
 
   constructor(storage: TraceStorage) {
     this.storage = storage;
@@ -58,6 +62,28 @@ export class MetricsAggregator {
    */
   setComprehensiveBroadcast(fn: (metrics: ComprehensiveMetrics) => void): void {
     this.comprehensiveBroadcastFn = fn;
+  }
+
+  /**
+   * 设置 AlertHandler
+   *
+   * 任务 2.6.1: 在 MetricsAggregator 中集成 AlertHandler
+   */
+  setAlertHandler(handler: AlertHandler): void {
+    this.alertHandler = handler;
+  }
+
+  /**
+   * 设置告警广播函数
+   *
+   * 任务 2.6.3: 实现 'alert:new' WebSocket 事件类型
+   */
+  setAlertBroadcast(fn: (event: { type: string; alert: AlertEvent }) => void): void {
+    this.alertBroadcastFn = fn;
+    // 同时设置到 AlertHandler
+    if (this.alertHandler) {
+      this.alertHandler.setBroadcast(fn);
+    }
   }
 
   /**
@@ -183,6 +209,8 @@ export class MetricsAggregator {
 
   /**
    * 推送实时更新
+   *
+   * 任务 2.6.2: 修改 broadcastUpdate() 方法触发告警检查
    */
   broadcastUpdate(traceId: string, evaluation?: {
     overallScore: number;
@@ -195,22 +223,44 @@ export class MetricsAggregator {
     durationMs: number;
     llmCallCount: number;
   }): void {
-    if (!this.broadcastFn) return;
+    if (this.broadcastFn) {
+      const evaluationData = evaluation ? {
+        overallScore: evaluation.overallScore,
+        faithfulness: evaluation.faithfulness,
+        contextRelevance: evaluation.contextRelevance,
+        answerRelevance: evaluation.answerRelevance,
+      } : undefined;
 
-    const evaluationData = evaluation ? {
-      overallScore: evaluation.overallScore,
-      faithfulness: evaluation.faithfulness,
-      contextRelevance: evaluation.contextRelevance,
-      answerRelevance: evaluation.answerRelevance,
-    } : undefined;
+      this.broadcastFn({
+        type: 'metrics:update',
+        traceId,
+        ...(evaluationData && { evaluation: evaluationData }),
+        ...(trace && { trace }),
+        timestamp: Date.now(),
+      });
+    }
+  }
 
-    this.broadcastFn({
-      type: 'metrics:update',
-      traceId,
-      ...(evaluationData && { evaluation: evaluationData }),
-      ...(trace && { trace }),
-      timestamp: Date.now(),
-    });
+  /**
+   * 检查评估结果并触发告警
+   *
+   * 任务 2.6.2: 在评估完成后触发告警检查
+   */
+  async checkAndAlert(result: EvaluationResultInput): Promise<AlertEvent[]> {
+    if (!this.alertHandler) {
+      return [];
+    }
+
+    const alerts = await this.alertHandler.checkAndAlert(result);
+
+    // 广播告警事件
+    for (const alert of alerts) {
+      if (this.alertBroadcastFn) {
+        this.alertBroadcastFn({ type: 'alert:new', alert });
+      }
+    }
+
+    return alerts;
   }
 
   /**
