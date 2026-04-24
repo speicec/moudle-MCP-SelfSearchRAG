@@ -269,8 +269,38 @@ export class MedicalReasoner {
       warnings: [
         '本回答仅供参考，不构成医疗建议',
         '请咨询专业医生后再做决定',
+        ...this.getLowQualityWarnings(evidenceEvaluation),
       ],
     };
+  }
+
+  /**
+   * 获取低质量证据警告
+   */
+  private getLowQualityWarnings(evidenceEvaluation?: EvidenceEvaluation[]): string[] {
+    if (!evidenceEvaluation || evidenceEvaluation.length === 0) {
+      return [];
+    }
+
+    // 检查最低综合评分
+    const minCompositeScore = Math.min(
+      ...evidenceEvaluation.map(e => e.compositeScore ?? 0.5)
+    );
+
+    if (minCompositeScore < 0.5) {
+      return ['证据质量较低，建议查阅权威指南确认'];
+    }
+
+    // 检查一致性冲突
+    const minConsistency = Math.min(
+      ...evidenceEvaluation.map(e => e.consistencyScore ?? 1.0)
+    );
+
+    if (minConsistency < 0.5) {
+      return ['不同来源存在证据分歧，请综合判断'];
+    }
+
+    return [];
   }
 
   /**

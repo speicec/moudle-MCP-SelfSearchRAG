@@ -66,15 +66,26 @@ if (typeof globalThis.Path2D === 'undefined') {
 // Load environment variables from .env file
 import 'dotenv/config';
 
+// Global error handlers to prevent process crash
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  console.error('[Server] Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit - log and continue
+});
+
+process.on('uncaughtException', (error: Error) => {
+  console.error('[Server] Uncaught Exception:', error);
+  // Don't exit immediately - log and allow graceful handling
+});
+
 import { startHttpServer } from '../server/http-server.js';
 
-// Parse command line arguments
+// Parse command line arguments and environment variables
 const args = process.argv.slice(2);
 const portArg = args.find(a => a.startsWith('--port='));
 const hostArg = args.find(a => a.startsWith('--host='));
 
-const port = portArg ? parseInt(portArg.split('=')[1] ?? '3001', 10) : 3001;
-const host = hostArg?.split('=')[1] ?? 'localhost';
+const port = portArg ? parseInt(portArg.split('=')[1] ?? '3001', 10) : parseInt(process.env.PORT ?? '3001', 10);
+const host = hostArg?.split('=')[1] ?? process.env.HOST ?? 'localhost';
 
 console.log('Starting RAG HTTP+WebSocket server...');
 console.log(`Port: ${port}`);

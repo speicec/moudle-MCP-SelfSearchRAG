@@ -4,7 +4,7 @@
  * 测试完整医学查询流程，模拟真实临床场景
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createMedicalAgent } from './agent/MedicalAgent.js';
 import type { LLMCaller } from '../config/llm-config.js';
 import type { MedicalQueryInput } from './types.js';
@@ -282,6 +282,222 @@ Grade C
       expect(result.stats.iterations).toBeGreaterThan(0);
       expect(result.stats.totalTimeMs).toBeGreaterThan(0);
       expect(result.reasoningTrace.length).toBeGreaterThan(0);
+    });
+  });
+});
+
+// ==================== Optimization Integration Tests ====================
+
+describe('Medical Agent Optimization Integration', () => {
+  /**
+   * LLM call counter
+   */
+  let llmCallCount: number;
+
+  beforeEach(() => {
+    llmCallCount = 0;
+  });
+
+  /**
+   * 创建计数 LLM - 统计每次调用
+   */
+  const createCountingLLM = (): LLMCaller => {
+    return vi.fn(async (prompt: string) => {
+      llmCallCount++;
+
+      // 思考阶段
+      if (prompt.includes('ACTION:') && prompt.includes('决策下一步')) {
+        return 'ACTION: retrieve\nREASON: 首次检索获取相关医学文档\nCONFIDENCE: 0.7';
+      }
+
+      // 决策阶段（如果仍然调用LLM）
+      if (prompt.includes('SATISFIED') || prompt.includes('判断是否满足')) {
+        return 'SATISFIED - 已有足够的检索结果来回答问题';
+      }
+
+      // 回答阶段
+      if (prompt.includes('## 结论')) {
+        return `## 结论
+基于检索结果的分析结论
+
+## 详细说明
+- 相关要点
+
+## 证据等级
+Grade B
+
+## 来源引用
+1. ADA Standards 2024
+
+## 注意事项
+- 本回答仅供参考`;
+      }
+
+      return 'Mock response';
+    });
+  };
+
+  /**
+   * 创建 AgentContext 用于 AgentExecutor 测试
+   */
+  const createMockExecutorContext = (retrievalFn: any): any => {
+    return {
+      retrieval: retrievalFn,
+      reasoner: {
+        reasonClinical: async () => ({ action: 'retrieve', confidence: 0.7, reason: '需要检索', needsMoreInfo: true }),
+        decide: async () => true,
+        generateAnswer: async () => ({
+          conclusion: { text: 'Mock answer', confidence: 'high' },
+          details: { points: [] },
+          evidenceGrade: { grade: 'B', sourceType: 'guideline' },
+          sources: [{ documentName: 'ADA Standards 2024' }],
+          warnings: ['本回答仅供参考'],
+        }),
+        checkQuality: async () => ({ isValid: true, issues: [], suggestions: [] }),
+      },
+      extractEntities: (query: string) => ({
+        diseases: query.includes('糖尿病') ? [{ matchedTerm: '糖尿病', canonicalName: '糖尿病', synonyms: [] }] : [],
+        drugs: query.includes('二甲双胍') ? [{ matchedTerm: '二甲双胍', canonicalName: '二甲双胍', synonyms: [] }] : [],
+        indicators: [],
+        confidence: 0.8,
+      }),
+      buildQueryStrategy: (entities: any) => ({
+        primaryQuery: entities.drugs[0]?.canonicalName || 'test',
+        expandedTerms: [],
+      }),
+    };
+  };
+
+  /**
+   * 创建模拟检索服务（返回足够结果触发规则）
+   */
+  const mockRetrievalSufficient = vi.fn(async (query: string) => {
+    return [
+      { content: 'ADA 2024: 二甲双胍是2型糖尿病的一线用药', source: { documentName: 'ADA Standards 2024', year: 2024 }, similarityScore: 0.85 },
+      { content: '二甲双胍用于肾功能不全患者需谨慎', source: { documentName: 'KDIGO CKD Guidelines', year: 2024 }, similarityScore: 0.80 },
+      { content: '二甲双胍禁忌症包括严重肾功能不全', source: { documentName: 'CDS 糖尿病指南', year: 2024 }, similarityScore: 0.75 },
+      { content: 'eGFR<30禁用二甲双胍', source: { documentName: '药物说明书', year: 2023 }, similarityScore: 0.70 },
+    ];
+  });
+
+  // ==================== Task 8.4: Integration tests using AgentExecutor ====================
+
+  describe('Rule-Based Decision Integration with AgentExecutor', () => {
+    it('should use rule-based decide by default', async () => {
+      const { createAgentExecutor, ExtendedAgentConfig } = await import('./agent/AgentExecutor.js');
+      llmCallCount = 0;
+      const llmCaller = createCountingLLM();
+
+      const config: ExtendedAgentConfig = {
+        maxIterations: 5,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+        useRuleBasedDecide: true, // 启用规则化决策
+      };
+
+      const executor = createAgentExecutor(config, createMockExecutorContext(mockRetrievalSufficient));
+      const result = await executor.run('二甲双胍禁忌症有哪些');
+
+      // 规则化决策：检索数量 >= 3 应触发规则，不调用 LLM decide
+      expect(result.success).toBe(true);
+      expect(result.answer).toBeDefined();
+    });
+
+    it('should still work without rule-based decide', async () => {
+      const { createAgentExecutor, ExtendedAgentConfig } = await import('./agent/AgentExecutor.js');
+      llmCallCount = 0;
+      const llmCaller = createCountingLLM();
+
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+        useRuleBasedDecide: false, // 禁用规则化决策
+      };
+
+      const executor = createAgentExecutor(config, createMockExecutorContext(mockRetrievalSufficient));
+      const result = await executor.run('二甲双胍禁忌症有哪些');
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  // ==================== Task 8.5: LLM 调用次数验证 ====================
+
+  describe('LLM Call Count Verification', () => {
+    it('should track stats in result', async () => {
+      const { createAgentExecutor, ExtendedAgentConfig } = await import('./agent/AgentExecutor.js');
+
+      const config: ExtendedAgentConfig = {
+        maxIterations: 5,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+        useRuleBasedDecide: true,
+      };
+
+      const executor = createAgentExecutor(config, createMockExecutorContext(mockRetrievalSufficient));
+      const result = await executor.run('糖尿病用药选择');
+
+      expect(result.stats).toBeDefined();
+      expect(result.stats.iterations).toBeGreaterThan(0);
+    });
+  });
+
+  // ==================== Enhanced Evidence Evaluation Integration ====================
+
+  describe('Enhanced Evidence Evaluation Integration', () => {
+    it('should evaluate sources with enhanced metrics', async () => {
+      const { evaluateMultipleSourcesEnhanced } = await import('./evidence-evaluator.js');
+
+      const currentYear = new Date().getFullYear();
+      const sources = [
+        { documentName: 'ADA Standards of Care 2024', year: currentYear, content: '推荐二甲双胍' },
+        { documentName: '中国糖尿病防治指南 2024', year: currentYear, content: '建议首选二甲双胍' },
+        { documentName: '某医院内部指南 2020', year: 2020, content: '使用二甲双胍' },
+      ];
+
+      const evaluations = evaluateMultipleSourcesEnhanced(sources);
+
+      expect(evaluations.length).toBe(3);
+
+      // 验证增强字段
+      expect(evaluations[0].sourceAuthority).toBe('international'); // ADA
+      expect(evaluations[1].sourceAuthority).toBe('national'); // CDS
+      expect(evaluations[2].sourceAuthority).toBe('local'); // Hospital
+
+      // 验证时间权重 - 使用当前年份应返回 1.0
+      expect(evaluations[0].timeWeight).toBe(1.0);
+      expect(evaluations[2].timeWeight).toBeLessThan(1.0); // 2020, older
+
+      // 验证综合评分
+      expect(evaluations[0].compositeScore).toBeDefined();
+    });
+
+    it('should sort evidence by quality', async () => {
+      const { sortEvidenceByQuality } = await import('./evidence-evaluator.js');
+
+      const evaluations = [
+        { literatureType: 'guideline', grade: 'D', isCurrent: false, year: 2015, compositeScore: 0.3 },
+        { literatureType: 'guideline', grade: 'A', isCurrent: true, year: 2024, compositeScore: 0.9 },
+        { literatureType: 'meta_analysis', grade: 'B', isCurrent: true, year: 2023, compositeScore: 0.7 },
+      ];
+
+      const sorted = sortEvidenceByQuality(evaluations);
+
+      expect(sorted[0].compositeScore).toBe(0.9);
+      expect(sorted[2].compositeScore).toBe(0.3);
     });
   });
 });

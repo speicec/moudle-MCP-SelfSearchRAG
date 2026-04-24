@@ -33,7 +33,12 @@ import {
 import type { MedicalEntities, EvidenceEvaluation } from '../types.js';
 import { extractThresholds } from '../threshold-extractor.js';
 import { performSafetyCheck } from '../safety-layer.js';
-import { evaluateMultipleSources, calculateOverallGrade } from '../evidence-evaluator.js';
+import {
+  evaluateMultipleSources,
+  evaluateMultipleSourcesEnhanced,
+  sortEvidenceByQuality,
+  calculateOverallGrade,
+} from '../evidence-evaluator.js';
 
 // Planning mode imports
 import type { TaskDAG, ExecutorState, ComplexityLevel, PlanningResult, ReplanningDecision } from './ExecutionTypes.js';
@@ -49,6 +54,51 @@ import { VisualizationCollector, createVisualizationCollector } from './Retrieva
 import { TraceVisualizer, createTraceVisualizer } from './TraceVisualizer.js';
 import type { TemplateAttempt } from './RetrievalVisualization.js';
 
+// Tracing imports (新增)
+import { createTraceStorage, TraceStorage } from '../../tracing/TraceStorage.js';
+import type { TraceContextData, RetrievedChunk } from '../../tracing/types.js';
+
+/**
+ * 规则化决策阈值配置
+ */
+export interface RuleThresholds {
+  /** 最小检索结果数量触发满足（默认 3） */
+  minRetrievalCount: number;
+  /** 最小相似度阈值触发满足（默认 0.7） */
+  minSimilarityScore: number;
+  /** 最小实体覆盖率触发满足（默认 0.8） */
+  minEntityCoverage: number;
+}
+
+/**
+ * 默认规则阈值
+ */
+export const DEFAULT_RULE_THRESHOLDS: RuleThresholds = {
+  minRetrievalCount: 3,
+  minSimilarityScore: 0.7,
+  minEntityCoverage: 0.8,
+};
+
+/**
+ * 规则命中类型
+ */
+export type RuleHitType =
+  | 'retrieval_count'
+  | 'high_similarity'
+  | 'entity_coverage'
+  | 'absolute_contraindication'
+  | 'none';
+
+/**
+ * 规则命中记录
+ */
+export interface RuleHitRecord {
+  ruleType: RuleHitType;
+  threshold: number;
+  actualValue: number;
+  timestamp: number;
+}
+
 /**
  * 扩展的 Agent 配置
  */
@@ -59,6 +109,10 @@ export interface ExtendedAgentConfig extends AgentConfig {
 
   // 低置信度直接检索阈值（默认 0.3）
   lowConfidenceThreshold?: number;
+
+  // 规则化决策配置
+  useRuleBasedDecide?: boolean;  // 是否使用规则化决策（默认 true）
+  ruleThresholds?: RuleThresholds;  // 自定义规则阈值
 }
 
 /**
@@ -93,6 +147,9 @@ export class AgentExecutor {
   private collector: VisualizationCollector;
   private tracer: TraceVisualizer;
   private visualizationCallback?: (phase: string, data: unknown) => void;
+  private ruleThresholds: RuleThresholds;
+  private ruleHits: RuleHitRecord[];  // 记录规则命中
+  private traceStorage?: TraceStorage;  // 新增: 追踪存储（可选）
 
   constructor(config: ExtendedAgentConfig, context: AgentContext, visualizationCallback?: (phase: string, data: unknown) => void) {
     this.config = config;
@@ -101,8 +158,29 @@ export class AgentExecutor {
     this.logger = createAgentLogger(config.enableTraceLogging ? 'debug' : 'info');
     this.collector = createVisualizationCollector();
     this.tracer = createTraceVisualizer();
+    this.ruleThresholds = config.ruleThresholds ?? DEFAULT_RULE_THRESHOLDS;
+    this.ruleHits = [];
     if (visualizationCallback !== undefined) {
       this.visualizationCallback = visualizationCallback;
+    }
+  }
+
+  /**
+   * 初始化追踪存储 (新增)
+   */
+  async initTraceStorage(dbPath?: string): Promise<void> {
+    this.traceStorage = await createTraceStorage(dbPath);
+  }
+
+  /**
+   * 持久化追踪数据 (新增)
+   */
+  async persistTrace(): Promise<void> {
+    if (!this.traceStorage) return;
+    const traceContext = this.tracer.getTraceContext();
+    if (traceContext) {
+      const traceData = traceContext.build();
+      await this.traceStorage.saveTrace(traceData);
     }
   }
 
@@ -130,6 +208,9 @@ export class AgentExecutor {
    */
   async run(query: string): Promise<AgentResult> {
     this.startTime = Date.now();
+
+    // 创建 TraceContext (新增)
+    this.tracer.createTraceContext();
 
     // 设置查询（用于日志和追踪）
     this.logger.setQuery(query);
@@ -411,6 +492,53 @@ export class AgentExecutor {
       hasInteractions: safetyAssessment.interactions.length > 0,
     });
 
+    // 1.3 Early Termination: 绝对禁忌直接跳过循环
+    if (safetyAssessment.severity === 'absolute') {
+      this.logger.log(0, 'early_termination', 'Absolute contraindication detected, skipping ReAct loop', {
+        contraindicationCount: safetyAssessment.contraindicationMatches.length,
+        recommendation: safetyAssessment.recommendation,
+      });
+
+      // 收集早期终止事件
+      this.collector.collectModeSelectionPhase('early_termination', 'Absolute contraindication detected');
+      this.visualizationCallback?.('early_termination', {
+        reason: 'absolute_contraindication',
+        safetyAssessment: {
+          severity: safetyAssessment.severity,
+          contraindicationCount: safetyAssessment.contraindicationMatches.length,
+          recommendation: safetyAssessment.recommendation,
+        },
+      });
+
+      // 直接生成回答
+      const answer = this.generateAnswerFromSafety(entities, safetyAssessment);
+      state = setAnswer(state, answer);
+      state = markSatisfied(state, true);
+      state = setStatus(state, 'completed');
+
+      this.logger.logComplete(state);
+
+      const result: AgentResult = {
+        answer,
+        entities,
+        stats: {
+          iterations: 0,
+          actionsExecuted: 0,
+          retrievalCalls: 0,
+          llmCalls: 0,  // 无 LLM 调用
+          totalTimeMs: Date.now() - this.startTime,
+        },
+        reasoningTrace: [],
+        success: true,
+        satisfied: true,
+        visualization: this.collector.buildVisualization(),
+        executionTrace: this.tracer.buildTrace(),
+      };
+
+      this.visualizationCallback?.('complete', result);
+      return result;
+    }
+
     // 2. 主循环
     while (canContinue(state)) {
       state = incrementIteration(state);
@@ -445,16 +573,25 @@ export class AgentExecutor {
         }>;
         state = updateRetrievalResults(state, retrievalData);
 
-        // 证据质量评估
-        const evidenceEval: EvidenceEvaluation[] = evaluateMultipleSources(
-          retrievalData.map(r => r.source)
+        // 证据质量评估（增强版）
+        const evidenceEval: EvidenceEvaluation[] = evaluateMultipleSourcesEnhanced(
+          retrievalData.map(r => ({
+            documentName: r.source.documentName,
+            ...(r.source.year !== undefined && { year: r.source.year }),
+            ...(r.content && { content: r.content }),
+          }))
         );
         state.evidenceEvaluation = evidenceEval;
 
-        const overallGrade = calculateOverallGrade(evidenceEval);
+        // 按质量排序证据（高质量优先）
+        const sortedEvidence = sortEvidenceByQuality(evidenceEval);
+        const overallGrade = calculateOverallGrade(sortedEvidence);
+
         this.logger.log(state.iteration, 'observe', 'Evidence evaluation', {
           overallGrade,
           evaluatedSources: evidenceEval.length,
+          topCompositeScore: sortedEvidence[0]?.compositeScore?.toFixed(2) ?? 'N/A',
+          consistencyScore: sortedEvidence[0]?.consistencyScore?.toFixed(2) ?? 'N/A',
         });
       }
 
@@ -504,6 +641,9 @@ export class AgentExecutor {
     state = setStatus(state, 'completed');
     this.logger.logComplete(state);
 
+    // 标记 TraceContext 完成 (新增)
+    this.tracer.markComplete();
+
     const result = this.buildResult(state);
     if (fallbackReason) {
       result.fallbackReason = fallbackReason;
@@ -513,6 +653,11 @@ export class AgentExecutor {
     result.visualization = this.collector.buildVisualization();
     result.executionTrace = this.tracer.buildTrace();
     this.visualizationCallback?.('complete', result);
+
+    // 异步持久化追踪 (新增)
+    this.persistTrace().catch(err => {
+      this.logger.log(0, 'complete', 'Failed to persist trace', { error: err.message }, 'warn');
+    });
 
     return result;
   }
@@ -653,6 +798,7 @@ export class AgentExecutor {
 
   /**
    * Decide: 判断是否满足
+   * 根据配置选择规则化决策或 LLM 决策
    */
   private async decide(state: AgentState): Promise<boolean> {
     // 如果没有检索结果，不满足
@@ -660,8 +806,141 @@ export class AgentExecutor {
       return false;
     }
 
-    // 使用 LLM 判断
+    // 检查是否使用规则化决策（默认启用）
+    const useRuleBased = this.config.useRuleBasedDecide ?? true;
+
+    if (useRuleBased) {
+      return this.decideByRules(state);
+    }
+
+    // 使用 LLM 判断（fallback）
     return await this.context.reasoner.decide(state);
+  }
+
+  /**
+   * DecideByRules: 规则化决策判断
+   *
+   * 规则优先级：
+   * 1. 检索结果数量 >= minRetrievalCount
+   * 2. 最高相似度 > minSimilarityScore
+   * 3. 实体覆盖率 >= minEntityCoverage
+   * 4. SafetyLayer 绝对禁忌已确定
+   */
+  private decideByRules(state: AgentState): boolean {
+    const thresholds = this.ruleThresholds;
+    const now = Date.now();
+
+    // 规则 1: 检索结果数量
+    const resultCount = state.retrievalResults?.length ?? 0;
+    if (resultCount >= thresholds.minRetrievalCount) {
+      this.recordRuleHit('retrieval_count', thresholds.minRetrievalCount, resultCount, now);
+      this.logger.log(state.iteration, 'decide_rule', `Rule hit: retrieval_count (${resultCount} >= ${thresholds.minRetrievalCount})`);
+      return true;
+    }
+
+    // 规则 2: 最高相似度
+    const maxSimilarity = Math.max(
+      ...state.retrievalResults?.map(r => r.similarityScore ?? 0) ?? [0]
+    );
+    if (maxSimilarity > thresholds.minSimilarityScore) {
+      this.recordRuleHit('high_similarity', thresholds.minSimilarityScore, maxSimilarity, now);
+      this.logger.log(state.iteration, 'decide_rule', `Rule hit: high_similarity (${maxSimilarity.toFixed(2)} > ${thresholds.minSimilarityScore})`);
+      return true;
+    }
+
+    // 规则 3: 实体覆盖率
+    const entityCoverage = this.calculateEntityCoverage(state);
+    if (entityCoverage >= thresholds.minEntityCoverage) {
+      this.recordRuleHit('entity_coverage', thresholds.minEntityCoverage, entityCoverage, now);
+      this.logger.log(state.iteration, 'decide_rule', `Rule hit: entity_coverage (${entityCoverage.toFixed(2)} >= ${thresholds.minEntityCoverage})`);
+      return true;
+    }
+
+    // 规则 4: SafetyLayer 绝对禁忌已确定
+    if (state.safetyAssessment?.severity === 'absolute') {
+      this.recordRuleHit('absolute_contraindication', 1, 1, now);
+      this.logger.log(state.iteration, 'decide_rule', 'Rule hit: absolute_contraindication (no more retrieval needed)');
+      return true;
+    }
+
+    // 所有规则都不满足
+    this.logger.log(state.iteration, 'decide_rule', `No rule hit, continuing iteration`, {
+      resultCount,
+      maxSimilarity: maxSimilarity.toFixed(2),
+      entityCoverage: entityCoverage.toFixed(2),
+      safetySeverity: state.safetyAssessment?.severity ?? 'none',
+    });
+
+    return false;
+  }
+
+  /**
+   * 记录规则命中
+   */
+  private recordRuleHit(ruleType: RuleHitType, threshold: number, actualValue: number, timestamp: number): void {
+    this.ruleHits.push({
+      ruleType,
+      threshold,
+      actualValue,
+      timestamp,
+    });
+  }
+
+  /**
+   * 计算实体覆盖率
+   *
+   * 检索结果中覆盖的实体占所有识别实体的比例
+   */
+  private calculateEntityCoverage(state: AgentState): number {
+    const entities = state.entities;
+    const allEntityIds = [
+      ...entities.diseases.map(d => d.id),
+      ...entities.drugs.map(d => d.id),
+      ...entities.indicators.map(i => i.id),
+    ];
+
+    if (allEntityIds.length === 0) {
+      return 1;  // 无实体时默认覆盖
+    }
+
+    // 检查检索结果中是否包含实体相关内容
+    const coveredEntities = new Set<string>();
+
+    for (const result of state.retrievalResults ?? []) {
+      const contentLower = result.content.toLowerCase();
+
+      // 检查疾病实体
+      for (const disease of entities.diseases) {
+        if (
+          contentLower.includes(disease.canonicalName.toLowerCase()) ||
+          disease.aliases.some(a => contentLower.includes(a.toLowerCase()))
+        ) {
+          coveredEntities.add(disease.id);
+        }
+      }
+
+      // 检查药物实体
+      for (const drug of entities.drugs) {
+        if (
+          contentLower.includes(drug.canonicalName.toLowerCase()) ||
+          drug.aliases.some(a => contentLower.includes(a.toLowerCase()))
+        ) {
+          coveredEntities.add(drug.id);
+        }
+      }
+
+      // 检查指标实体
+      for (const indicator of entities.indicators) {
+        if (
+          contentLower.includes(indicator.canonicalName.toLowerCase()) ||
+          contentLower.includes(indicator.matchedTerm.toLowerCase())
+        ) {
+          coveredEntities.add(indicator.id);
+        }
+      }
+    }
+
+    return coveredEntities.size / allEntityIds.length;
   }
 
   /**
@@ -839,6 +1118,67 @@ export class AgentExecutor {
   }
 
   /**
+   * 从 SafetyAssessment 生成回答（Early Termination 场景）
+   *
+   * 当绝对禁忌确定时，无需检索，直接生成回答
+   */
+  private generateAnswerFromSafety(entities: MedicalEntities, safetyAssessment: SafetyAssessment): MedicalAnswer {
+    // 构建结论（使用 SafetyAssessment 的推荐）
+    const conclusionText = safetyAssessment.recommendation;
+
+    // 构建详细说明（禁忌描述）
+    const detailPoints: Array<{ text: string; sources: SourceCitation[] }> = [];
+
+    for (const match of safetyAssessment.contraindicationMatches) {
+      detailPoints.push({
+        text: match.contraindication.description,
+        sources: [],
+      });
+    }
+
+    // 添加相互作用信息（如有）
+    for (const interaction of safetyAssessment.interactions) {
+      detailPoints.push({
+        text: `${interaction.description}。建议：${interaction.recommendation}`,
+        sources: [],
+      });
+    }
+
+    // 构建证据等级（指南来源）
+    const evidenceGrade = {
+      grade: 'B' as const,  // 指南推荐为 B 级
+      sourceType: safetyAssessment.sourceGlossary.length > 0
+        ? safetyAssessment.sourceGlossary.join(', ')
+        : '临床指南',
+    };
+
+    // 构建来源引用
+    const sources: SourceCitation[] = safetyAssessment.sourceGlossary.map(g => ({
+      documentName: g,
+    }));
+
+    // 构建警告
+    const warnings = [
+      '本回答基于禁忌规则直接生成，无需检索',
+      '本回答仅供参考，不构成医疗建议',
+      '请咨询专业医生后再做决定',
+    ];
+
+    return {
+      conclusion: {
+        text: conclusionText,
+        confidence: 'high',
+      },
+      details: {
+        points: detailPoints,
+      },
+      evidenceGrade,
+      sources,
+      warnings,
+    };
+  }
+
+  /**
    * 构建结果
    */
   private buildResult(state: AgentState): AgentResult {
@@ -864,6 +1204,165 @@ export class AgentExecutor {
     }
     return result;
   }
+}
+
+/**
+ * 独立导出的 decideByRules 函数（用于测试）
+ *
+ * 规则优先级：retrieval_count > high_similarity > entity_coverage > absolute_contraindication
+ */
+export function decideByRules(
+  state: AgentState,
+  thresholds: RuleThresholds = DEFAULT_RULE_THRESHOLDS
+): RuleHitRecord {
+  // 规则 1: 检索结果数量
+  const resultCount = state.retrievalResults?.length ?? 0;
+  if (resultCount >= thresholds.minRetrievalCount) {
+    return {
+      ruleType: 'retrieval_count',
+      threshold: thresholds.minRetrievalCount,
+      actualValue: resultCount,
+      timestamp: Date.now(),
+    };
+  }
+
+  // 规则 2: 最高相似度
+  const maxSimilarity = Math.max(
+    ...state.retrievalResults?.map(r => r.similarityScore ?? 0) ?? [0]
+  );
+  if (maxSimilarity > thresholds.minSimilarityScore) {
+    return {
+      ruleType: 'high_similarity',
+      threshold: thresholds.minSimilarityScore,
+      actualValue: maxSimilarity,
+      timestamp: Date.now(),
+    };
+  }
+
+  // 规则 3: 实体覆盖率
+  const entityCoverage = calculateEntityCoverage(state);
+  if (entityCoverage >= thresholds.minEntityCoverage) {
+    return {
+      ruleType: 'entity_coverage',
+      threshold: thresholds.minEntityCoverage,
+      actualValue: entityCoverage,
+      timestamp: Date.now(),
+    };
+  }
+
+  // 规则 4: SafetyLayer 绝对禁忌已确定
+  if (state.safetyAssessment?.severity === 'absolute') {
+    return {
+      ruleType: 'absolute_contraindication',
+      threshold: 1,
+      actualValue: 1,
+      timestamp: Date.now(),
+    };
+  }
+
+  // 无规则命中
+  return {
+    ruleType: 'none',
+    threshold: 0,
+    actualValue: 0,
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * 独立导出的 calculateEntityCoverage 函数（用于测试）
+ */
+export function calculateEntityCoverage(
+  state: AgentState
+): number {
+  const entities = state.entities;
+  const allEntityTerms = [
+    ...entities.diseases.map(d => d.canonicalName),
+    ...entities.drugs.map(d => d.canonicalName),
+    ...entities.indicators.map(i => i.canonicalName),
+  ];
+
+  if (allEntityTerms.length === 0) {
+    return 1;  // 无实体时默认覆盖
+  }
+
+  // 检查检索结果中是否包含实体相关内容
+  const coveredEntities = new Set<string>();
+
+  for (const result of state.retrievalResults ?? []) {
+    const content = result.content.toLowerCase();
+    for (const term of allEntityTerms) {
+      if (content.includes(term.toLowerCase())) {
+        coveredEntities.add(term);
+      }
+    }
+  }
+
+  return coveredEntities.size / allEntityTerms.length;
+}
+
+/**
+ * 独立导出的 generateAnswerFromSafety 函数（用于测试）
+ *
+ * 根据安全评估直接生成医学回答（早终止场景）
+ */
+export function generateAnswerFromSafety(
+  query: string,
+  safetyAssessment: SafetyAssessment
+): MedicalAnswer {
+  // 构建结论（使用 SafetyAssessment 的推荐）
+  const conclusionText = safetyAssessment.recommendation;
+
+  // 构建详细说明（禁忌描述）
+  const detailPoints: Array<{ text: string; sources: SourceCitation[] }> = [];
+
+  for (const match of safetyAssessment.contraindicationMatches) {
+    detailPoints.push({
+      text: match.contraindication.description,
+      sources: [],
+    });
+  }
+
+  // 添加相互作用信息（如有）
+  for (const interaction of safetyAssessment.interactions) {
+    detailPoints.push({
+      text: `${interaction.description}。建议：${interaction.recommendation}`,
+      sources: [],
+    });
+  }
+
+  // 构建证据等级（指南来源）
+  const evidenceGrade = {
+    grade: 'B' as const,
+    sourceType: safetyAssessment.sourceGlossary.length > 0
+      ? safetyAssessment.sourceGlossary.join(', ')
+      : '临床指南',
+  };
+
+  // 构建来源引用
+  const sources: SourceCitation[] = safetyAssessment.sourceGlossary.map(g => ({
+    documentName: g,
+  }));
+
+  // 构建警告
+  const warnings = [
+    '本回答基于禁忌规则直接生成，无需检索',
+    '本回答仅供参考，不构成医疗建议',
+    '请咨询专业医生后再做决定',
+  ];
+
+  return {
+    conclusion: {
+      text: conclusionText,
+      confidence: 'high',
+    },
+    details: {
+      points: detailPoints,
+    },
+    evidenceGrade,
+    sources,
+    warnings,
+  };
 }
 
 /**

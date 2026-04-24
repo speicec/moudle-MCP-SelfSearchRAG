@@ -44,7 +44,7 @@ export interface QueryRewriting {
  * 执行路径信息
  */
 export interface ExecutionPath {
-  mode: 'react' | 'planning' | 'direct_retrieval';
+  mode: 'react' | 'planning' | 'direct_retrieval' | 'early_termination';
   reason: string;
   matchedTemplate?: string;
   stages: string[]; // e.g., ['Planning', 'Template', 'DAG Execution']
@@ -158,10 +158,15 @@ export class VisualizationCollector {
   /**
    * 收集模式选择数据
    */
-  collectModeSelectionPhase(mode: 'react' | 'planning' | 'direct_retrieval', reason: string): void {
+  collectModeSelectionPhase(mode: 'react' | 'planning' | 'direct_retrieval' | 'early_termination', reason: string): void {
     this.executionPath.mode = mode;
     this.executionPath.reason = reason;
-    this.executionPath.stages = [mode === 'planning' ? 'Planning' : mode === 'direct_retrieval' ? 'Direct Retrieval' : 'ReAct'];
+    this.executionPath.stages = [
+      mode === 'planning' ? 'Planning' :
+      mode === 'direct_retrieval' ? 'Direct Retrieval' :
+      mode === 'early_termination' ? 'Early Termination' :
+      'ReAct'
+    ];
   }
 
   /**

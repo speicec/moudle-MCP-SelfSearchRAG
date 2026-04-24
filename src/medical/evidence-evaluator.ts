@@ -9,6 +9,7 @@ import type {
   LiteratureType,
   GradeLevel,
   SourceCitation,
+  SourceAuthorityLevel,
 } from './types.js';
 import {
   GRADE_DESCRIPTIONS,
@@ -274,4 +275,253 @@ export function getGradeDescription(grade: GradeLevel): string {
  */
 export function getLiteratureTypeLabel(type: LiteratureType): string {
   return LITERATURE_TYPE_LABELS[type] || type;
+}
+
+// ==================== Enhanced Evidence Evaluation ====================
+
+/**
+ * 指南权威性映射
+ *
+ * International: ADA, KDIGO, ESC, ATA, EASD (权重 1.0)
+ * National: CDS, CSH, CETA, 中国指南 (权重 0.8)
+ * Local: 其他 (权重 0.6)
+ */
+export const GUIDELINE_AUTHORITY_MAPPING: Record<SourceAuthorityLevel, {
+  keywords: string[];
+  weight: number;
+}> = {
+  international: {
+    keywords: ['ADA', 'KDIGO', 'ESC', 'ATA', 'EASD', 'American Diabetes', 'Kidney Disease', 'European Society', 'American Thyroid'],
+    weight: 1.0,
+  },
+  national: {
+    keywords: ['CDS', 'CSH', 'CETA', '中国', '中华', '国家', 'National'],
+    weight: 0.8,
+  },
+  local: {
+    keywords: [],  // 默认级别
+    weight: 0.6,
+  },
+};
+
+/**
+ * GRADE 权重映射
+ */
+export const GRADE_WEIGHTS: Record<GradeLevel, number> = {
+  A: 1.0,
+  B: 0.8,
+  C: 0.6,
+  D: 0.4,
+};
+
+/**
+ * 增强证据评估权重常量
+ */
+export const ENHANCED_EVALUATION_WEIGHTS = {
+  GRADE: 0.4,
+  AUTHORITY: 0.2,
+  TIME: 0.2,
+  CONSISTENCY: 0.1,
+  APPLICABILITY: 0.1,  // 默认 1.0（内分泌领域适用）
+};
+
+/**
+ * 冲突关键词检测映射
+ */
+const CONFLICT_KEYWORDS = {
+  positive: ['可用', '可以使用', '推荐', '适合', '适应', '安全'],
+  negative: ['禁用', '不能用', '禁忌', '禁止', '不推荐', '慎用', '危险'],
+};
+
+/**
+ * 评估来源权威性
+ *
+ * @param documentName - 文档名称
+ * @returns 权威性级别和权重
+ */
+export function evaluateSourceAuthority(documentName: string): {
+  level: SourceAuthorityLevel;
+  weight: number;
+} {
+  const nameLower = documentName.toLowerCase();
+
+  // 检查国际级别关键词
+  for (const keyword of GUIDELINE_AUTHORITY_MAPPING.international.keywords) {
+    if (nameLower.includes(keyword.toLowerCase())) {
+      return { level: 'international', weight: 1.0 };
+    }
+  }
+
+  // 检查国家级别关键词
+  for (const keyword of GUIDELINE_AUTHORITY_MAPPING.national.keywords) {
+    if (nameLower.includes(keyword.toLowerCase())) {
+      return { level: 'national', weight: 0.8 };
+    }
+  }
+
+  // 默认本地级别
+  return { level: 'local', weight: 0.6 };
+}
+
+/**
+ * 计算时效权重
+ *
+ * 线性衰减：每年衰减 0.05，最低 0.5
+ *
+ * @param year - 文献年份
+ * @returns 时效权重
+ */
+export function calculateTimeWeight(year: number | undefined): number {
+  if (year === undefined) {
+    return 0.7;  // 无年份信息，默认中等权重
+  }
+
+  const currentYear = new Date().getFullYear();
+  const yearsSincePublication = currentYear - year;
+
+  // 线性衰减：2024 → 1.0, 2023 → 0.95, ...
+  const weight = 1.0 - yearsSincePublication * 0.05;
+
+  // 最低权重 0.5
+  return Math.max(weight, 0.5);
+}
+
+/**
+ * 检查证据一致性（关键词版本）
+ *
+ * @param evidences - 证据评估列表（含来源内容）
+ * @returns 一致性分数 (0-1)
+ */
+export function checkConsistency(
+  evidences: Array<{ documentName: string; content?: string }>
+): number {
+  if (evidences.length <= 1) {
+    return 1.0;  // 单一来源默认一致
+  }
+
+  // 提取冲突关键词匹配
+  const positiveMatches: number[] = [];
+  const negativeMatches: number[] = [];
+
+  for (const evidence of evidences) {
+    const contentLower = (evidence.content ?? evidence.documentName).toLowerCase();
+
+    const positiveCount = CONFLICT_KEYWORDS.positive.filter(k => contentLower.includes(k)).length;
+    const negativeCount = CONFLICT_KEYWORDS.negative.filter(k => contentLower.includes(k)).length;
+
+    positiveMatches.push(positiveCount);
+    negativeMatches.push(negativeCount);
+  }
+
+  // 检查是否有冲突：部分来源正，部分来源负
+  const hasPositive = positiveMatches.some(c => c > 0);
+  const hasNegative = negativeMatches.some(c => c > 0);
+
+  if (hasPositive && hasNegative) {
+    // 存在冲突，一致性降低
+    const conflictRatio = Math.min(
+      positiveMatches.filter(c => c > 0).length,
+      negativeMatches.filter(c => c > 0).length
+    ) / evidences.length;
+    return 1.0 - conflictRatio * 0.5;  // 冲突降低一致性
+  }
+
+  // 无冲突，高一致性
+  return 0.9;
+}
+
+/**
+ * 计算增强综合评分
+ *
+ * compositeScore = GRADE * 0.4 + Authority * 0.2 + Time * 0.2 + Consistency * 0.1 + Applicability * 0.1
+ *
+ * @param grade - GRADE 等级
+ * @param authorityWeight - 权威性权重
+ * @param timeWeight - 时效权重
+ * @param consistencyScore - 一致性分数
+ * @returns 综合评分
+ */
+export function calculateEnhancedCompositeScore(
+  grade: GradeLevel,
+  authorityWeight: number,
+  timeWeight: number,
+  consistencyScore: number,
+  applicabilityScore: number = 1.0  // 默认内分泌领域适用
+): number {
+  const gradeWeight = GRADE_WEIGHTS[grade];
+  const weights = ENHANCED_EVALUATION_WEIGHTS;
+
+  const compositeScore =
+    gradeWeight * weights.GRADE +
+    authorityWeight * weights.AUTHORITY +
+    timeWeight * weights.TIME +
+    consistencyScore * weights.CONSISTENCY +
+    applicabilityScore * weights.APPLICABILITY;
+
+  return compositeScore;
+}
+
+/**
+ * 按质量排序证据
+ *
+ * @param evidences - 证据评估列表
+ * @returns 排序后的证据列表（高质量优先）
+ */
+export function sortEvidenceByQuality(evidences: EvidenceEvaluation[]): EvidenceEvaluation[] {
+  return [...evidences].sort((a, b) => {
+    const scoreA = a.compositeScore ?? GRADE_WEIGHTS[a.grade];
+    const scoreB = b.compositeScore ?? GRADE_WEIGHTS[b.grade];
+    return scoreB - scoreA;  // 降序
+  });
+}
+
+/**
+ * 增强版多来源评估
+ *
+ * @param sources - 来源列表（含内容）
+ * @returns 增强证据评估列表
+ */
+export function evaluateMultipleSourcesEnhanced(
+  sources: Array<{
+    documentName: string;
+    year?: number;
+    content?: string;
+  }>
+): EvidenceEvaluation[] {
+  // 计算一致性分数
+  const consistencyScore = checkConsistency(sources);
+
+  return sources.map(source => {
+    // 基础评估
+    const literatureType = classifyLiteratureType(source.content ?? source.documentName);
+    const grade = mapEvidenceGrade(literatureType);
+    const guidelineId = extractGuidelineId(source.documentName);
+    const timeliness = checkTimeliness(source.year, guidelineId);
+
+    // 增强评估
+    const authority = evaluateSourceAuthority(source.documentName);
+    const timeWeight = calculateTimeWeight(source.year);
+    const compositeScore = calculateEnhancedCompositeScore(
+      grade,
+      authority.weight,
+      timeWeight,
+      consistencyScore
+    );
+
+    return {
+      literatureType,
+      grade,
+      isCurrent: timeliness.isCurrent,
+      year: source.year ?? undefined,
+      sourceGuideline: guidelineId,
+      expirationWarning: timeliness.expirationWarning,
+
+      // 增强字段
+      sourceAuthority: authority.level,
+      authorityWeight: authority.weight,
+      timeWeight,
+      consistencyScore,
+      compositeScore,
+    };
+  });
 }

@@ -25,7 +25,7 @@ export interface LogEntry {
   level: LogLevel;
   agentId: string;
   iteration: number;
-  phase: 'think' | 'act' | 'observe' | 'decide' | 'answer' | 'complete';
+  phase: 'think' | 'act' | 'observe' | 'decide' | 'answer' | 'complete' | 'decide_rule' | 'early_termination';
   message: string;
   data?: Record<string, unknown>;
 }

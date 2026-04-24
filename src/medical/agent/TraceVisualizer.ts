@@ -11,6 +11,8 @@ import type {
   TaskDAG,
   ExecutorState,
 } from './ExecutionTypes.js';
+import { TraceContext, createTraceContext } from '../../tracing/TraceContext.js';
+import type { TraceSpan, RetrievedChunk } from '../../tracing/types.js';
 
 /**
  * 追踪节点类型
@@ -66,11 +68,33 @@ export class TraceVisualizer {
   private totalTaskCount: number = 0;
   private replanningRounds: number = 0;
 
+  // 新增: TraceContext 实例
+  private traceContext: TraceContext | null = null;
+
   /**
-   * 设置查询
+   * 创建新的追踪上下文 (新增)
+   */
+  createTraceContext(sessionId?: string): TraceContext {
+    this.traceContext = createTraceContext(sessionId);
+    return this.traceContext;
+  }
+
+  /**
+   * 获取当前追踪上下文 (新增)
+   */
+  getTraceContext(): TraceContext | null {
+    return this.traceContext;
+  }
+
+  /**
+   * 设置查询 (扩展)
    */
   setQuery(query: string): void {
     this.query = query;
+    // 同步到 TraceContext
+    if (this.traceContext) {
+      this.traceContext.setQuery(query);
+    }
   }
 
   /**
@@ -82,7 +106,7 @@ export class TraceVisualizer {
   }
 
   /**
-   * 结束阶段
+   * 结束阶段 (扩展)
    */
   endPhase(phase: TracePhase, input: unknown, output: unknown, metadata?: Record<string, unknown>): void {
     const endTime = Date.now();
@@ -110,6 +134,21 @@ export class TraceVisualizer {
 
     this.phases.push(node);
 
+    // 新增: 同步到 TraceContext
+    if (this.traceContext) {
+      const span: TraceSpan = {
+        spanId: `${phase}-${startTime}`,
+        phase,
+        startTime,
+        endTime,
+        durationMs: endTime - startTime,
+        input,
+        output,
+        ...(metadata && { metadata }),
+      };
+      this.traceContext.recordSpan(span);
+    }
+
     this.currentPhaseStart = 0;
     this.currentPhaseName = null;
   }
@@ -123,7 +162,7 @@ export class TraceVisualizer {
   }
 
   /**
-   * 收集实体识别阶段
+   * 收集实体识别阶段 (扩展)
    */
   collectEntityRecognitionPhase(query: string, entities: MedicalEntities): void {
     this.startPhase('entityRecognition');
@@ -135,10 +174,14 @@ export class TraceVisualizer {
       drugCount: entities.drugs.length,
       indicatorCount: entities.indicators.length,
     });
+    // 同步到 TraceContext
+    if (this.traceContext) {
+      this.traceContext.setEntities(entities);
+    }
   }
 
   /**
-   * 收集复杂度评估阶段
+   * 收集复杂度评估阶段 (扩展)
    */
   collectComplexityAssessmentPhase(entities: MedicalEntities, complexity: ComplexityAssessment): void {
     this.startPhase('complexityAssessment');
@@ -148,6 +191,10 @@ export class TraceVisualizer {
       needsPlanning: complexity.needsPlanning,
       level: complexity.level,
     });
+    // 同步到 TraceContext
+    if (this.traceContext) {
+      this.traceContext.setComplexity(complexity);
+    }
   }
 
   /**
@@ -224,7 +271,7 @@ export class TraceVisualizer {
   }
 
   /**
-   * 收集答案生成阶段
+   * 收集答案生成阶段 (扩展)
    */
   collectAnswerPhase(
     entities: MedicalEntities,
@@ -233,6 +280,40 @@ export class TraceVisualizer {
   ): void {
     this.startPhase('answer');
     this.endPhase('answer', { entities, retrievalResults }, { answer });
+    // 同步答案到 TraceContext
+    if (this.traceContext && answer) {
+      const answerObj = answer as { text?: string; confidence?: number; sources?: string[] };
+      if (answerObj.text) {
+        this.traceContext.setAnswer(answerObj.text, answerObj.confidence, answerObj.sources);
+      }
+    }
+  }
+
+  /**
+   * 收集检索结果阶段 (新增)
+   */
+  collectRetrievalPhase(chunks: RetrievedChunk[]): void {
+    if (this.traceContext) {
+      this.traceContext.recordRetrieval(chunks);
+    }
+  }
+
+  /**
+   * 标记追踪完成 (新增)
+   */
+  markComplete(): void {
+    if (this.traceContext) {
+      this.traceContext.complete();
+    }
+  }
+
+  /**
+   * 标记追踪失败 (新增)
+   */
+  markFailed(error: string): void {
+    if (this.traceContext) {
+      this.traceContext.fail(error);
+    }
   }
 
   /**

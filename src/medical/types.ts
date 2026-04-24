@@ -209,6 +209,11 @@ export type LiteratureType = 'rct' | 'meta_analysis' | 'guideline' | 'observatio
 export type GradeLevel = 'A' | 'B' | 'C' | 'D';
 
 /**
+ * 来源权威性级别
+ */
+export type SourceAuthorityLevel = 'international' | 'national' | 'local';
+
+/**
  * 证据评估结果
  */
 export interface EvidenceEvaluation {
@@ -218,6 +223,13 @@ export interface EvidenceEvaluation {
   year: number | undefined;  // 可能为 undefined（来源没有年份信息）
   sourceGuideline?: string | undefined;   // 显式允许 undefined
   expirationWarning?: string | undefined; // 显式允许 undefined
+
+  // 增强评估字段（可选，向后兼容）
+  sourceAuthority?: SourceAuthorityLevel | undefined;   // 来源权威性级别
+  authorityWeight?: number | undefined;                  // 权威性权重 (1.0, 0.8, 0.6)
+  timeWeight?: number | undefined;                      // 时效权重 (0.5-1.0)
+  consistencyScore?: number | undefined;                 // 一致性分数 (0-1)
+  compositeScore?: number | undefined;                   // 综合评分 (0-1)
 }
 
 // ==================== Answer Types ====================
