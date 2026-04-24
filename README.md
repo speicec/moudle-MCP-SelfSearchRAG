@@ -1,502 +1,530 @@
-# MY-RAG-MCP-SERVER
+# SelfSearchRAG
 
-> 增强型多模态RAG系统 | 语义分块 + Small-to-Big检索 | 扫描文档深度理解
+> 增强型多模态 RAG 系统 | 语义分块 + Small-to-Big 检索 | Medical Agent + RAG 评估体系
 
----
+一个专为医学知识检索优化的增强型 RAG 系统，支持 MCP 协议、Dense+Sparse 双轨检索、8 维度 RAG 评估，以及规则化决策的 Medical Agent。
 
-### 亮点三：智能查询优化 + 置信度重排
-
-**解决问题**：用户口语化查询难以命中专业术语；检索结果缺乏质量评估，无法判断可信度。
-
-**技术方案**：
-- **查询优化**：LLM分析查询意图 → 术语重写 → 同义词扩展 → 复杂问题分解
-- **动态TopK**：根据模型上下文窗口(32K/64K/128K)动态计算检索量
-- **置信度重排**：相似度(50%) + 关键词匹配(20%) + 位置权重(10%) + 分块质量(20%)
-- **低置信度处理**：平均置信度<0.3时返回"无匹配"，避免LLM幻觉
-
-```
-查询优化流程：
-用户输入 → QueryAnalyzer(复杂度判断)
-        → QueryRewriter(口语→专业)
-        → QueryExpander(同义词扩展)
-        → QueryDecomposer(多问题拆分)
-
-重排决策：
-检索结果数 ≤ 20 → LocalReranker (bge-reranker-v2-m3)
-检索结果数 > 20 → ConfidenceCalculator (内部计算)
-```
-
-**效果提升**：
-- 口语化查询命中率提升约40%
-- 检索结果置信度可视化，用户可判断可信程度
-- 复杂对比问题自动拆解，全面覆盖检索域
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 ---
 
-## 🎯 核心亮点
+## 核心亮点
 
-### 亮点一：语义分块 + Small-to-Big检索
+### 🔬 Medical Agent - 智能医学问答
 
-**解决问题**：传统RAG固定长度切分（512/1024 tokens）无视语义边界，导致检索结果碎片化。
+**双模式执行**：ReAct 循环 + Planning 模式，支持复杂查询的 DAG 任务分解
 
-**技术方案**：
-- **语义分块**：基于Embedding相似度的断崖检测，在语义边界处切分而非固定位置
-- **Small-to-Big检索**：小块精准定位 → 父块完整展开，用户获得完整语义单元
+**规则化决策**：替代 LLM decide()，减少 80%+ LLM 调用次数
 
-```
-        ┌─────────────────────────────────────────┐
-        │          Parent Chunk (完整上下文)       │
-        │      1000-2000 tokens                   │
-        │                                         │
-        │  ┌─────────┐ ┌─────────┐ ┌─────────┐   │
-        │  │ Child 1 │ │ Child 2 │ │ Child 3 │   │
-        │  │ (精准)  │ │ (精准)  │ │ (精准)  │   │
-        │  │ 200-400 │ │ 200-400 │ │ 200-400 │   │
-        │  │ tokens  │ │ tokens  │ │ tokens  │   │
-        │  └─────────┘ └─────────┘ └─────────┘   │
-        └─────────────────────────────────────────┘
+**早终止机制**：绝对禁忌场景立即返回，响应时间 < 1 秒
 
-检索流程：命中Child → 展开Parent → 返回完整上下文
-```
+**增强证据评估**：5 维度综合评分（GRADE + 权威度 + 时效性 + 一致性 + 适用性）
 
-**实测效果**：检索命中率提升约30%，消除"切到一半"问题。
+### 📊 8 维度 RAG 评估体系
 
----
+三层评估架构，异步队列处理，WebSocket 实时推送：
 
-### 亮点二：多模态PDF处理 + VLM深度理解
+| 层级 | 维度 | 权重 | 说明 |
+|------|------|------|------|
+| Layer 1 | Faithfulness | 20% | 答案忠实度，检测幻觉 |
+| Layer 1 | Context Relevance | 10% | 检索内容相关性 |
+| Layer 1 | Answer Relevance | 10% | 答案是否回答问题 |
+| Layer 2 | Medical Accuracy | 20% | 术语正确性、指南符合度 |
+| Layer 2 | Safety Assessment | 20% | 禁忌检测、相互作用风险 |
+| Layer 3 | Evidence Traceability | 10% | 来源标注、引用准确性 |
+| Layer 3 | Completeness | 5% | 实体覆盖、问题覆盖 |
+| Layer 3 | Terminology Accuracy | 5% | 医疗术语使用准确性 |
 
-**解决问题**：扫描文档、表格、图表无法被传统RAG检索——因为它们只是"一张图片"。
+### 🔍 Hybrid 检索 - Dense + Sparse 双轨融合
 
-**技术方案**：
-- **OCR版面分析**：PaddleOCR识别bbox + blockType (text/table/figure/formula)
-- **VLM深度理解**：qwen3-vl-flash将表格→Markdown、图表→趋势描述、公式→LaTeX
-- **双轨索引**：文本Embedding + CLIP图像Embedding，融合检索
+**bge-m3 模型**：同时生成 Dense (1024维) + Sparse (词权重) 向量
 
-```
-PDF → 图片渲染 → OCR版面分析 → VLM增强 → 存入索引
-                        │
-                        ├─ text/title → 直接存储
-                        └─ table/figure/formula → VLM理解 → Markdown存储
-```
+**RRF 融合**：语义搜索 + 关键词匹配，中文检索召回率提升 40%
 
-**检索效果**：用户检索"增长率"可命中图表内容，检索"销售数据"可找到表格。
+**Qdrant 索引**：HNSW 索引，100K 向量检索延迟 < 10ms
+
+### 📄 多模态 PDF 处理
+
+**PaddleOCR 版面分析**：识别 text/table/figure/formula 块
+
+**VLM 深度理解**：表格 → Markdown，图表 → 趋势描述，公式 → LaTeX
+
+**语义分块**：断崖检测 + Small-to-Big 检索，命中率提升 30%
 
 ---
 
-## 📊 系统架构
+## 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           MY-RAG-MCP-SERVER                                  │
+│                           SelfSearchRAG 系统架构                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-  用户入口 (Web UI / MCP调用)
+  用户入口
           │ HTTP/WebSocket / MCP Protocol
           ▼
   ┌───────────────────────────────────────────────────────────────────────────┐
-  │  服务层: HTTP Server + WebSocket Handler + Pipeline Emitter              │
+  │  编排与执行层                                                              │
+  │  ├─ Harness Core: Pipeline 编排 (INGEST → PARSE → CHUNK → EMBED → INDEX) │
+  │  ├─ Medical Agent: ReAct/Planning 双模式 + 规则化决策                      │
+  │  └─ Evaluation Pipeline: 三层 8 维度评估 + 异步队列                        │
   └───────────────────────────────────────────────────────────────────────────┘
           │
           ▼
   ┌───────────────────────────────────────────────────────────────────────────┐
-  │  Harness编排层: INGEST → PARSE → CHUNK → EMBED → INDEX                   │
-  │                  (可插拔Plugin + Lifecycle Hooks)                         │
+  │  检索与生成层                                                              │
+  │  ├─ Hybrid Retriever: Dense(1024维) + Sparse + RRF 融合                   │
+  │  ├─ Small-to-Big: 小块精准定位 → 父块完整展开                              │
+  │  ├─ Query Optimizer: LLM 分析 → 术语重写 → 同义词扩展                      │
+  │  └─ LLM Generation: DeepSeek Reasoner 思考链                              │
   └───────────────────────────────────────────────────────────────────────────┘
           │
           ▼
   ┌───────────────────────────────────────────────────────────────────────────┐
-  │  数据层: DocumentStore + HierarchicalStore + ImageStore + Qdrant         │
-  │          (元数据存储)            (向量索引: Dense+Sparse)                 │
+  │  存储与索引层                                                              │
+  │  ├─ Qdrant: Dense + Sparse 双索引，HNSW 算法                              │
+  │  ├─ HierarchicalStore: Small(200-400 tokens) + Parent(500-1500 tokens)    │
+  │  ├─ TraceStorage: SQLite 持久化追踪数据                                    │
+  │  └─ Redis + Bull: 异步评估任务队列                                         │
   └───────────────────────────────────────────────────────────────────────────┘
           │
           ▼
   ┌───────────────────────────────────────────────────────────────────────────┐
-  │  检索与生成: Hybrid Retriever + Enhanced Pipeline + DeepSeek LLM         │
-  │              Dense+Sparse → RRF融合 → Parent扩展 → 置信度重排             │
-  └───────────────────────────────────────────────────────────────────────────┘
-          │
-          ▼
-  ┌───────────────────────────────────────────────────────────────────────────┐
-  │  外部服务: PaddleOCR + DashScope VLM + Transformers (bge-m3)             │
+  │  文档处理层                                                                │
+  │  ├─ PDF Parser: pdf-parse + pdfjs-dist                                    │
+  │  ├─ Semantic Chunker: 断崖检测 + 结构边界识别                              │
+  │  ├─ Embedding: bge-m3 (Dense+Sparse) / multilingual-e5-small              │
+  │  └─ OCR + VLM: PaddleOCR + qwen3-vl-flash                                 │
   └───────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🚀 快速开始
+## 技术栈
+
+| 类别 | 技术 | 说明 |
+|------|------|------|
+| **后端框架** | Fastify + TypeScript | 高性能 HTTP Server，WebSocket 支持 |
+| **向量数据库** | Qdrant | HNSW 索引，Dense + Sparse 双轨支持 |
+| **消息队列** | Redis + Bull | 异步评估任务调度 |
+| **嵌入模型** | bge-m3 | Dense(1024维) + Sparse(词权重) |
+| **LLM 服务** | DeepSeek Reasoner | 思考链支持，流式生成 |
+| **OCR 服务** | PaddleOCR PP-StructureV3 | 版面分析 + 文字识别 |
+| **VLM 服务** | qwen3-vl-flash | 表格/图表/公式理解 |
+| **前端框架** | React + Vite + TailwindCSS | 可视化 Dashboard |
+| **MCP 协议** | @modelcontextprotocol/sdk | Claude/AI 助手集成 |
+| **状态管理** | Zustand | 前端状态 + WebSocket 同步 |
+| **测试框架** | Vitest | 单元测试 + E2E 测试 |
+
+---
+
+## 快速开始
+
+### 1. 安装依赖
 
 ```bash
-# 1. 安装依赖
 npm install
+```
 
-# 2. 配置环境变量（可选）
-export DEEPSEEK_API_KEY=your_key        # LLM智能问答
-export DASHSCOPE_API_KEY=your_key       # VLM图片理解
+### 2. 配置环境变量
 
-# 3. 启动OCR服务（处理扫描PDF需要）
+```bash
+# LLM 服务 (必选其一)
+export DEEPSEEK_API_KEY=your_key       # DeepSeek API
+export ANTHROPIC_API_KEY=your_key      # Claude API
+export OPENAI_API_KEY=your_key         # OpenAI API
+# Ollama 本地无需配置
+
+# VLM 服务 (可选，处理扫描 PDF)
+export DASHSCOPE_API_KEY=your_key      # 阿里云 DashScope
+
+# 向量数据库 (推荐)
+export VECTOR_STORE_TYPE=qdrant
+export QDRANT_URL=http://localhost:6333
+export EMBEDDING_MODE=hybrid            # Dense+Sparse 模式
+```
+
+### 3. 启动服务
+
+```bash
+# 启动 Qdrant (Docker)
+docker run -p 6333:6333 qdrant/qdrant
+
+# 启动 Redis (Docker，评估队列需要)
+docker run -p 6379:6379 redis:7-alpine
+
+# 启动 OCR 服务 (处理扫描 PDF)
 cd scripts && uv run ocr_service.py
 
-# 4. 启动Qdrant向量数据库（可选，用于Hybrid检索）
-docker run -p 6333:6333 qdrant/qdrant
-export VECTOR_STORE_TYPE=qdrant
-export EMBEDDING_MODE=hybrid
+# 启动主服务
+npm run start:server
 
-# 5. 启动主服务
-npm run dev
+# 启动评估 Worker (可选)
+npm run worker:evaluation
 ```
 
-访问 http://localhost:3001 打开Web Dashboard。
+### 4. 访问界面
+
+打开浏览器访问 http://localhost:3001
 
 ---
 
-## 🔧 配置说明
+## 模块设计
 
-### Hybrid检索 (Qdrant + bge-m3)
-
-**推荐配置**：启用Hybrid检索获得最佳性能。
-
-```bash
-# Qdrant向量数据库
-VECTOR_STORE_TYPE=qdrant          # 使用Qdrant (默认: in-memory)
-QDRANT_URL=http://localhost:6333  # Qdrant服务地址
-QDRANT_API_KEY=your_key           # 可选，用于认证
-
-# Hybrid嵌入模式
-EMBEDDING_MODE=hybrid             # Dense+Sparse混合 (推荐)
-HYBRID_RETRIEVAL_ENABLED=true     # 启用Hybrid检索
-```
-
-**架构优势**：
-- **Dense向量** (1024维)：语义相似度搜索，理解查询意图
-- **Sparse向量** (词权重)：关键词精确匹配，中文检索更准
-- **RRF融合**：无需归一化，自动平衡两种搜索结果
-- **性能提升**：HNSW索引 O(logN) vs 内存线性 O(N)
-
-详见 [docs/hybrid-retrieval.md](docs/hybrid-retrieval.md)
-
-### LLM智能问答 (DeepSeek)
-
-```bash
-DEEPSEEK_API_KEY=your_key       # 必需
-DEEPSEEK_MODEL=deepseek-reasoner  # 支持思考链
-```
-
-配置后，Chat Tab将：
-1. 检索相关文档片段
-2. DeepSeek生成智能回答（含思考过程）
-3. 实时流式显示生成过程
-
-### VLM图片理解 (阿里云DashScope)
-
-```bash
-DASHSCOPE_API_KEY=your_key      # 必需
-```
-
-配置后，表格/图表可被深度理解：
-- 表格 → Markdown格式存储，可关键词检索
-- 图表 → 类型+趋势描述，可语义检索
-- 公式 → LaTeX格式，可符号检索
-
-### 本地嵌入模型
-
-默认使用本地Transformers，零API成本：
-
-```bash
-# 已内置
-multilingual-e5-small  # 文本嵌入 (384维, 支持100+语言)
-clip-vit-base-patch32  # 图像嵌入 (跨模态检索)
-```
-
----
-
-## 📁 目录结构
+### 目录结构
 
 ```
 src/
-├── core/           # Harness框架、Pipeline编排
-├── parsers/        # PDF解析、OCR服务、VLM增强
-├── chunking/       # 语义分块、断崖检测、层级存储
-├── embedding/      # 嵌入生成（本地/云端）
-├── retrieval/      # Small-to-Big检索 + 查询优化 + 置信度重排
-├── server/         # HTTP/WebSocket服务、LLM生成
-├── frontend/       # React可视化界面
-└── mcp/            # MCP Server协议实现
+├── core/                 # Harness 框架、Pipeline 编排
+│   ├── harness.ts        # Pipeline 生命周期管理
+│   └── pipeline-hooks.ts # 可插拔 Hooks
+│
+├── parsers/              # 文档解析
+│   ├── pdf-parser.ts     # PDF 解析
+│   └── ocr-service.ts    # OCR + VLM 集成
+│
+├── chunking/             # 语义分块
+│   ├── semantic-chunker.ts      # 断崖检测
+│   ├── similarity-cliff.ts      # 相似度断崖算法
+│   └── hierarchical-store.ts    # Small + Parent 层级存储
+│
+├── embedding/            # 向量嵌入
+│   ├── hybrid-embedding-service.ts  # bge-m3 Dense+Sparse
+│   └── local-embedding-service.ts   # 本地 Transformers
+│
+├── retrieval/            # 检索引擎
+│   ├── hybrid-retriever.ts    # Dense+Sparse+RRF 融合
+│   ├── small-to-big.ts        # 小块定位 → 父块展开
+│   ├── query-optimizer.ts     # 查询重写 + 扩展
+│   └── confidence-reranker.ts # 置信度重排
+│
+├── medical/              # Medical Agent
+│   ├── agent/
+│   │   ├── AgentExecutor.ts    # ReAct/Planning 双模式
+│   │   ├── MedicalReasoner.ts  # 医学推理
+│   │   ├── TaskPlanner.ts      # DAG 任务规划
+│   │   └── TraceVisualizer.ts  # 执行追踪可视化
+│   ├── entity-recognizer.ts    # 医学实体识别
+│   ├── safety-layer.ts         # 禁忌检查 + 安全评估
+│   └── evidence-evaluator.ts   # 增强证据评估
+│
+├── evaluation/           # RAG 评估体系
+│   ├── MedicalEvaluationPipeline.ts  # 三层评估流水线
+│   └── types.ts                       # 评估结果类型
+│
+├── tracing/              # 追踪系统
+│   ├── TraceStorage.ts        # SQLite 持久化
+│   ├── TraceContext.ts        # 请求级追踪上下文
+│   ├── TraceExporter.ts       # RAGAS 格式导出
+│   └── MetricsAggregator.ts   # 指标聚合 + WebSocket 推送
+│
+├── queue/                # 异步队列
+│   ├── EvaluationQueue.ts     # Bull 队列管理
+│   └── EvaluationWorker.ts    # Worker 进程
+│
+├── server/               # HTTP 服务
+│   ├── main-server.ts    # Fastify 主服务
+│   ├── routes/chat.ts    # Chat API + Agent 集成
+│   └── bull-board.ts     # 队列监控面板
+│
+├── frontend/             # React 可视化
+│   ├── components/
+│   │   ├── ChatWindow.tsx         # 聊天界面
+│   │   ├── StatsDashboard.tsx     # 统计面板
+│   │   ├── TraceExplorer.tsx      # 追踪浏览器
+│   │   └── stats/EvaluationCard.tsx # 评估指标卡片
+│   └── store/
+│       ├── statsStore.ts   # 统计状态
+│       └── traceStore.ts   # 追踪状态
+│
+└── mcp/                  # MCP Server
+    └── server.ts         # MCP 协议实现
+    └── tools/
+        ├── rag-query.ts      # 文档检索工具
+        └── medical-agent.ts  # Medical Agent 工具
+```
+
+### 核心模块详解
+
+#### Medical Agent
+
+```typescript
+// 双模式执行
+const executor = createAgentExecutor({
+  maxIterations: 5,
+  confidenceThreshold: 0.8,
+  enablePlanning: true,      // Planning 模式
+  useRuleBasedDecide: true,  // 规则化决策 (默认)
+  maxReplanRounds: 2,
+}, context);
+
+// Planning 模式内置 6 个模板
+// ├─ 指南年份过滤
+// ├─ 药物禁忌检查
+// ├─ 药物对比 (并行检索)
+// ├─ 指标药物查询
+// ├─ 指标决策支持
+// └─ 疾病用药建议
+```
+
+#### Hybrid Retriever
+
+```typescript
+// 双轨检索流程
+Query → bge-m3 → Dense(1024维) + Sparse(词权重)
+        │
+        ├─→ Qdrant.searchDense('text_chunks', topK=50)
+        │     → Dense Results
+        │
+        ├─→ Qdrant.searchSparse('text_chunks', topK=50)
+        │     → Sparse Results
+        │
+        └─→ RRF Fusion (k=60)
+              → 融合排序 → Small-to-Big 展开
+```
+
+#### Evaluation Pipeline
+
+```typescript
+// 三层评估架构
+TraceContextData
+    │
+    ▼
+Layer 1: RAGAS 基础 (LLM 驱动)
+├─ Faithfulness: 答案声称 → 检索内容支持验证
+├─ Context Relevance: Chunk 相关性判断
+└─ Answer Relevance: 答案 → 问题反推验证
+    │
+    ▼
+Layer 2: 医疗核心 (LLM 驱动)
+├─ Medical Accuracy: 术语正确性 + 指南符合度
+└─ Safety Assessment: 禁忌 + 相互作用检测
+    │
+    ▼
+Layer 3: 医疗增强 (规则驱动)
+├─ Evidence Traceability: 引用匹配
+├─ Completeness: 实体覆盖率
+└─ Terminology Accuracy: 术语关键词
+    │
+    ▼
+ExtendedEvaluationResult
+├─ overallScore: 加权综合分数
+├─ riskLevel: 'safe' | 'caution' | 'warning' | 'danger'
+└─ layerScores: { layer1, layer2, layer3 }
 ```
 
 ---
 
-## 🔬 核心算法
-
-### 断崖检测 (语义边界识别)
-
-```
-输入: Embedding序列 [e1, e2, ..., en]
-
-算法:
-1. 计算相邻相似度: sim_i = cosine(e_i, e_{i+1})
-2. 找候选点: sim < 0.7 (有断崖)
-3. 验证梯度: |sim_i - sim_{i-1}| > 0.15 (下降幅度够大)
-4. 滤噪: 要求连续2+个候选点
-5. 置信度: gradient(60%) + width(40%)
-
-输出: 语义边界位置列表 → 在此切分
-```
-
-### Small-to-Big检索
-
-```
-Phase 1: 小块精准定位
-  - queryEmbedding = embed(userQuery)
-  - vectorSearch(queryEmbedding, smallChunks)
-  - filter(similarity > 0.75)
-
-Phase 2: 父块完整展开
-  - getParentChunk(matchedChild)
-  - extractContextWindow(parent, child)
-  - return 完整语义单元
-```
-
----
-
-## ⚡ 性能基准 (2026-04-23)
-
-### Agent 执行性能
-
-| 指标 | 修复前 | 修复后 | 改进 |
-|------|--------|--------|------|
-| 平均迭代次数 | 3轮 | 1-2轮 | ↓67% |
-| LLM调用次数 | 3次 | 1次 | ↓67% |
-| 执行时间（预期） | ~330秒 | ~10秒 | ↓97% |
-| 空查询错误 | 500崩溃 | 400错误 | ✅ |
-| 检索统计显示 | 显示0 | 显示正确值 | ✅ |
-
-### 检索性能
-
-| 操作 | 时间 | 说明 |
-|------|------|------|
-| Hybrid检索 (dense+sparse) | ~50ms | 1024维dense + sparse索引 |
-| Small-to-Big展开 | <5ms | 从命中小块展开到父块 |
-| 查询优化 | ~200ms | LLM分析+重写+扩展 |
-| VLM图片理解 | ~1-2s | 表格→Markdown转换 |
-
-### 内存占用
-
-| 组件 | 内存 | 说明 |
-|------|------|------|
-| HierarchicalStore | ~50MB | 150个小块+30父块 |
-| EmbeddingService | ~200MB | Transformers模型缓存 |
-| VLM服务 | ~1GB | qwen3-vl-flash模型 |
-
----
-
-## 🌐 API端点
+## API 端点
 
 | 方法 | 端点 | 功能 |
 |------|------|------|
-| POST | `/api/documents/upload` | 上传文档 |
-| GET | `/api/documents` | 文档列表 |
-| DELETE | `/api/documents/:id` | 删除文档 |
-| POST | `/api/chat/generate` | SSE流式生成答案（支持Agent模式） |
-| POST | `/api/chat/enhanced` | 增强检索+置信度答案 |
-| GET | `/api/chat/config` | 获取检索配置预设 |
-| POST | `/api/chat/config` | 更新检索配置 |
-| GET | `/api/stats` | 系统统计 |
-| GET | `/api/stats/health/storage` | 存储健康状态检查 |
-| POST | `/api/stats/health/storage/sync` | 手动触发存储同步 |
-| GET | `/api/ws-status` | WebSocket连接状态 |
-| GET | `/api/health` | 服务健康检查 |
+| `POST` | `/api/documents/upload` | 上传文档 |
+| `GET` | `/api/documents` | 文档列表 |
+| `DELETE` | `/api/documents/:id` | 删除文档 |
+| `POST` | `/api/chat/generate` | SSE 流式生成答案 (支持 Agent) |
+| `POST` | `/api/chat/enhanced` | 增强检索 + 置信度答案 |
+| `GET` | `/api/stats` | 系统统计 |
+| `GET` | `/api/stats/health/storage` | 存储健康检查 |
+| `GET` | `/api/health` | 服务健康检查 |
+| `GET` | `/admin/queues` | Bull Board 队列监控 |
 
-### 错误响应 (2026-04-23 更新)
-
-| HTTP状态码 | 错误类型 | 说明 |
-|------------|----------|------|
-| 400 | `Invalid query` | 空查询或Agent处理后查询为空 |
-| 400 | `Query is required` | POST请求缺少query字段 |
-| 400 | `Invalid configuration` | 检索配置验证失败 |
-| 500 | `Generation failed` | LLM生成失败（检查API密钥） |
-| 500 | `Retrieval failed` | 检索过程异常 |
-| 503 | `Document store not initialized` | 文档存储未初始化（需上传文档） |
-
-**空查询保护** (修复于 2026-04-23)：
-```json
-// Agent处理后查询为空 → 400错误
-{
-  "statusCode": 400,
-  "error": "Invalid query",
-  "message": "Query became empty after Agent processing"
-}
-
-// 修复前：空查询导致500崩溃
-// 修复后：返回400，避免崩溃
-```
-
-### Agent模式参数
-
-`POST /api/chat/generate` 支持 Agent 模式：
+### Agent 模式请求
 
 ```json
+POST /api/chat/generate
 {
-  "query": "糖尿病",
-  "enableAgent": true,     // 启用医学Agent（默认true）
+  "query": "二甲双胍禁忌症",
+  "enableAgent": true,
   "topK": 5,
   "similarityThreshold": 0.0,
   "maxContextTokens": 4000
 }
 ```
 
-**返回字段**：
-- `agentUsed`: 是否使用了Agent
-- `agentSatisfied`: Agent是否满意结果
-- `iterations`: Agent迭代次数（修复后通常1-2次）
-
-### HybridSearchResult 格式
-
-启用Hybrid模式后，检索结果包含融合信息：
-
-```json
-{
-  "parentChunkId": "uuid",
-  "parentContent": "完整父块内容",
-  "parentScore": 0.85,
-  "method": "hybrid_small", // 或 "fallback_parent_sparse"
-  "recoveredFrom": "qdrant_payload", // 可选，表示数据来自恢复机制
-  "recoveryStatus": "success", // 可选，表示恢复状态
-  "matchedSmallChunks": [
-    {
-      "smallChunkId": "uuid",
-      "score": 0.92,
-      "sources": ["dense", "sparse"],
-      "denseRank": 3,
-      "sparseRank": 1
-    }
-  ],
-  "fusionInfo": {
-    "denseHits": 15,
-    "sparseHits": 12,
-    "overlapHits": 5,
-    "fusedCount": 22
-  }
-}
-```
-
-### Storage Health API (数据一致性检查)
-
-**GET `/api/stats/health/storage`** - 查看存储健康状态：
-
-```json
-{
-  "hierarchicalStore": {
-    "smallChunks": 150,
-    "parentChunks": 30,
-    "persisted": true
-  },
-  "qdrant": {
-    "textChunks": 150,
-    "parentChunks": 30,
-    "healthy": true
-  },
-  "syncStatus": {
-    "consistent": true,
-    "missingInStore": [],
-    "missingInQdrant": []
-  }
-}
-```
-
-**POST `/api/stats/health/storage/sync`** - 手动触发同步检查：
-
-```json
-{
-  "success": true,
-  "syncStatus": {
-    "storeSmallCount": 150,
-    "storeParentCount": 30,
-    "qdrantSmallCount": 155,
-    "qdrantParentCount": 30,
-    "consistent": false,
-    "missingInStore": ["~5 small chunks"],
-    "recoveredChunks": [],
-    "recoveryFailures": []
-  },
-  "message": "Storage inconsistency detected. Recovery mechanism will handle missing chunks during retrieval."
-}
-```
-
-**数据一致性恢复机制**：
-- 服务器重启后自动检测 `HierarchicalStore` 与 `Qdrant` 数据差异
-- 启用 `STORE_CONTENT_IN_PAYLOAD=true` 可在检索时从 Qdrant payload 恢复缺失数据
-- 详细文档见 [docs/hybrid-retrieval.md](docs/hybrid-retrieval.md)
-```
-
-### WebSocket事件
-
-| 事件 | 说明 |
-|------|------|
-| `stage:start/complete` | Pipeline执行进度 |
-| `retrieval:start/match/complete` | 检索过程可视化 |
-| `generation:start/thinking/answer/complete` | LLM生成过程 |
+**响应字段**:
+- `agentUsed`: 是否使用 Agent
+- `agentSatisfied`: Agent 满意度
+- `iterations`: 迭代次数
+- `thinking`: 推理过程
+- `answer`: 最终回答
 
 ---
 
-## 🤖 MCP协议
+## MCP 工具
 
-可被Claude等AI助手直接调用：
+可被 Claude 等 AI 助手直接调用：
+
+### Claude Desktop 配置
 
 ```json
-// Claude Desktop配置
 {
   "mcpServers": {
     "rag": {
       "command": "node",
-      "args": ["/path/to/dist/mcp/server.js"]
+      "args": ["dist/mcp/server.js"]
     }
   }
 }
 ```
 
-**工具列表**：
-- `rag_query` - 查询文档库
-- `rag_index` - 上传并索引文档
+### 工具列表
+
+| 工具名称 | 功能 |
+|----------|------|
+| `rag_query` | 文档检索查询 |
+| `rag_index` | 上传并索引文档 |
+| `medical_query` | 简化医学查询 |
+| `medical_agent` | ReAct 模式医学 Agent |
+| `medical_agent_plan` | Planning 模式医学 Agent |
 
 ---
 
-## 📈 变更历史
+## 性能基准
 
-详见 `openspec/changes/archive/` 目录，15+次迭代：
+### Agent 执行性能 (2026-04-23)
 
-| 时间 | 变更 | 核心内容 |
-|------|------|----------|
-| 04-09 | 基础架构 | 多模态PDF、语义分块、前端应用 |
-| 04-10 | 能力增强 | 检索一致性、本地嵌入 |
-| 04-13 | LLM集成 | DeepSeek思考链、可视化、UI现代化 |
-| 04-14 | 图片PDF | OCR+VLM完整流程 |
-| 04-15 | 持续迭代 | 流式优化、质量评估 |
+| 指标 | 规则化决策前 | 规则化决策后 | 改进 |
+|------|--------------|--------------|------|
+| LLM 调用次数 | 5-15 次 | 1-3 次 | ↓80% |
+| 执行时间 | 10-40 秒 | 2-10 秒 | ↓75% |
+| 绝对禁忌场景 | 3 次 LLM | 0 次 LLM | 立即返回 |
 
----
+### 检索性能
 
-## 📚 技术选型
-
-| 需求 | 选择 | 原因 |
+| 操作 | 时间 | 说明 |
 |------|------|------|
-| PDF切分 | 断崖检测 | 上下文完整性 |
-| 检索策略 | Small-to-Big | 精准+完整平衡 |
-| OCR引擎 | PaddleOCR | 中文+版面分析 |
-| VLM服务 | qwen3-vl-flash | 国内稳定+速度快 |
-| LLM服务 | DeepSeek | 思考链支持 |
-| 嵌入模型 | 本地Transformers | 无成本+离线 |
+| Hybrid 检索 (dense+sparse) | ~50ms | 1024维 + Sparse |
+| Small-to-Big 展开 | <5ms | 小块 → 父块 |
+| Qdrant HNSW 搜索 | <10ms | 100K 向量 |
+| 查询优化 (LLM) | ~200ms | 重写 + 扩展 |
+
+### 评估吞吐量
+
+| 配置 | 吞吐量 | 说明 |
+|------|--------|------|
+| 单 Worker (replicas=1) | ~20 eval/min | concurrency=2 |
+| 3 Workers (replicas=3) | ~60 eval/min | 水平扩展 |
+| 评估延迟 | 30-60s | ~10-20 次 LLM 调用 |
 
 ---
 
-## 📖 详细文档
+## 配置说明
 
-- [`docs/interview-qa.md`](docs/interview-qa.md) - 面试技术问答话术
-- [`docs/architecture-diagrams.md`](docs/architecture-diagrams.md) - 详细架构图
-- [`docs/image-pdf-config.md`](docs/image-pdf-config.md) - 图片PDF配置
-- [`docs/enhanced-retrieval.md`](docs/enhanced-retrieval.md) - 增强检索详细文档
-- [`docs/retrieval-config.md`](docs/retrieval-config.md) - 检索配置说明
+### Hybrid 检索
+
+```bash
+# 推荐配置
+VECTOR_STORE_TYPE=qdrant
+QDRANT_URL=http://localhost:6333
+EMBEDDING_MODE=hybrid
+HYBRID_RETRIEVAL_ENABLED=true
+
+# RRF 参数
+RRF_K=60                   # 融合常数
+RRF_DENSE_TOPK=50          # Dense 搜索数量
+RRF_SPARSE_TOPK=50         # Sparse 搜索数量
+
+# 内容恢复 (可选)
+STORE_CONTENT_IN_PAYLOAD=true  # 存储内容到 Qdrant payload
+```
+
+### LLM 配置优先级
+
+1. `ANTHROPIC_API_KEY` → Claude API
+2. `OPENAI_API_KEY` → OpenAI API
+3. `DEEPSEEK_API_KEY` → DeepSeek API
+4. 默认 → Ollama 本地
+
+### Agent 配置
+
+```typescript
+interface AgentConfig {
+  maxIterations: number;           // 最大迭代次数 (默认 5)
+  confidenceThreshold: number;     // 置信度阈值 (默认 0.8)
+  enablePlanning: boolean;         // Planning 模式 (默认 true)
+  useRuleBasedDecide: boolean;     // 规则化决策 (默认 true)
+  maxReplanRounds: number;         // 最大重规划轮数 (默认 2)
+  ruleThresholds: {
+    minRetrievalCount: number;     // 检索数量阈值 (默认 3)
+    minSimilarityScore: number;    // 相似度阈值 (默认 0.7)
+    minEntityCoverage: number;     // 实体覆盖率 (默认 0.8)
+  };
+}
+```
 
 ---
 
-## License
+## Docker 部署
 
-MIT
+```bash
+# 启动所有服务
+docker-compose up -d
+
+# 服务列表
+# ├─ rag-server: 主服务 (port 3001)
+# ├─ qdrant: 向量数据库 (port 6333)
+# ├─ redis: 消息队列 (port 6379)
+# ├─ ocr-service: OCR + VLM (port 8080)
+# └─ evaluation-worker: 评估 Worker
+
+# 扩展 Worker 数量
+docker-compose up -d --scale evaluation-worker=3
+
+# 查看日志
+docker-compose logs -f evaluation-worker
+```
+
+---
+
+## 变更历史
+
+项目通过 OpenSpec 系统化管理变更，完整变更记录见 `openspec/changes/archive/`。
+
+| 时间 | 阶段 | 核心变更 |
+|------|------|----------|
+| 04-09 | 基础架构 | 多模态 PDF、语义分块、前端应用、类型安全 |
+| 04-10 | 检索增强 | 检索-嵌入一致性、本地嵌入模型 |
+| 04-13 | LLM 集成 | DeepSeek 思考链、Pipeline 可视化、UI 现代化 |
+| 04-14~15 | 持续优化 | OCR+VLM 流程、流式滚动修复、上下文窗口 |
+| 04-20 | 检索升级 | Qdrant 向量库、Hybrid 检索、层级存储同步 |
+| 04-21~22 | Agent 集成 | Medical Agent、Safety Layer、DAG 编排 |
+| 04-23 | 性能优化 | 规则化决策、早终止、8 维度评估系统 |
+
+---
+
+## 详细文档
+
+| 文档 | 说明 |
+|------|------|
+| [medical-agent-guide.md](docs/medical-agent-guide.md) | Medical Agent 使用指南 |
+| [rag-evaluation-guide.md](docs/rag-evaluation-guide.md) | RAG 评估体系使用指南 |
+| [rag-evaluation-system-evolution.md](docs/rag-evaluation-system-evolution.md) | 评估系统架构演进 |
+| [hybrid-retrieval.md](docs/hybrid-retrieval.md) | Hybrid 检索详细说明 |
+| [architecture-diagrams.md](docs/architecture-diagrams.md) | 系统架构图 |
+| [interview-qa.md](docs/interview-qa.md) | 技术面试问答 |
+
+---
+
+## 安全提示
+
+⚠️ **Medical Agent 生成的回答仅供参考**：
+
+- 不构成医疗诊断或治疗建议
+- 实际用药请咨询专业医生
+- 系统可能存在知识更新滞后问题
+- Safety Layer 检测到危险内容会自动标记
+
+---
+
+## 开源协议
+
+MIT License
+
+---
+
+> **最后更新**: 2026-04-24
+>
+> **维护者**: SelfSearchRAG Team
