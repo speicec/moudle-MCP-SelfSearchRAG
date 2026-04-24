@@ -109,6 +109,21 @@ function createEventHandler() {
     } else if (event.type === 'agent:complete' && event.agentResult) {
       useRetrievalStore.getState().handleAgentComplete(event.agentResult);
     }
+
+    // Handle evidence evaluation events (new)
+    if (event.type === 'evidence:evaluated' && event.evidenceEvaluation) {
+      // Update retrieval results with evidence data
+      const results = useRetrievalStore.getState().results;
+      const updatedResults = results.map((result, index) => {
+        const evidence = event.evidenceEvaluation?.find(e => e.chunkIndex === index);
+        if (evidence) {
+          return { ...result, evidenceEvaluation: evidence };
+        }
+        return result;
+      });
+      useRetrievalStore.getState().handleRetrievalComplete(updatedResults, useRetrievalStore.getState().duration ?? 0, event.timestamp);
+      useChatStore.getState().setCurrentSources(updatedResults);
+    }
   };
 }
 

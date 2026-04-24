@@ -10,6 +10,9 @@ import type {
   AgentResultSummary,
   AgentPhase,
   ExecutionMode,
+  EvidenceEvaluation,
+  GradeLevel,
+  EvidenceStatistics,
 } from '../types/visualization.js';
 
 /**
@@ -38,6 +41,8 @@ export interface RetrievalResult {
   contextWindow?: string;
   windowStart?: number;
   windowEnd?: number;
+  // GRADE evidence evaluation (new)
+  evidenceEvaluation?: EvidenceEvaluation;
 }
 
 /**

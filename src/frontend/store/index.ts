@@ -38,6 +38,20 @@ export interface RetrievalResult {
   parentChunkContent: string;
   similarityScore: number;
   sourceDocumentId: string;
+  // GRADE evidence evaluation (new)
+  evidenceEvaluation?: {
+    literatureType: 'rct' | 'meta_analysis' | 'guideline' | 'observational' | 'case_report' | 'expert_opinion';
+    grade: 'A' | 'B' | 'C' | 'D';
+    isCurrent: boolean;
+    year?: number;
+    sourceGuideline?: string;
+    expirationWarning?: string;
+    sourceAuthority?: 'international' | 'national' | 'local';
+    authorityWeight?: number;
+    timeWeight?: number;
+    consistencyScore?: number;
+    compositeScore?: number;
+  };
 }
 
 /**
