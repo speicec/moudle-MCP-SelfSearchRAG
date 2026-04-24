@@ -364,6 +364,35 @@ export function evaluateSourceAuthority(documentName: string): {
 }
 
 /**
+ * 评估来源权威性（直接使用 guidelineSource）
+ *
+ * 如果有预先识别的 guidelineSource，直接使用它确定权威级别。
+ * 这是设计文档中推荐的"上游提取"方式。
+ *
+ * @param guidelineSource - 预先识别的指南来源（如 "ADA", "KDIGO", "CDS"）
+ * @returns 权威性级别和权重
+ */
+export function evaluateSourceAuthorityBySource(guidelineSource: string): {
+  level: SourceAuthorityLevel;
+  weight: number;
+} {
+  // Check if guidelineSource matches international keywords
+  const internationalSources = ['ADA', 'KDIGO', 'ESC', 'ATA', 'EASD'];
+  if (internationalSources.includes(guidelineSource)) {
+    return { level: 'international', weight: 1.0 };
+  }
+
+  // Check if guidelineSource matches national keywords
+  const nationalSources = ['CDS', 'CSH', 'CETA'];
+  if (nationalSources.includes(guidelineSource)) {
+    return { level: 'national', weight: 0.8 };
+  }
+
+  // Unknown or local source
+  return { level: 'local', weight: 0.6 };
+}
+
+/**
  * 计算时效权重
  *
  * 线性衰减：每年衰减 0.05，最低 0.5
@@ -478,7 +507,7 @@ export function sortEvidenceByQuality(evidences: EvidenceEvaluation[]): Evidence
 /**
  * 增强版多来源评估
  *
- * @param sources - 来源列表（含内容）
+ * @param sources - 来源列表（含内容和元数据）
  * @returns 增强证据评估列表
  */
 export function evaluateMultipleSourcesEnhanced(
@@ -486,6 +515,7 @@ export function evaluateMultipleSourcesEnhanced(
     documentName: string;
     year?: number;
     content?: string;
+    guidelineSource?: string;  // Pre-identified guideline source from chunk metadata
   }>
 ): EvidenceEvaluation[] {
   // 计算一致性分数
@@ -495,11 +525,14 @@ export function evaluateMultipleSourcesEnhanced(
     // 基础评估
     const literatureType = classifyLiteratureType(source.content ?? source.documentName);
     const grade = mapEvidenceGrade(literatureType);
-    const guidelineId = extractGuidelineId(source.documentName);
+    // Use pre-identified guidelineSource if available, otherwise extract from documentName
+    const guidelineId = source.guidelineSource ?? extractGuidelineId(source.documentName);
     const timeliness = checkTimeliness(source.year, guidelineId);
 
-    // 增强评估
-    const authority = evaluateSourceAuthority(source.documentName);
+    // 增强评估 - use guidelineId for authority evaluation if available, fallback to documentName
+    const authority = guidelineId
+      ? evaluateSourceAuthorityBySource(guidelineId)
+      : evaluateSourceAuthority(source.documentName);
     const timeWeight = calculateTimeWeight(source.year);
     const compositeScore = calculateEnhancedCompositeScore(
       grade,

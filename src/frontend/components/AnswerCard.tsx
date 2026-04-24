@@ -25,6 +25,8 @@ interface Source {
   metadata?: {
     pageNumber?: number;
     section?: string;
+    documentTitle?: string;  // Human-readable document title
+    documentYear?: number;   // Publication year
   };
 }
 

@@ -1865,9 +1865,16 @@ body {
   font-size: 10px;
   color: var(--clinical-text-muted);
   font-family: var(--font-mono);
-  max-width: 100px;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.clinical-evidence-year {
+  font-size: 10px;
+  color: var(--clinical-text-secondary);
+  font-weight: 500;
+  margin-left: 2px;
 }
 
 .clinical-evidence-quality-section {

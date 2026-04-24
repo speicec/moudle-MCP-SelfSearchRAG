@@ -27,6 +27,9 @@ interface EvidenceResult {
     pageNumber?: number;
     section?: string;
     documentType?: string;
+    // Document-level metadata from chunk
+    documentTitle?: string;  // Human-readable document title
+    documentYear?: number;   // Publication year
   };
 }
 
@@ -126,10 +129,21 @@ const EvidenceCard: React.FC<{
             <Hash className="w-3 h-3" />
             <span>{sampleId}</span>
           </div>
-          {result.sourceDocumentId && (
+          {(result.metadata?.documentTitle || result.sourceDocumentId) && (
             <div className="clinical-evidence-source-doc">
               <FileText className="w-3 h-3" />
-              <span>{result.sourceDocumentId.slice(0, 20)}</span>
+              <span>
+                {result.metadata?.documentTitle
+                  ? (result.metadata.documentTitle.length > 25
+                    ? result.metadata.documentTitle.slice(0, 25) + '...'
+                    : result.metadata.documentTitle)
+                  : (result.sourceDocumentId?.slice(0, 20) ?? 'Unknown')}
+              </span>
+              {result.metadata?.documentYear && (
+                <span className="clinical-evidence-year">
+                  ({result.metadata.documentYear})
+                </span>
+              )}
             </div>
           )}
         </div>

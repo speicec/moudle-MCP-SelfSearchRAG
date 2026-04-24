@@ -330,9 +330,11 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           content: r.parentChunkContent,
           source: {
             documentId: r.sourceDocumentId,
-            documentName: r.sourceDocumentId,
+            // Use documentTitle from chunk metadata, fallback to sourceDocumentId (filename)
+            documentName: r.metadata?.documentTitle ?? r.sourceDocumentId,
             chunkId: r.smallChunkId,
             ...(r.metadata?.pageNumber ? { pageNumber: r.metadata.pageNumber } : {}),
+            ...(r.metadata?.documentYear ? { year: r.metadata.documentYear } : {}),
           } as import('../../medical/agent/types.js').SourceCitation,
         }));
       };
