@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createAgentExecutor, AgentExecutor, ExtendedAgentConfig } from './AgentExecutor.js';
 import type { AgentContext } from './types.js';
-import type { MedicalEntities, MedicalAnswer, SourceCitation } from '../types.js';
+import type { MedicalEntities, MedicalAnswer, SourceCitation, EvidenceEvaluation } from '../types.js';
 
 describe('AgentExecutor Integration', () => {
   const createMockContext = (): AgentContext => {
@@ -15,6 +15,62 @@ describe('AgentExecutor Integration', () => {
       ],
       reasoner: {
         reasonClinical: async () => ({ action: 'stop', confidence: 0.9, reason: 'Test', needsMoreInfo: false }),
+        decide: async () => true,
+        generateAnswer: async () => ({
+          conclusion: { text: 'Test answer', confidence: 'high' },
+          details: { points: [] },
+          evidenceGrade: { grade: 'A', sourceType: 'guideline' },
+          sources: [],
+          warnings: [],
+        }) as MedicalAnswer,
+        checkQuality: async () => ({ isValid: true, issues: [], suggestions: [] }),
+      },
+      extractEntities: (query) => ({
+        diseases: [],
+        drugs: query.includes('二甲双胍') ? [{ id: 'drug_metformin', canonicalName: '二甲双胍', matchedTerm: '二甲双胍', aliases: [], classification: { category: '降糖药', subcategory: '胰岛素增敏剂' } }] : [],
+        indicators: [],
+        relations: [],
+        rawQuery: query,
+        confidence: 0.9,
+      }) as MedicalEntities,
+      buildQueryStrategy: (entities) => ({
+        primaryQuery: entities.drugs[0]?.canonicalName || 'test',
+        expandedTerms: [],
+        filters: {},
+        prioritySources: [],
+      }),
+    };
+  };
+
+  // Create mock context with GRADE evidence data
+  const createMockContextWithEvidence = (): AgentContext => {
+    let callCount = 0;
+    return {
+      retrieval: async (query) => [
+        {
+          content: `RCT study content for ${query}`,
+          source: {
+            documentName: 'ADA Standards of Care 2024',
+            year: 2024,
+          } as SourceCitation,
+        },
+        {
+          content: `Meta-analysis content for ${query}`,
+          source: {
+            documentName: 'Cochrane Review 2023',
+            year: 2023,
+          } as SourceCitation,
+        },
+      ],
+      reasoner: {
+        // First call returns 'retrieve' to trigger retrieval, second returns 'stop'
+        reasonClinical: async () => {
+          callCount++;
+          if (callCount === 1) {
+            return { action: 'retrieve', confidence: 0.9, reason: 'Need to gather evidence', needsMoreInfo: true };
+          }
+          return { action: 'stop', confidence: 0.9, reason: 'Evidence gathered', needsMoreInfo: false };
+        },
         decide: async () => true,
         generateAnswer: async () => ({
           conclusion: { text: 'Test answer', confidence: 'high' },
@@ -406,6 +462,100 @@ describe('AgentExecutor Integration', () => {
         // Error is acceptable if handled properly
         expect(error).toBeDefined();
       }
+    });
+  });
+
+  describe('Evidence Evaluation', () => {
+    it('should include evidenceEvaluation in AgentResult when available', async () => {
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+      };
+
+      const executor = createAgentExecutor(config, createMockContextWithEvidence());
+      const result = await executor.run('二甲双胍用法');
+
+      expect(result.success).toBe(true);
+      // Evidence evaluation should be present
+      expect(result.evidenceEvaluation).toBeDefined();
+      expect(Array.isArray(result.evidenceEvaluation)).toBe(true);
+    });
+
+    it('should calculate overallEvidenceGrade from evidence data', async () => {
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+      };
+
+      const executor = createAgentExecutor(config, createMockContextWithEvidence());
+      const result = await executor.run('二甲双胍用法');
+
+      expect(result.success).toBe(true);
+      // Overall grade should be calculated
+      if (result.evidenceEvaluation && result.evidenceEvaluation.length > 0) {
+        expect(result.overallEvidenceGrade).toBeDefined();
+        expect(['A', 'B', 'C', 'D']).toContain(result.overallEvidenceGrade);
+      }
+    });
+
+    it('should calculate evidenceStatistics from evidence data', async () => {
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+      };
+
+      const executor = createAgentExecutor(config, createMockContextWithEvidence());
+      const result = await executor.run('二甲双胍用法');
+
+      expect(result.success).toBe(true);
+      // Evidence statistics should be calculated
+      if (result.evidenceEvaluation && result.evidenceEvaluation.length > 0) {
+        expect(result.evidenceStatistics).toBeDefined();
+        expect(result.evidenceStatistics?.gradeDistribution).toBeDefined();
+        expect(result.evidenceStatistics?.averageCompositeScore).toBeDefined();
+        expect(result.evidenceStatistics?.conflictDetected).toBeDefined();
+      }
+    });
+
+    it('should handle empty evidenceEvaluation gracefully', async () => {
+      const config: ExtendedAgentConfig = {
+        maxIterations: 3,
+        confidenceThreshold: 0.8,
+        retrievalTopK: 5,
+        retrievalThreshold: 0.3,
+        enableQualityCheck: false,
+        enableTraceLogging: false,
+        enablePlanning: false,
+      };
+
+      // Context that returns empty retrieval (no evidence to evaluate)
+      const emptyRetrievalContext: AgentContext = {
+        ...createMockContext(),
+        retrieval: async () => [],
+      };
+
+      const executor = createAgentExecutor(config, emptyRetrievalContext);
+      const result = await executor.run('不存在的内容');
+
+      expect(result).toBeDefined();
+      // Evidence evaluation should be undefined or empty when no retrieval results
+      expect(result.evidenceEvaluation).toBeUndefined();
+      expect(result.overallEvidenceGrade).toBeUndefined();
     });
   });
 });

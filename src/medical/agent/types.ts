@@ -4,18 +4,39 @@
  * 定义医学 Agent 的状态、动作和结果类型
  */
 
-import type { MedicalEntities, MedicalAnswer, SourceCitation, EvidenceEvaluation } from '../types.js';
+import type { MedicalEntities, MedicalAnswer, SourceCitation, EvidenceEvaluation, GradeLevel } from '../types.js';
 import type { SafetyAssessment } from '../safety-layer.js';
 import type { ExtractedThreshold } from '../threshold-extractor.js';
 import type { RetrievalVisualization } from './RetrievalVisualization.js';
 import type { ExecutionTrace } from './TraceVisualizer.js';
 
 // Re-export types used by Agent module
-export type { MedicalEntities, MedicalAnswer, SourceCitation, EvidenceEvaluation } from '../types.js';
+export type { MedicalEntities, MedicalAnswer, SourceCitation, EvidenceEvaluation, GradeLevel } from '../types.js';
 export type { SafetyAssessment } from '../safety-layer.js';
 export type { ExtractedThreshold } from '../threshold-extractor.js';
 export type { RetrievalVisualization } from './RetrievalVisualization.js';
 export type { ExecutionTrace } from './TraceVisualizer.js';
+
+/**
+ * Type guard: Check if evidence evaluation data is present
+ */
+export function hasEvidenceEvaluation(result: { evidenceEvaluation?: EvidenceEvaluation[] | undefined }): boolean {
+  return result.evidenceEvaluation !== undefined && result.evidenceEvaluation.length > 0;
+}
+
+/**
+ * Type guard: Check if a retrieval result has evidence evaluation
+ */
+export function hasResultEvaluation(result: { evidenceEvaluation?: unknown }): boolean {
+  return result.evidenceEvaluation !== undefined && typeof result.evidenceEvaluation === 'object';
+}
+
+/**
+ * Type guard: Check if overall evidence grade is available
+ */
+export function hasOverallGrade(result: { overallEvidenceGrade?: GradeLevel | undefined }): boolean {
+  return result.overallEvidenceGrade !== undefined;
+}
 
 /**
  * Agent 状态
@@ -173,6 +194,19 @@ export interface AgentResult {
     content: string;
     source: SourceCitation;
   }> | undefined;
+
+  // 证据评估结果（新增）
+  evidenceEvaluation?: EvidenceEvaluation[] | undefined;
+
+  // 整体证据等级（新增）
+  overallEvidenceGrade?: GradeLevel | undefined;
+
+  // 证据统计信息（新增）
+  evidenceStatistics?: {
+    gradeDistribution: Record<GradeLevel, number>;
+    averageCompositeScore: number;
+    conflictDetected: boolean;
+  } | undefined;
 
   // 执行统计
   stats: {

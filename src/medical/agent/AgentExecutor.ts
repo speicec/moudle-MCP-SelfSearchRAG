@@ -1199,6 +1199,49 @@ export class AgentExecutor {
     if (state.retrievalResults !== undefined) {
       result.retrievalResults = state.retrievalResults;
     }
+
+    // 添加证据评估结果
+    if (state.evidenceEvaluation !== undefined && state.evidenceEvaluation.length > 0) {
+      result.evidenceEvaluation = state.evidenceEvaluation;
+
+      // 验证数量一致性
+      if (state.retrievalResults !== undefined) {
+        const evalCount = state.evidenceEvaluation.length;
+        const retrievalCount = state.retrievalResults.length;
+        if (evalCount !== retrievalCount) {
+          this.logger.log(state.iteration, 'observe', 'Evidence count mismatch', {
+            evalCount,
+            retrievalCount,
+          }, 'warn');
+        }
+      }
+
+      // 计算整体证据等级
+      const sortedEvidence = sortEvidenceByQuality(state.evidenceEvaluation);
+      result.overallEvidenceGrade = calculateOverallGrade(sortedEvidence);
+
+      // 计算证据统计信息
+      const gradeDistribution: Record<'A' | 'B' | 'C' | 'D', number> = { A: 0, B: 0, C: 0, D: 0 };
+      for (const evidenceEvalItem of state.evidenceEvaluation) {
+        gradeDistribution[evidenceEvalItem.grade]++;
+      }
+
+      const scoresWithComposite = state.evidenceEvaluation.filter(e => e.compositeScore !== undefined);
+      const averageCompositeScore = scoresWithComposite.length > 0
+        ? scoresWithComposite.reduce((sum, e) => sum + (e.compositeScore ?? 0), 0) / scoresWithComposite.length
+        : 0;
+
+      // 检测证据冲突（是否存在不同等级的证据）
+      const uniqueGrades = new Set(state.evidenceEvaluation.map(e => e.grade));
+      const conflictDetected = uniqueGrades.size > 1 && uniqueGrades.has('A') && (uniqueGrades.has('C') || uniqueGrades.has('D'));
+
+      result.evidenceStatistics = {
+        gradeDistribution,
+        averageCompositeScore,
+        conflictDetected,
+      };
+    }
+
     if (state.error !== undefined) {
       result.error = state.error;
     }
