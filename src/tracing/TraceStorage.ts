@@ -12,6 +12,13 @@ import type {
   EvaluationResult,
   EvaluationTrendData,
 } from './types.js';
+import type {
+  AlertEvent,
+  AlertStatus,
+  ReviewItem,
+  ReviewStatus,
+  ScaleEvent,
+} from '../alert/types.js';
 
 /**
  * SQL Schema 定义
@@ -98,6 +105,65 @@ CREATE INDEX IF NOT EXISTS idx_spans_phase ON spans(phase);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_trace ON llm_calls(trace_id);
 CREATE INDEX IF NOT EXISTS idx_evaluations_trace ON evaluations(trace_id);
 CREATE INDEX IF NOT EXISTS idx_evaluations_timestamp ON evaluations(timestamp);
+
+-- 告警表 (AlertHandler)
+CREATE TABLE IF NOT EXISTS alerts (
+  alert_id TEXT PRIMARY KEY,
+  timestamp TEXT NOT NULL,
+  type TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  trace_id TEXT,
+  evaluation_id TEXT,
+  details_json TEXT,
+  suggested_actions_json TEXT,
+  status TEXT DEFAULT 'active',
+  acknowledged_by TEXT,
+  resolved_at TEXT
+);
+
+-- 告警索引
+CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
+CREATE INDEX IF NOT EXISTS idx_alerts_type ON alerts(type);
+CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
+
+-- 人工审核队列表 (HumanReviewQueue)
+CREATE TABLE IF NOT EXISTS human_review_queue (
+  review_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  evaluation_id TEXT NOT NULL,
+  alert_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  priority TEXT NOT NULL DEFAULT 'medium',
+  created_at TEXT NOT NULL,
+  assigned_to TEXT,
+  reviewed_at TEXT,
+  resolved_at TEXT,
+  review_notes TEXT,
+  result TEXT,
+  details_json TEXT NOT NULL
+);
+
+-- 审核队列索引
+CREATE INDEX IF NOT EXISTS idx_review_status ON human_review_queue(status);
+CREATE INDEX IF NOT EXISTS idx_review_priority ON human_review_queue(priority);
+CREATE INDEX IF NOT EXISTS idx_review_created ON human_review_queue(created_at);
+
+-- 扩缩容事件表 (EvaluationAutoscaler)
+CREATE TABLE IF NOT EXISTS scale_events (
+  event_id TEXT PRIMARY KEY,
+  timestamp TEXT NOT NULL,
+  type TEXT NOT NULL,
+  from_replicas INTEGER NOT NULL,
+  to_replicas INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  triggered_by TEXT NOT NULL,
+  success INTEGER NOT NULL DEFAULT 1,
+  error TEXT
+);
+
+-- 扩缩容事件索引
+CREATE INDEX IF NOT EXISTS idx_scale_timestamp ON scale_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_scale_type ON scale_events(type);
 `;
 
 /**
@@ -467,6 +533,406 @@ export class TraceStorage {
     });
   }
 
+  // ==================== Alert Methods ====================
+
+  /**
+   * 保存告警
+   */
+  async saveAlert(alert: AlertEvent): Promise<void> {
+    this.ensureInit();
+
+    this.db!.run(
+      `INSERT OR REPLACE INTO alerts (
+        alert_id, timestamp, type, severity, trace_id, evaluation_id,
+        details_json, suggested_actions_json, status, acknowledged_by, resolved_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        alert.alertId,
+        alert.timestamp,
+        alert.type,
+        alert.severity,
+        alert.traceId ?? null,
+        alert.evaluationId ?? null,
+        JSON.stringify(alert.details),
+        JSON.stringify(alert.suggestedActions),
+        alert.status,
+        alert.acknowledgedBy ?? null,
+        alert.resolvedAt ?? null,
+      ]
+    );
+
+    await this.persist();
+  }
+
+  /**
+   * 查询告警列表
+   */
+  getAlerts(options?: {
+    status?: AlertStatus;
+    type?: string;
+    limit?: number;
+    offset?: number;
+  }): AlertEvent[] {
+    this.ensureInit();
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (options?.status) {
+      conditions.push('status = ?');
+      params.push(options.status);
+    }
+    if (options?.type) {
+      conditions.push('type = ?');
+      params.push(options.type);
+    }
+
+    const whereClause = conditions.length > 0
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
+    const limitClause = options?.limit
+      ? `LIMIT ${options.limit}${options?.offset ? ` OFFSET ${options.offset}` : ''}`
+      : '';
+
+    const rows = this.db!.exec(
+      `SELECT * FROM alerts ${whereClause} ORDER BY timestamp DESC ${limitClause}`,
+      params
+    );
+
+    if (rows.length === 0 || !rows[0]?.values) return [];
+
+    const result = rows[0];
+    return result.values.map((row: unknown[]) => {
+      const columns = result.columns;
+      const getValue = (colName: string) => row[columns.indexOf(colName)];
+
+      const traceIdValue = getValue('trace_id') as string | null;
+      const evaluationIdValue = getValue('evaluation_id') as string | null;
+      const acknowledgedByValue = getValue('acknowledged_by') as string | null;
+      const resolvedAtValue = getValue('resolved_at') as string | null;
+
+      return {
+        alertId: getValue('alert_id') as string,
+        timestamp: getValue('timestamp') as string,
+        type: getValue('type') as AlertEvent['type'],
+        severity: getValue('severity') as AlertEvent['severity'],
+        ...(traceIdValue && { traceId: traceIdValue }),
+        ...(evaluationIdValue && { evaluationId: evaluationIdValue }),
+        details: JSON.parse(getValue('details_json') as string || '{}'),
+        suggestedActions: JSON.parse(getValue('suggested_actions_json') as string || '[]'),
+        status: getValue('status') as AlertStatus,
+        ...(acknowledgedByValue && { acknowledgedBy: acknowledgedByValue }),
+        ...(resolvedAtValue && { resolvedAt: resolvedAtValue }),
+      };
+    });
+  }
+
+  /**
+   * 查询单个告警
+   */
+  getAlert(alertId: string): AlertEvent | null {
+    const alerts = this.getAlerts({ limit: 1 });
+    const rows = this.db!.exec(
+      'SELECT * FROM alerts WHERE alert_id = ?',
+      [alertId]
+    );
+
+    if (rows.length === 0 || !rows[0]?.values || rows[0].values.length === 0) {
+      return null;
+    }
+
+    const result = rows[0];
+    const row = result.values[0];
+    if (!row) return null;
+
+    const columns = result.columns;
+    const getValue = (colName: string) => row[columns.indexOf(colName)];
+
+    const traceIdValue = getValue('trace_id') as string | null;
+    const evaluationIdValue = getValue('evaluation_id') as string | null;
+    const acknowledgedByValue = getValue('acknowledged_by') as string | null;
+    const resolvedAtValue = getValue('resolved_at') as string | null;
+
+    return {
+      alertId: getValue('alert_id') as string,
+      timestamp: getValue('timestamp') as string,
+      type: getValue('type') as AlertEvent['type'],
+      severity: getValue('severity') as AlertEvent['severity'],
+      ...(traceIdValue && { traceId: traceIdValue }),
+      ...(evaluationIdValue && { evaluationId: evaluationIdValue }),
+      details: JSON.parse(getValue('details_json') as string || '{}'),
+      suggestedActions: JSON.parse(getValue('suggested_actions_json') as string || '[]'),
+      status: getValue('status') as AlertStatus,
+      ...(acknowledgedByValue && { acknowledgedBy: acknowledgedByValue }),
+      ...(resolvedAtValue && { resolvedAt: resolvedAtValue }),
+    };
+  }
+
+  /**
+   * 确认告警
+   */
+  async acknowledgeAlert(alertId: string, acknowledgedBy: string): Promise<void> {
+    this.ensureInit();
+
+    this.db!.run(
+      `UPDATE alerts SET status = 'acknowledged', acknowledged_by = ? WHERE alert_id = ?`,
+      [acknowledgedBy, alertId]
+    );
+
+    await this.persist();
+  }
+
+  /**
+   * 解决告警
+   */
+  async resolveAlert(alertId: string): Promise<void> {
+    this.ensureInit();
+
+    this.db!.run(
+      `UPDATE alerts SET status = 'resolved', resolved_at = ? WHERE alert_id = ?`,
+      [new Date().toISOString(), alertId]
+    );
+
+    await this.persist();
+  }
+
+  // ==================== Review Methods ====================
+
+  /**
+   * 保存审核项
+   */
+  async saveReviewItem(item: ReviewItem): Promise<void> {
+    this.ensureInit();
+
+    this.db!.run(
+      `INSERT OR REPLACE INTO human_review_queue (
+        review_id, trace_id, evaluation_id, alert_id, status, priority,
+        created_at, assigned_to, reviewed_at, resolved_at, review_notes,
+        result, details_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        item.reviewId,
+        item.traceId,
+        item.evaluationId,
+        item.alertId ?? null,
+        item.status,
+        item.priority,
+        item.createdAt,
+        item.assignedTo ?? null,
+        item.reviewedAt ?? null,
+        item.resolvedAt ?? null,
+        item.reviewNotes ?? null,
+        item.result ?? null,
+        JSON.stringify(item.details),
+      ]
+    );
+
+    await this.persist();
+  }
+
+  /**
+   * 查询审核项列表
+   */
+  getReviewItems(options?: {
+    status?: ReviewStatus;
+    priority?: string;
+    limit?: number;
+    offset?: number;
+  }): ReviewItem[] {
+    this.ensureInit();
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (options?.status) {
+      conditions.push('status = ?');
+      params.push(options.status);
+    }
+    if (options?.priority) {
+      conditions.push('priority = ?');
+      params.push(options.priority);
+    }
+
+    const whereClause = conditions.length > 0
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
+    const limitClause = options?.limit
+      ? `LIMIT ${options.limit}${options?.offset ? ` OFFSET ${options.offset}` : ''}`
+      : '';
+
+    const rows = this.db!.exec(
+      `SELECT * FROM human_review_queue ${whereClause} ORDER BY
+        CASE priority
+          WHEN 'critical' THEN 1
+          WHEN 'high' THEN 2
+          WHEN 'medium' THEN 3
+          WHEN 'low' THEN 4
+        END,
+        created_at DESC ${limitClause}`,
+      params
+    );
+
+    if (rows.length === 0 || !rows[0]?.values) return [];
+
+    const result = rows[0];
+    return result.values.map((row: unknown[]) => {
+      const columns = result.columns;
+      const getValue = (colName: string) => row[columns.indexOf(colName)];
+
+      const alertIdValue = getValue('alert_id') as string | null;
+      const assignedToValue = getValue('assigned_to') as string | null;
+      const reviewedAtValue = getValue('reviewed_at') as string | null;
+      const resolvedAtValue = getValue('resolved_at') as string | null;
+      const reviewNotesValue = getValue('review_notes') as string | null;
+      const resultValue = getValue('result') as string | null;
+
+      return {
+        reviewId: getValue('review_id') as string,
+        traceId: getValue('trace_id') as string,
+        evaluationId: getValue('evaluation_id') as string,
+        ...(alertIdValue && { alertId: alertIdValue }),
+        status: getValue('status') as ReviewStatus,
+        priority: getValue('priority') as ReviewItem['priority'],
+        createdAt: getValue('created_at') as string,
+        ...(assignedToValue && { assignedTo: assignedToValue }),
+        ...(reviewedAtValue && { reviewedAt: reviewedAtValue }),
+        ...(resolvedAtValue && { resolvedAt: resolvedAtValue }),
+        ...(reviewNotesValue && { reviewNotes: reviewNotesValue }),
+        ...(resultValue && { result: resultValue as 'approved' | 'rejected' | 'modified' }),
+        details: JSON.parse(getValue('details_json') as string || '{}'),
+      };
+    });
+  }
+
+  /**
+   * 获取审核项计数
+   */
+  getReviewCount(status?: ReviewStatus): number {
+    this.ensureInit();
+
+    const rows = this.db!.exec(
+      status
+        ? 'SELECT COUNT(*) as count FROM human_review_queue WHERE status = ?'
+        : 'SELECT COUNT(*) as count FROM human_review_queue',
+      status ? [status] : []
+    );
+
+    if (rows.length === 0 || !rows[0]?.values || !rows[0].values[0]) return 0;
+    return rows[0].values[0][0] as number;
+  }
+
+  /**
+   * 更新审核项
+   */
+  async updateReviewItem(
+    reviewId: string,
+    updates: Partial<Pick<ReviewItem, 'status' | 'assignedTo' | 'reviewedAt' | 'resolvedAt' | 'reviewNotes' | 'result'>>
+  ): Promise<void> {
+    this.ensureInit();
+
+    const setClauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (updates.status) {
+      setClauses.push('status = ?');
+      params.push(updates.status);
+    }
+    if (updates.assignedTo) {
+      setClauses.push('assigned_to = ?');
+      params.push(updates.assignedTo);
+    }
+    if (updates.reviewedAt) {
+      setClauses.push('reviewed_at = ?');
+      params.push(updates.reviewedAt);
+    }
+    if (updates.resolvedAt) {
+      setClauses.push('resolved_at = ?');
+      params.push(updates.resolvedAt);
+    }
+    if (updates.reviewNotes) {
+      setClauses.push('review_notes = ?');
+      params.push(updates.reviewNotes);
+    }
+    if (updates.result) {
+      setClauses.push('result = ?');
+      params.push(updates.result);
+    }
+
+    if (setClauses.length === 0) return;
+
+    params.push(reviewId);
+    this.db!.run(
+      `UPDATE human_review_queue SET ${setClauses.join(', ')} WHERE review_id = ?`,
+      params
+    );
+
+    await this.persist();
+  }
+
+  // ==================== Scale Event Methods ====================
+
+  /**
+   * 保存扩缩容事件
+   */
+  async saveScaleEvent(event: ScaleEvent): Promise<void> {
+    this.ensureInit();
+
+    this.db!.run(
+      `INSERT INTO scale_events (
+        event_id, timestamp, type, from_replicas, to_replicas,
+        reason, triggered_by, success, error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        event.eventId,
+        event.timestamp,
+        event.type,
+        event.fromReplicas,
+        event.toReplicas,
+        event.reason,
+        event.triggeredBy,
+        event.success ? 1 : 0,
+        event.error ?? null,
+      ]
+    );
+
+    await this.persist();
+  }
+
+  /**
+   * 查询扩缩容事件历史
+   */
+  getScaleEvents(limit?: number): ScaleEvent[] {
+    this.ensureInit();
+
+    const rows = this.db!.exec(
+      `SELECT * FROM scale_events ORDER BY timestamp DESC ${limit ? `LIMIT ${limit}` : ''}`
+    );
+
+    if (rows.length === 0 || !rows[0]?.values) return [];
+
+    const result = rows[0];
+    return result.values.map((row: unknown[]) => {
+      const columns = result.columns;
+      const getValue = (colName: string) => row[columns.indexOf(colName)];
+
+      const errorValue = getValue('error') as string | null;
+
+      return {
+        eventId: getValue('event_id') as string,
+        timestamp: getValue('timestamp') as string,
+        type: getValue('type') as ScaleEvent['type'],
+        fromReplicas: getValue('from_replicas') as number,
+        toReplicas: getValue('to_replicas') as number,
+        reason: getValue('reason') as string,
+        triggeredBy: getValue('triggered_by') as ScaleEvent['triggeredBy'],
+        success: getValue('success') === 1,
+        ...(errorValue && { error: errorValue }),
+      };
+    });
+  }
+
   /**
    * 清理旧数据
    */
@@ -509,6 +975,9 @@ export class TraceStorage {
     this.db!.run('DELETE FROM llm_calls');
     this.db!.run('DELETE FROM evaluations');
     this.db!.run('DELETE FROM traces');
+    this.db!.run('DELETE FROM alerts');
+    this.db!.run('DELETE FROM human_review_queue');
+    this.db!.run('DELETE FROM scale_events');
 
     await this.persist();
   }
@@ -547,6 +1016,53 @@ export class TraceStorage {
       this.db = null;
       this.initialized = false;
     }
+  }
+
+  // ==================== Schema Helper Methods ====================
+
+  /**
+   * 获取所有表名
+   */
+  getTables(): string[] {
+    this.ensureInit();
+
+    const rows = this.db!.exec(
+      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    );
+
+    if (rows.length === 0 || !rows[0]?.values) return [];
+
+    return rows[0].values.map(row => row[0] as string);
+  }
+
+  /**
+   * 获取表的列名
+   */
+  getTableColumns(tableName: string): string[] {
+    this.ensureInit();
+
+    const rows = this.db!.exec(
+      `PRAGMA table_info(${tableName})`
+    );
+
+    if (rows.length === 0 || !rows[0]?.values) return [];
+
+    return rows[0].values.map(row => row[1] as string);
+  }
+
+  /**
+   * 获取所有索引名
+   */
+  getIndexes(): string[] {
+    this.ensureInit();
+
+    const rows = this.db!.exec(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    );
+
+    if (rows.length === 0 || !rows[0]?.values) return [];
+
+    return rows[0].values.map(row => row[0] as string);
   }
 }
 
