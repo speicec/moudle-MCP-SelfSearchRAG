@@ -49,7 +49,23 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(git checkout *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(ls -la context/review/)",
+      "Bash(mkdir -p context/review)",
+      "Bash(docker-compose logs *)",
+      "Bash(powershell -Command \"Restart-Service -Name com.docker.service -Force\")",
+      "Bash(docker-compose down *)",
+      "Bash(docker-compose up *)",
+      "Bash(docker info *)",
+      "Bash(netsh interface *)",
+      "Bash(docker version *)",
+      "Bash(powershell *)",
+      "Bash(docker exec *)",
+      "Bash(docker-compose build *)",
+      "Bash(docker volume *)",
+      "Bash(HF_ENDPOINT=https://hf-mirror.com npm run download-models)",
+      "Bash(git reset *)",
+      "Bash(docker-compose config *)"
     ]
   }
 }
