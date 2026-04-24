@@ -336,13 +336,23 @@ Phase 1: Small Chunk Hybrid Search
                │
                └─→ 按 parentId 分组 → Parent Expansion
                      │
-                     └─→ HierarchicalStore.getParents(parentIds)
-                           → Parent Content
+                     ├─→ HierarchicalStore.getParents(parentIds)
+                     │     → Parent Content (成功时)
+                     │
+                     └─→ [Fallback] 如果 getChunk() 返回 null:
+                           │
+                           └─→ Qdrant.getPoint(parentId)
+                                 │
+                                 └─→ 从 payload 恢复 metadata
+                                       │
+                                       └─→ 临时添加到 HierarchicalStore
+                                             │
+                                             └─→ 返回 Parent Content
 
 Phase 2: Fallback (Parent Sparse Index Search)
 ─────────────────────────────────────────────────
   条件: Small Hybrid 结果不足 (count < minResults)
-  
+
   Query → bge-m3 → Sparse only (跳过 Dense)
          │
          └─→ Qdrant.searchSparse('parent_chunks', sparse, topK=20)
@@ -358,6 +368,39 @@ Phase 3: 结果合并
     return smallResults (with Parent Expansion)
   else:
     return fallbackResults (Parent Sparse)
+
+## Parent Expansion Fallback Recovery
+
+### Scenario: Parent expansion successful
+- **WHEN** HierarchicalStore contains the parent chunk
+- **THEN** system returns parent content directly
+
+### Scenario: Parent expansion fallback triggered
+- **WHEN** HierarchicalStore.getChunk(parentId) returns null
+- **THEN** system fetches metadata from Qdrant parent_chunks collection
+- **AND** recovers parent chunk content if STORE_CONTENT_IN_PAYLOAD=true
+- **AND** temporarily adds recovered chunk to HierarchicalStore for this request
+
+### Scenario: Fallback recovery incomplete
+- **WHEN** Qdrant payload lacks content field
+- **THEN** system logs warning and returns partial metadata
+- **AND** marks result as incomplete in search result
+
+### Requirement: Search result metadata includes recovery status
+
+检索结果 SHALL 标记数据来源和恢复状态。
+
+#### Scenario: Normal retrieval result
+- **WHEN** data comes from HierarchicalStore directly
+- **THEN** result.metadata.recoveredFrom is undefined
+
+#### Scenario: Recovered retrieval result
+- **WHEN** data was recovered from Qdrant payload
+- **THEN** result.metadata.recoveredFrom = "qdrant_payload"
+
+#### Scenario: Incomplete recovery result
+- **WHEN** recovery could not restore content field
+- **THEN** result.metadata.recoveryStatus = "partial"
 ```
 
 ## Testing Criteria

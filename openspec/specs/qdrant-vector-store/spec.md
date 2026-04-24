@@ -71,6 +71,38 @@ interface VectorStoreAdapter {
   - pageNumber (integer, optional)
   - contentType (string)
   - position (object: {start, end})
+  - content (string, optional) ← 用于元数据恢复
+
+### Content Field Behavior
+
+| Setting | Behavior |
+|---------|----------|
+| `STORE_CONTENT_IN_PAYLOAD=false` | Content NOT stored in payload (default) |
+| `STORE_CONTENT_IN_PAYLOAD=true` | Content stored in payload for recovery |
+
+#### Scenario: Content stored in payload (enabled)
+- **WHEN** STORE_CONTENT_IN_PAYLOAD environment variable is set to true
+- **THEN** vector payload includes complete chunk content string
+
+#### Scenario: Content stored in payload (disabled)
+- **WHEN** STORE_CONTENT_IN_PAYLOAD is false or not set
+- **THEN** vector payload excludes content field
+
+#### Scenario: Content field size limit
+- **WHEN** chunk content exceeds 10KB
+- **THEN** content is truncated to 10KB with truncation marker
+
+### Get Point with Full Payload
+
+系统 SHALL 支持从 Qdrant 检索完整 payload 用于恢复。
+
+#### Scenario: Retrieve point by ID
+- **WHEN** system calls getPoint(collection, id) with with_payload=true
+- **THEN** returns VectorPoint with complete payload including content (if stored)
+
+#### Scenario: Retrieve multiple points for batch recovery
+- **WHEN** system calls retrievePoints(collection, ids) for multiple IDs
+- **THEN** returns array of VectorPoints with full payloads
 
 ### image_chunks
 - **向量维度**: 512
