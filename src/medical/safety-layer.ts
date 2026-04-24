@@ -34,6 +34,8 @@ export interface ContraindicationMatch {
 
 /**
  * 安全评估结果
+ *
+ * 任务 4.1.1: 在 SafetyAssessment 输出中添加 alertTriggered 字段
  */
 export interface SafetyAssessment {
   severity: 'absolute' | 'relative' | 'interaction' | 'safe';
@@ -41,6 +43,19 @@ export interface SafetyAssessment {
   interactions: DrugInteractionRelation[];
   recommendation: string;
   sourceGlossary: string[];
+  alertTriggered?: boolean; // 是否触发了告警
+  alertId?: string; // 告警 ID（如果触发）
+}
+
+/**
+ * Safety Layer 输出（包含答案状态）
+ *
+ * 任务 4.2.1: 在 SafetyLayerOutput 中添加 answerStatus 字段
+ */
+export interface SafetyLayerOutput {
+  assessment: SafetyAssessment;
+  answerStatus: 'normal' | 'blocked_pending_review' | 'attention_required';
+  blockedReason?: string;
 }
 
 /**
@@ -250,5 +265,32 @@ export function createSafeAssessment(): SafetyAssessment {
     interactions: [],
     recommendation: '无明显禁忌或相互作用风险',
     sourceGlossary: [],
+    alertTriggered: false,
+  };
+}
+
+/**
+ * 创建 Safety Layer 输出
+ *
+ * 任务 4.2.2: severity='absolute' 时设置 answerStatus='blocked_pending_review'
+ */
+export function createSafetyLayerOutput(
+  assessment: SafetyAssessment,
+): SafetyLayerOutput {
+  let answerStatus: SafetyLayerOutput['answerStatus'] = 'normal';
+  let blockedReason: string | undefined;
+
+  if (assessment.severity === 'absolute') {
+    answerStatus = 'blocked_pending_review';
+    blockedReason = '安全禁忌绝对禁忌，答案需要人工审核后才能发布';
+  } else if (assessment.severity === 'relative') {
+    answerStatus = 'attention_required';
+    blockedReason = '安全禁忌相对禁忌，建议人工复核';
+  }
+
+  return {
+    assessment,
+    answerStatus,
+    ...(blockedReason && { blockedReason }),
   };
 }
