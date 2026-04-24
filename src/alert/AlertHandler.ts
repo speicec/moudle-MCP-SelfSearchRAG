@@ -18,6 +18,7 @@ import type {
 } from './types.js';
 import { ALERT_THRESHOLDS, getAlertThresholds } from './config.js';
 import { SUGGESTED_ACTIONS } from './types.js';
+import type { HumanReviewQueue } from '../feedback/HumanReviewQueue.js';
 
 /**
  * 评估结果输入
@@ -66,6 +67,8 @@ export class AlertHandler {
   private broadcastFn?: AlertBroadcastFn;
   private aggregationMap: Map<AlertType, AlertAggregationState> = new Map();
   private recentAlerts: { timestamp: number; type: AlertType }[] = [];
+  private reviewQueue?: HumanReviewQueue;
+  private queryAnswerMap: Map<string, { query: string; answer: string }> = new Map();
 
   constructor(storage: TraceStorage) {
     this.storage = storage;
@@ -76,6 +79,22 @@ export class AlertHandler {
    */
   setBroadcast(fn: AlertBroadcastFn): void {
     this.broadcastFn = fn;
+  }
+
+  /**
+   * 设置人工审核队列
+   *
+   * 任务 3.4.1: 在 AlertHandler 中集成 HumanReviewQueue
+   */
+  setReviewQueue(queue: HumanReviewQueue): void {
+    this.reviewQueue = queue;
+  }
+
+  /**
+   * 设置查询答案映射（用于创建审核项时提供上下文）
+   */
+  setQueryAnswer(traceId: string, query: string, answer: string): void {
+    this.queryAnswerMap.set(traceId, { query, answer });
   }
 
   /**
@@ -479,6 +498,7 @@ export class AlertHandler {
    * 处理告警（广播 + 存储）
    *
    * 任务 2.1.7: processAlert() 方法
+   * 任务 3.4.2: SAFETY_CRITICAL 告警自动创建审核项
    */
   async processAlert(alert: AlertEvent): Promise<void> {
     const thresholds = getAlertThresholds();
@@ -504,6 +524,23 @@ export class AlertHandler {
 
     // 广播告警
     this.broadcastAlert(alert);
+
+    // 任务 3.4.2: SAFETY_CRITICAL 告警自动创建审核项
+    if (alert.type === 'SAFETY_CRITICAL' && this.reviewQueue && alert.traceId) {
+      const context = this.queryAnswerMap.get(alert.traceId);
+      if (context) {
+        try {
+          const reviewItem = await this.reviewQueue.addFromAlert(
+            alert,
+            context.query,
+            context.answer
+          );
+          console.log(`[AlertHandler] Created review item for SAFETY_CRITICAL alert: ${reviewItem.reviewId}`);
+        } catch (error) {
+          console.error(`[AlertHandler] Failed to create review item:`, error);
+        }
+      }
+    }
 
     // 记录速率限制
     this.recordAlert(alert.type);

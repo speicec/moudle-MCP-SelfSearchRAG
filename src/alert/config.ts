@@ -70,6 +70,13 @@ export const ALERT_THRESHOLDS: SeverityThresholds = {
 };
 
 /**
+ * DEFAULT_ALERT_THRESHOLDS - 默认告警阈值（支持环境变量覆盖）
+ *
+ * 这是 ALERT_THRESHOLDS 的别名，用于符合命名约定。
+ */
+export const DEFAULT_ALERT_THRESHOLDS: SeverityThresholds = ALERT_THRESHOLDS;
+
+/**
  * 获取当前阈值配置
  */
 export function getAlertThresholds(): SeverityThresholds {
