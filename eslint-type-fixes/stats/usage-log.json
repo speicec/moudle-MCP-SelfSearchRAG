@@ -1,25 +1,25 @@
 {
   "records": [
     {
-      "timestamp": "2026-04-23T06:32:15.175Z",
+      "timestamp": "2026-04-24T14:20:51.037Z",
       "rule_id": "null-assignment",
       "fix_type": "default-value",
       "success": true
     },
     {
-      "timestamp": "2026-04-23T06:32:15.182Z",
+      "timestamp": "2026-04-24T14:20:51.044Z",
       "rule_id": "null-assignment",
       "fix_type": "default-value",
       "success": true
     },
     {
-      "timestamp": "2026-04-23T06:32:15.191Z",
+      "timestamp": "2026-04-24T14:20:51.052Z",
       "rule_id": "null-assignment",
       "fix_type": "default-value",
       "success": true
     },
     {
-      "timestamp": "2026-04-23T06:32:15.197Z",
+      "timestamp": "2026-04-24T14:20:51.059Z",
       "rule_id": "null-assignment",
       "fix_type": "default-value",
       "success": true
