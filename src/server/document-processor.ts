@@ -17,7 +17,7 @@ import { createChunkQualityFilter, aggregateEmbeddings } from '../chunking/index
 import type { Harness } from '../core/harness.js';
 import { PluginRegistry } from '../core/plugin.js';
 import type { TextChunk, EmbeddingResult } from '../core/context.js';
-import type { ParsedContent } from '../core/types.js';
+import type { ParsedContent, ParsedMetadata } from '../core/types.js';
 import { v4 as uuidv4 } from 'uuid';
 import type { VectorPoint } from '../retrieval/vector-store-adapter.js';
 import type { QdrantVectorStoreAdapter } from '../retrieval/qdrant-client.js';
@@ -167,14 +167,17 @@ function buildPipeline(
             const chunks = ctx?.getChunks?.();
             const embeddings = ctx?.getEmbeddings?.();
 
+            // Get parsedContent metadata for chunk metadata propagation
+            const parsedContent = ctx?.get?.('parsedContent') as ParsedContent | undefined;
+            const parsedMetadata = parsedContent?.metadata;
+
             // Store chunks in hierarchical store and emit chunk events
             if (chunks && embeddings) {
-              await storeInHierarchical(chunks, embeddings, documentId, hierarchicalStore, emitter);
+              await storeInHierarchical(chunks, embeddings, documentId, hierarchicalStore, emitter, parsedMetadata);
             }
 
             // ✨ Store images in ImageStore
             if (imageStore) {
-              const parsedContent = ctx?.get?.('parsedContent') as ParsedContent | undefined;
               if (parsedContent) {
                 await storeImagesInImageStore(parsedContent, documentId, imageStore);
               }
@@ -204,13 +207,15 @@ function buildPipeline(
 /**
  * Convert pipeline chunks to hierarchical chunks and store
  * Emits chunk:created events in batches (every 10 chunks)
+ * Propagates document metadata to chunk level
  */
 async function storeInHierarchical(
   chunks: TextChunk[],
   embeddings: EmbeddingResult[],
   documentId: string,
   store: HierarchicalStore,
-  emitter: PipelineEmitter
+  emitter: PipelineEmitter,
+  parsedMetadata?: ParsedMetadata
 ): Promise<void> {
   // Create quality filter with default config
   const qualityFilter = createChunkQualityFilter();
@@ -252,6 +257,18 @@ async function storeInHierarchical(
     const matchingEmbedding = embeddings.find(e => e.chunkId === chunk.id);
     const embeddingVector = matchingEmbedding?.vector ?? [];
 
+    // Build chunk metadata with document-level fields (only include if defined)
+    const chunkMetadata: import('../chunking/types.js').ChunkMetadata = {
+      contentType: chunk.metadata.contentType,
+      boundaryConfidence: 0.8,
+    };
+
+    // Propagate document-level metadata to chunk (only if defined)
+    if (parsedMetadata?.title) chunkMetadata.documentTitle = parsedMetadata.title;
+    if (parsedMetadata?.author) chunkMetadata.documentAuthor = parsedMetadata.author;
+    if (parsedMetadata?.year) chunkMetadata.documentYear = parsedMetadata.year;
+    if (parsedMetadata?.guidelineSource) chunkMetadata.guidelineSource = parsedMetadata.guidelineSource;
+
     // Create a small hierarchical chunk with placeholder score
     const hierarchicalChunk = createHierarchicalChunk(
       chunk.text,
@@ -260,10 +277,7 @@ async function storeInHierarchical(
       { start: chunk.position, end: chunk.position + chunk.text.length },
       documentId,
       createDefaultQualityScore(),
-      {
-        contentType: chunk.metadata.contentType,
-        boundaryConfidence: 0.8,
-      }
+      chunkMetadata
     );
 
     // Add pageNumber if available

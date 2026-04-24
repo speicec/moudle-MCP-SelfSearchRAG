@@ -71,6 +71,11 @@ export interface ChunkMetadata {
   pageNumber?: number;
   section?: string;
   boundaryConfidence?: number; // confidence score for semantic boundary
+  // Document-level metadata (propagated from ParsedContent.metadata)
+  documentTitle?: string;  // human-readable document title
+  documentAuthor?: string;  // document author
+  documentYear?: number;  // publication year
+  guidelineSource?: string;  // medical guideline source (ADA, KDIGO, ESC, CDS, ATA)
 }
 
 /**

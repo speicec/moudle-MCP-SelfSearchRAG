@@ -150,6 +150,8 @@ export interface ParsedMetadata {
   creationDate?: Date | undefined;
   modificationDate?: Date | undefined;
   pageCount: number;
+  year?: number | undefined;  // inferred publication year
+  guidelineSource?: string | undefined;  // identified medical guideline source
 }
 
 /**
