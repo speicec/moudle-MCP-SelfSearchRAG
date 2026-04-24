@@ -251,3 +251,79 @@ export function isLLMAvailable(): boolean {
     true
   );
 }
+
+// ==================== TracedLLMCaller (新增) ====================
+
+import type { TraceContext } from '../tracing/TraceContext.js';
+import type { LLMCallRecord, LLMProvider as TracingLLMProvider } from '../tracing/types.js';
+import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * 创建带追踪的 LLMCaller
+ *
+ * 包装现有 LLMCaller，记录每次调用的详细信息到 TraceContext
+ */
+export function createTracedLLMCaller(
+  baseCaller: LLMCaller,
+  traceContext: TraceContext,
+  model: string,
+  provider: LLMProvider
+): LLMCaller {
+  return async (prompt: string): Promise<string> => {
+    const startTime = Date.now();
+    const callId = `llm-${uuidv4()}`;
+
+    try {
+      const response = await baseCaller(prompt);
+      const endTime = Date.now();
+
+      // 记录成功的 LLM 调用
+      const callRecord: LLMCallRecord = {
+        callId,
+        model,
+        provider: provider as TracingLLMProvider,
+        latencyMs: endTime - startTime,
+        promptTokens: Math.ceil(prompt.length / 4), // 估算
+        completionTokens: Math.ceil(response.length / 4), // 估算
+        promptPreview: prompt.slice(0, 200),
+        responsePreview: response.slice(0, 200),
+      };
+
+      traceContext.recordLLMCall(callRecord);
+      return response;
+    } catch (error) {
+      // 记录失败的 LLM 调用
+      const endTime = Date.now();
+      const callRecord: LLMCallRecord = {
+        callId,
+        model,
+        provider: provider as TracingLLMProvider,
+        latencyMs: endTime - startTime,
+      };
+
+      traceContext.recordLLMCall(callRecord);
+      throw error;
+    }
+  };
+}
+
+/**
+ * 创建带追踪的 LLMCaller 工厂
+ *
+ * 自动创建 TraceContext 包装的 caller
+ */
+export function createTracedLLMCallerFactory(
+  traceContext: TraceContext
+): (config?: Partial<LLMConfig>) => LLMCaller {
+  return (config?: Partial<LLMConfig>): LLMCaller => {
+    const baseCaller = createLLMCaller(config);
+    const provider = config?.provider ?? getActiveProvider();
+    const model = config?.model ?? (
+      provider === 'anthropic' ? DEFAULT_ANTHROPIC_CONFIG.model :
+      provider === 'openai' ? DEFAULT_OPENAI_CONFIG.model :
+      DEFAULT_OLLAMA_CONFIG.model
+    ) ?? 'unknown';
+
+    return createTracedLLMCaller(baseCaller, traceContext, model, provider);
+  };
+}
