@@ -437,20 +437,50 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       // Map results
-      const mappedResults: RetrievalResultItem[] = results.map(r => ({
-        smallChunkId: r.smallChunkId,
-        parentChunkId: r.parentChunkId,
-        parentChunkContent: r.parentChunkContent,
-        similarityScore: r.similarityScore,
-        sourceDocumentId: r.sourceDocumentId,
-        contextWindow: r.contextWindow,
-        windowStart: r.windowStart,
-        windowEnd: r.windowEnd,
-      }));
+      const mappedResults: RetrievalResultItem[] = results.map((r, index) => {
+        const item: RetrievalResultItem = {
+          smallChunkId: r.smallChunkId,
+          parentChunkId: r.parentChunkId,
+          parentChunkContent: r.parentChunkContent,
+          similarityScore: r.similarityScore,
+          sourceDocumentId: r.sourceDocumentId,
+        };
+        // Add optional context fields
+        if (r.contextWindow !== undefined) item.contextWindow = r.contextWindow;
+        if (r.windowStart !== undefined) item.windowStart = r.windowStart;
+        if (r.windowEnd !== undefined) item.windowEnd = r.windowEnd;
+        // Add evidenceEvaluation from agentResult if available
+        if (agentResult?.evidenceEvaluation?.[index]) {
+          const evalData = agentResult.evidenceEvaluation[index];
+          item.evidenceEvaluation = {
+            literatureType: evalData.literatureType,
+            grade: evalData.grade,
+            isCurrent: evalData.isCurrent,
+          };
+          if (evalData.year !== undefined) item.evidenceEvaluation!.year = evalData.year;
+          if (evalData.sourceGuideline !== undefined) item.evidenceEvaluation!.sourceGuideline = evalData.sourceGuideline;
+          if (evalData.expirationWarning !== undefined) item.evidenceEvaluation!.expirationWarning = evalData.expirationWarning;
+          if (evalData.sourceAuthority !== undefined) item.evidenceEvaluation!.sourceAuthority = evalData.sourceAuthority;
+          if (evalData.authorityWeight !== undefined) item.evidenceEvaluation!.authorityWeight = evalData.authorityWeight;
+          if (evalData.timeWeight !== undefined) item.evidenceEvaluation!.timeWeight = evalData.timeWeight;
+          if (evalData.consistencyScore !== undefined) item.evidenceEvaluation!.consistencyScore = evalData.consistencyScore;
+          if (evalData.compositeScore !== undefined) item.evidenceEvaluation!.compositeScore = evalData.compositeScore;
+        }
+        return item;
+      });
 
-      // Emit retrieval:complete event
+      // Emit retrieval:complete event with evidence data
       if (emitter) {
         emitter.emitRetrievalComplete(query, mappedResults, Date.now() - startTime);
+      }
+
+      // Emit evidence:evaluated event if GRADE data is available
+      if (agentEmitter && agentResult?.evidenceEvaluation && agentResult.evidenceEvaluation.length > 0) {
+        const evidenceEvalWithIndex = agentResult.evidenceEvaluation.map((ev, idx) => ({
+          ...ev,
+          chunkIndex: idx,
+        }));
+        agentEmitter.emitEvidenceEvaluated(evidenceEvalWithIndex, agentResult.overallEvidenceGrade);
       }
 
       // Phase 2: LLM Generation (if enabled)

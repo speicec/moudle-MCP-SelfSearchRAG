@@ -26,6 +26,7 @@ export type PipelineEventType =
   | 'startup:ready'
   | 'startup:error'
   | 'error'
+  | 'evidence:evaluated'  // New: GRADE evidence evaluation event
   // Agent visualization events
   | 'agent:input'
   | 'agent:entities'
@@ -221,7 +222,35 @@ export interface PipelineEvent {
     totalTimeMs: number;
     iterations?: number;
     llmCallCount?: number;
+    // Evidence fields (new)
+    overallEvidenceGrade?: 'A' | 'B' | 'C' | 'D';
+    evidenceStatistics?: {
+      gradeDistribution: Record<'A' | 'B' | 'C' | 'D', number>;
+      averageCompositeScore: number;
+      conflictDetected: boolean;
+    };
   };
+  // Evidence evaluation data (new)
+  evidenceEvaluation?: Array<{
+    literatureType: 'rct' | 'meta_analysis' | 'guideline' | 'observational' | 'case_report' | 'expert_opinion';
+    grade: 'A' | 'B' | 'C' | 'D';
+    isCurrent: boolean;
+    year?: number | undefined;
+    sourceGuideline?: string | undefined;
+    expirationWarning?: string | undefined;
+    sourceAuthority?: 'international' | 'national' | 'local' | undefined;
+    authorityWeight?: number | undefined;
+    timeWeight?: number | undefined;
+    consistencyScore?: number | undefined;
+    compositeScore?: number | undefined;
+    chunkIndex?: number | undefined;  // Index of the corresponding retrieval result
+  }> | undefined;
+  overallEvidenceGrade?: 'A' | 'B' | 'C' | 'D' | undefined;
+  evidenceStatistics?: {
+    gradeDistribution: Record<'A' | 'B' | 'C' | 'D', number>;
+    averageCompositeScore: number;
+    conflictDetected: boolean;
+  } | undefined;
 }
 
 /**
@@ -273,6 +302,20 @@ export interface RetrievalResultItem {
   contextWindow?: string | undefined;
   windowStart?: number | undefined;
   windowEnd?: number | undefined;
+  // GRADE evidence evaluation (new)
+  evidenceEvaluation?: {
+    literatureType: 'rct' | 'meta_analysis' | 'guideline' | 'observational' | 'case_report' | 'expert_opinion';
+    grade: 'A' | 'B' | 'C' | 'D';
+    isCurrent: boolean;
+    year?: number | undefined;
+    sourceGuideline?: string | undefined;
+    expirationWarning?: string | undefined;
+    sourceAuthority?: 'international' | 'national' | 'local' | undefined;
+    authorityWeight?: number | undefined;
+    timeWeight?: number | undefined;
+    consistencyScore?: number | undefined;
+    compositeScore?: number | undefined;
+  } | undefined;
 }
 
 /**
@@ -361,5 +404,6 @@ declare module 'fastify' {
     embeddingService?: import('../embedding/embedding-service.js').TextEmbeddingService;
     statsService?: import('./stats-aggregation-service.js').StatsAggregationService;
     llmCaller?: import('../config/llm-config.js').LLMCaller;
+    traceStorage?: import('../tracing/TraceStorage.js').TraceStorage;
   }
 }
