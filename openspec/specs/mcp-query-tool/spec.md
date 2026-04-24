@@ -1,6 +1,6 @@
 ---
 capability: mcp-query-tool
-version: 1.1
+version: 1.2
 created: 2026-04-21
 updated: 2026-04-23
 ---
@@ -9,7 +9,7 @@ updated: 2026-04-23
 
 ## 概述
 
-MCP 查询工具是 Medical Agent 的核心检索接口，支持 Small-to-Big 检索和 Planning 模式。
+MCP 查询工具是 Medical Agent 的核心检索接口，支持 Small-to-Big 检索、Planning 模式和性能优化。
 
 ## Requirements
 
@@ -64,6 +64,84 @@ The MCP query tool SHALL use the same embedding service as HTTP Server.
 #### Scenario: Embedding service fails
 - **WHEN** embedding service fails to generate query embedding
 - **THEN** MCP query tool returns error with message describing the failure
+
+### Requirement: Rule-based decision optimization
+The system SHALL use rule-based decision instead of LLM decide for efficiency.
+
+#### Scenario: Rule-based decide enabled by default
+- **WHEN** agent executes decide phase
+- **THEN** system checks rule thresholds instead of calling LLM
+- **AND** rules checked in order: retrieval_count, high_similarity, entity_coverage, absolute_contraindication
+
+#### Scenario: retrieval_count rule satisfied
+- **WHEN** retrieval results count >= minRetrievalCount (default: 3)
+- **THEN** decide returns satisfied=true
+- **AND** no LLM call required
+
+#### Scenario: high_similarity rule satisfied
+- **WHEN** max similarity score > minSimilarityScore (default: 0.7)
+- **THEN** decide returns satisfied=true
+- **AND** no LLM call required
+
+#### Scenario: entity_coverage rule satisfied
+- **WHEN** entity coverage ratio >= minEntityCoverage (default: 0.8)
+- **THEN** decide returns satisfied=true
+- **AND** no LLM call required
+
+#### Scenario: Configurable thresholds
+- **WHEN** custom thresholds provided
+- **THEN** system uses custom values instead of defaults
+- **AND** thresholds: minRetrievalCount, minSimilarityScore, minEntityCoverage
+
+### Requirement: Early termination for absolute contraindications
+The system SHALL terminate early when absolute contraindication detected.
+
+#### Scenario: Absolute contraindication early termination
+- **WHEN** SafetyLayer detects absolute contraindication
+- **THEN** agent skips ReAct loop
+- **AND** directly generates answer from safety assessment
+
+#### Scenario: Early termination answer structure
+- **WHEN** early termination occurs
+- **THEN** answer includes contraindication description
+- **AND** answer includes safety recommendation
+- **AND** warnings indicate rule-based generation
+
+#### Scenario: LLM call count reduction
+- **WHEN** early termination occurs
+- **THEN** LLM call count reduced to 0 for decide phase
+- **AND** execution time significantly reduced
+
+### Requirement: Enhanced evidence evaluation
+The system SHALL evaluate evidence with enhanced multi-dimensional scoring.
+
+#### Scenario: Source authority classification
+- **WHEN** evidence source evaluated
+- **THEN** system classifies authority level: international, national, local
+- **AND** international sources: ADA, KDIGO, ESC, ATA (weight: 1.0)
+- **AND** national sources: CDS, CSH, CETA (weight: 0.8)
+
+#### Scenario: Time weight calculation
+- **WHEN** evidence year evaluated
+- **THEN** system applies linear decay (5% per year)
+- **AND** minimum weight: 0.5
+- **AND** undefined year default: 0.7
+
+#### Scenario: Consistency check
+- **WHEN** multiple sources evaluated
+- **THEN** system checks keyword conflicts
+- **AND** positive keywords: 推荐, 建议, 可用
+- **AND** negative keywords: 禁用, 不推荐, 避免
+
+#### Scenario: Composite score calculation
+- **WHEN** evidence evaluation complete
+- **THEN** composite score calculated with weights
+- **AND** GRADE: 40%, Authority: 20%, Time: 20%, Consistency: 10%, Applicability: 10%
+
+#### Scenario: Low quality evidence warning
+- **WHEN** composite score < 0.5 or consistency < 0.5
+- **THEN** warnings added to answer
+- **AND** warning indicates low evidence quality or conflicts
 
 ### Requirement: Planning mode MCP tool
 The system SHALL provide MCP tool with planning mode option.
