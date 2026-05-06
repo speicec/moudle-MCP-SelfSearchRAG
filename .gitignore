@@ -26,6 +26,7 @@ coverage/
 
 # Cache
 .cache/
+hf_cache/
 
 # OS
 .DS_Store
