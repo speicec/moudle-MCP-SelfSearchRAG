@@ -36,7 +36,9 @@ export type PipelineEventType =
   | 'agent:template'
   | 'agent:dag'
   | 'agent:execution'
-  | 'agent:complete';
+  | 'agent:complete'
+  // Evaluation events
+  | 'evaluation:complete';
 
 /**
  * Startup progress stage
@@ -251,6 +253,27 @@ export interface PipelineEvent {
     averageCompositeScore: number;
     conflictDetected: boolean;
   } | undefined;
+  // Evaluation complete event fields
+  evaluationId?: string;
+  traceId?: string;
+  sessionId?: string;
+  dimensionScores?: {
+    faithfulness: number;
+    contextRelevance: number;
+    answerRelevance: number;
+    medicalAccuracy: number;
+    safetyAssessment: number;
+    evidenceTraceability: number;
+    completeness: number;
+    terminologyAccuracy: number;
+  };
+  layerScores?: {
+    layer1: number;
+    layer2: number;
+    layer3: number;
+  };
+  overallScore?: number;
+  riskLevel?: 'safe' | 'caution' | 'warning' | 'danger';
 }
 
 /**
@@ -298,6 +321,8 @@ export interface RetrievalResultItem {
   parentChunkContent: string;
   similarityScore: number;
   sourceDocumentId: string;
+  // Semantic similarity score (Dense Cosine for display, not RRF)
+  semanticScore?: number | undefined;
   // Context window fields (new)
   contextWindow?: string | undefined;
   windowStart?: number | undefined;
@@ -405,5 +430,7 @@ declare module 'fastify' {
     statsService?: import('./stats-aggregation-service.js').StatsAggregationService;
     llmCaller?: import('../config/llm-config.js').LLMCaller;
     traceStorage?: import('../tracing/TraceStorage.js').TraceStorage;
+    alertHandler?: import('../alert/AlertHandler.js').AlertHandler;
+    evaluationService?: import('../integration/AgentEvaluationService.js').AgentEvaluationService;
   }
 }

@@ -4,7 +4,7 @@
  * 集成评估队列到 Medical Agent 执行流程
  */
 
-import { EvaluationQueue, createEvaluationQueue } from '../queue/EvaluationQueue.js';
+import { EvaluationQueue, createEvaluationQueue, type EvaluationJobResult } from '../queue/EvaluationQueue.js';
 import { createTraceStorage, TraceStorage } from '../tracing/TraceStorage.js';
 import type { TraceContextData, EvaluationResult } from '../tracing/types.js';
 import type { ExtendedEvaluationResult } from '../evaluation/types.js';
@@ -94,16 +94,29 @@ export class AgentEvaluationService {
 
     try {
       const job = await this.queue.addJob(traceData, this.config.priority ?? 'normal', {
-        onSuccess: (result) => {
-          // Cast result through unknown for handler compatibility
-          handlers?.onSuccess?.(result as unknown as ExtendedEvaluationResult);
-          // 持久化评估结果
-          this.saveEvaluationResult(result as unknown as ExtendedEvaluationResult).catch(console.error);
+        onSuccess: async (result: EvaluationJobResult) => {
+          // EvaluationJobResult 只有简化数据，需要从存储获取完整结果
+          try {
+            // 从存储获取完整的评估结果
+            const fullResult = await this.fetchFullEvaluationResult(result.evaluationId, result.traceId);
+
+            if (fullResult) {
+              handlers?.onSuccess?.(fullResult);
+            } else {
+              // 如果存储中没有，使用简化结果构建基本响应
+              console.warn(`[AgentEvaluationService] Full evaluation not found for ${result.evaluationId}, using simplified result`);
+              handlers?.onSuccess?.(this.buildSimplifiedExtendedResult(result));
+            }
+          } catch (fetchError) {
+            console.error('[AgentEvaluationService] Failed to fetch full evaluation:', fetchError);
+            // 回退到简化结果
+            handlers?.onSuccess?.(this.buildSimplifiedExtendedResult(result));
+          }
         },
-        onError: (error) => {
+        onError: (error: Error) => {
           handlers?.onError?.(error);
         },
-        onProgress: (progress) => {
+        onProgress: (progress: number) => {
           handlers?.onProgress?.(progress);
         },
       });
@@ -113,6 +126,151 @@ export class AgentEvaluationService {
       console.error('[AgentEvaluationService] Submit failed:', error);
       return { jobId: '', submitted: false };
     }
+  }
+
+  /**
+   * 从存储获取完整评估结果
+   */
+  private async fetchFullEvaluationResult(evaluationId: string, traceId: string): Promise<ExtendedEvaluationResult | null> {
+    if (!this.storage) return null;
+
+    try {
+      // 使用 TraceStorage 的内部数据库查询评估结果
+      const db = this.storage.getDatabase();
+      if (!db) return null;
+
+      const rows = db.exec(
+        `SELECT evaluation_id, trace_id, timestamp, faithfulness_score, context_relevance_score, answer_relevance_score, overall_score, metrics_json, metadata_json
+         FROM evaluations
+         WHERE evaluation_id = ? OR trace_id = ?
+         ORDER BY timestamp DESC LIMIT 1`,
+        [evaluationId, traceId]
+      );
+
+      if (rows.length === 0 || !rows[0]?.values || rows[0].values.length === 0) return null;
+
+      const row = rows[0].values[0];
+      if (!row) return null;
+
+      const [
+        evalId,
+        tId,
+        timestamp,
+        faithfulnessScore,
+        contextRelevanceScore,
+        answerRelevanceScore,
+        overallScore,
+        metricsJson,
+        metadataJson,
+      ] = row as unknown[];
+
+      // 解析 metrics_json 如果存在
+      let extendedMetrics = {
+        medicalAccuracy: { score: 0, terminologyErrors: [] as string[], guidelineViolations: [] as string[], corrections: [] as string[], details: { terminologyMatch: 0, guidelineAdherence: 0 } },
+        safetyAssessment: { score: 0, contraindications: { type: 'absolute' as const, details: [] as string[] }, interactions: [] as string[], dangerousAdvice: [] as string[], riskFactors: [] as string[] },
+        evidenceTraceability: { score: 0, citationAccuracy: 0, missingCitations: [] as string[], invalidCitations: [] as string[], sourceQuality: { hasGuideline: false, hasRecentSource: false, hasAuthoritativeSource: false } },
+        completeness: { score: 0, coveredSubQuestions: [] as string[], missingSubQuestions: [] as string[], entityCoverage: 0, topicCoverage: 0 },
+        terminologyAccuracy: { score: 0, terminologyErrors: [] as string[], missingAbbreviationExplanations: [] as string[], correctUsageCount: 0, errorCount: 0 },
+      };
+
+      if (metricsJson && typeof metricsJson === 'string') {
+        try {
+          const parsed = JSON.parse(metricsJson);
+          if (parsed.extendedMetrics) {
+            extendedMetrics = parsed.extendedMetrics;
+          }
+        } catch {
+          // 保持默认值
+        }
+      }
+
+      // 解析 metadata_json
+      let metadata = {
+        evaluatorModel: '',
+        evaluationDurationMs: 0,
+        retryCount: 0,
+      };
+
+      if (metadataJson && typeof metadataJson === 'string') {
+        try {
+          const parsed = JSON.parse(metadataJson);
+          metadata = parsed;
+        } catch {
+          // 保持默认值
+        }
+      }
+
+      const baseScore = typeof overallScore === 'number' ? overallScore : 0.5;
+      const fScore = typeof faithfulnessScore === 'number' ? faithfulnessScore : baseScore;
+      const cScore = typeof contextRelevanceScore === 'number' ? contextRelevanceScore : baseScore;
+      const aScore = typeof answerRelevanceScore === 'number' ? answerRelevanceScore : baseScore;
+
+      return {
+        evaluationId: evalId as string,
+        traceId: tId as string,
+        timestamp: timestamp as string,
+        metrics: {
+          faithfulness: { score: fScore, verdicts: [] },
+          contextRelevance: { score: cScore, chunkScores: [] },
+          answerRelevance: { score: aScore, generatedQuestions: [] },
+        },
+        extendedMetrics,
+        layerScores: { layer1: baseScore, layer2: baseScore, layer3: baseScore },
+        overallScore: baseScore,
+        riskLevel: 'safe' as const,
+        weights: {
+          faithfulness: 0.25,
+          contextRelevance: 0.15,
+          answerRelevance: 0.15,
+          medicalAccuracy: 0.20,
+          safetyAssessment: 0.15,
+          evidenceTraceability: 0.10,
+          completeness: 0.05,
+          terminologyAccuracy: 0.05,
+        },
+        metadata,
+      };
+    } catch (error) {
+      console.error('[AgentEvaluationService] Failed to fetch evaluation:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 从 EvaluationJobResult 构建简化的 ExtendedEvaluationResult
+   */
+  private buildSimplifiedExtendedResult(result: EvaluationJobResult): ExtendedEvaluationResult {
+    return {
+      evaluationId: result.evaluationId,
+      traceId: result.traceId,
+      timestamp: new Date().toISOString(),
+      metrics: {
+        faithfulness: { score: result.overallScore, verdicts: [] },
+        contextRelevance: { score: result.overallScore, chunkScores: [] },
+        answerRelevance: { score: result.overallScore, generatedQuestions: [] },
+      },
+      extendedMetrics: {
+        medicalAccuracy: { score: 0, terminologyErrors: [] as string[], guidelineViolations: [] as string[], corrections: [] as string[], details: { terminologyMatch: 0, guidelineAdherence: 0 } },
+        safetyAssessment: { score: 0, contraindications: { type: 'absolute' as const, details: [] as string[] }, interactions: [] as string[], dangerousAdvice: [] as string[], riskFactors: [] as string[] },
+        evidenceTraceability: { score: 0, citationAccuracy: 0, missingCitations: [] as string[], invalidCitations: [] as string[], sourceQuality: { hasGuideline: false, hasRecentSource: false, hasAuthoritativeSource: false } },
+        completeness: { score: 0, coveredSubQuestions: [] as string[], missingSubQuestions: [] as string[], entityCoverage: 0, topicCoverage: 0 },
+        terminologyAccuracy: { score: 0, terminologyErrors: [] as string[], missingAbbreviationExplanations: [] as string[], correctUsageCount: 0, errorCount: 0 },
+      },
+      layerScores: { layer1: result.overallScore, layer2: result.overallScore, layer3: result.overallScore },
+      overallScore: result.overallScore,
+      riskLevel: result.riskLevel as 'safe' | 'caution' | 'warning' | 'danger',
+      weights: {
+        faithfulness: 0.25,
+        contextRelevance: 0.15,
+        answerRelevance: 0.15,
+        medicalAccuracy: 0.20,
+        safetyAssessment: 0.15,
+        evidenceTraceability: 0.10,
+        completeness: 0.05,
+        terminologyAccuracy: 0.05,
+      },
+      metadata: { evaluatorModel: '', evaluationDurationMs: result.durationMs, retryCount: 0 },
+    };
   }
 
   /**

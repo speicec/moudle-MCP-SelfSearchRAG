@@ -27,6 +27,8 @@ import { llmGenerationService } from './services/LLMGenerationService.js';
 import type { LLMCaller } from '../config/llm-config.js';
 import { syncStores } from './storage-sync.js';
 import { createTraceStorage } from '../tracing/TraceStorage.js';
+import { createAlertHandler, AlertHandler } from '../alert/AlertHandler.js';
+import { createAgentEvaluationService, AgentEvaluationService } from '../integration/AgentEvaluationService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -201,6 +203,42 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
   fastify.decorate('traceStorage', traceStorage);
   fastify.log.info('TraceStorage initialized for alerts and review queue');
 
+  // Initialize AlertHandler with WebSocket broadcast
+  const alertHandler = createAlertHandler(traceStorage);
+  alertHandler.setBroadcast((event) => {
+    wsHandler.broadcast({
+      ...event,
+      timestamp: Date.now(),
+    } as PipelineEvent);
+  });
+  fastify.decorate('alertHandler', alertHandler);
+  fastify.log.info('AlertHandler initialized with WebSocket broadcast');
+
+  // Check evaluation environment variable
+  const enableEvaluation = process.env.ENABLE_RAGAS_EVALUATION !== 'false';
+
+  // Initialize AgentEvaluationService (with Redis queue if available)
+  let evaluationService: AgentEvaluationService | null = null;
+
+  if (enableEvaluation) {
+    evaluationService = createAgentEvaluationService({
+      dbPath: './data/traces.db',
+    });
+
+    // Try to initialize (will detect Redis availability internally)
+    await evaluationService.init();
+
+    if (evaluationService.isQueueAvailable()) {
+      fastify.log.info('AgentEvaluationService initialized with Redis queue mode');
+    } else {
+      fastify.log.info('AgentEvaluationService initialized (no Redis - sync mode fallback)');
+    }
+
+    fastify.decorate('evaluationService', evaluationService);
+  } else {
+    fastify.log.info('RAGAS evaluation disabled by ENABLE_RAGAS_EVALUATION=false');
+  }
+
   // Register alert routes
   await fastify.register(alertRoutes, { prefix: '/api/alerts' });
 
@@ -249,14 +287,14 @@ export async function createHttpServer(config: Partial<HttpServerConfig> = {}) {
     };
   });
 
-  return { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter, traceStorage };
+  return { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter, traceStorage, alertHandler, evaluationService };
 }
 
 /**
  * Start HTTP server
  */
 export async function startHttpServer(config: Partial<HttpServerConfig> = {}): Promise<void> {
-  const { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter, traceStorage } = await createHttpServer(config);
+  const { fastify, wsHandler, hierarchicalStore, imageStore, statsService, vectorStoreAdapter, traceStorage, alertHandler, evaluationService } = await createHttpServer(config);
   const finalConfig = { ...DEFAULT_HTTP_SERVER_CONFIG, ...config };
 
   // Store wsHandler, hierarchicalStore, and imageStore globally for pipeline emitter access
@@ -265,25 +303,53 @@ export async function startHttpServer(config: Partial<HttpServerConfig> = {}): P
     hierarchicalStore: HierarchicalStore;
     imageStore: ImageStore;
     traceStorage: typeof traceStorage;
+    alertHandler: typeof alertHandler;
+    evaluationService: typeof evaluationService;
   }).wsHandler = wsHandler;
   (globalThis as unknown as {
     wsHandler: WebSocketHandler;
     hierarchicalStore: HierarchicalStore;
     imageStore: ImageStore;
     traceStorage: typeof traceStorage;
+    alertHandler: typeof alertHandler;
+    evaluationService: typeof evaluationService;
   }).hierarchicalStore = hierarchicalStore;
   (globalThis as unknown as {
     wsHandler: WebSocketHandler;
     hierarchicalStore: HierarchicalStore;
     imageStore: ImageStore;
     traceStorage: typeof traceStorage;
+    alertHandler: typeof alertHandler;
+    evaluationService: typeof evaluationService;
   }).imageStore = imageStore;
   (globalThis as unknown as {
     wsHandler: WebSocketHandler;
     hierarchicalStore: HierarchicalStore;
     imageStore: ImageStore;
     traceStorage: typeof traceStorage;
+    alertHandler: typeof alertHandler;
+    evaluationService: typeof evaluationService;
   }).traceStorage = traceStorage;
+  if (alertHandler) {
+    (globalThis as unknown as {
+      wsHandler: WebSocketHandler;
+      hierarchicalStore: HierarchicalStore;
+      imageStore: ImageStore;
+      traceStorage: typeof traceStorage;
+      alertHandler: typeof alertHandler;
+      evaluationService: typeof evaluationService;
+    }).alertHandler = alertHandler;
+  }
+  if (evaluationService) {
+    (globalThis as unknown as {
+      wsHandler: WebSocketHandler;
+      hierarchicalStore: HierarchicalStore;
+      imageStore: ImageStore;
+      traceStorage: typeof traceStorage;
+      alertHandler: typeof alertHandler;
+      evaluationService: typeof evaluationService;
+    }).evaluationService = evaluationService;
+  }
 
   try {
     await fastify.listen({ port: finalConfig.port, host: finalConfig.host });

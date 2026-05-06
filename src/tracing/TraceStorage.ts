@@ -4,7 +4,7 @@
  * 使用 sql.js (纯 JS SQLite 实现) 存储追踪数据和评估结果
  */
 
-import initSqlJs, { Database } from 'sql.js';
+import initSqlJs, { type Database } from 'sql.js';
 import type {
   TraceContextData,
   TraceSpan,
@@ -1005,6 +1005,13 @@ export class TraceStorage {
     } catch (error) {
       console.error('[TraceStorage] Failed to persist:', error);
     }
+  }
+
+  /**
+   * 获取数据库实例（用于直接查询）
+   */
+  getDatabase(): Database | null {
+    return this.db;
   }
 
   /**

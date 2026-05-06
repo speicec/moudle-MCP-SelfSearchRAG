@@ -13,6 +13,94 @@ import { DEFAULT_ENHANCED_RETRIEVAL_CONFIG } from '../../retrieval/config.js';
 import { MedicalAgent, createMedicalAgent } from '../../medical/agent/MedicalAgent.js';
 import { AgentEmitter, createAgentEmitter } from '../agent-emitter.js';
 import type { AgentResult } from '../../medical/agent/types.js';
+import type { WebSocketHandler } from '../websocket-handler.js';
+import type { ExtendedEvaluationResult } from '../../evaluation/types.js';
+import type { AlertHandler } from '../../alert/AlertHandler.js';
+
+/**
+ * Trigger evaluation after agent query completes (non-blocking)
+ * Implements evaluation-auto-trigger capability
+ */
+function triggerEvaluation(
+  fastify: FastifyInstance,
+  agentResult: AgentResult,
+  query: string,
+  answer: string,
+  wsHandler: WebSocketHandler | undefined,
+  broadcastGeneration: (event: GenerationEvent) => void
+): void {
+  const evaluationService = (fastify as any).evaluationService;
+  const alertHandler = (fastify as any).alertHandler as AlertHandler | undefined;
+
+  if (!evaluationService) {
+    console.log('[ChatRoute:Evaluation] Evaluation service not available, skipping');
+    return;
+  }
+
+  // Generate sessionId for WebSocket targeting
+  const sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  // Store query/answer in alertHandler for review queue context
+  if (alertHandler) {
+    alertHandler.setQueryAnswer(sessionId, query, answer);
+  }
+
+  // Submit evaluation (non-blocking)
+  evaluationService.submitFromAgentResult(
+    agentResult,
+    query,
+    sessionId,
+    {
+      onSuccess: (result: ExtendedEvaluationResult) => {
+        console.log(`[ChatRoute:Evaluation] Evaluation complete: ${result.evaluationId}, overall: ${result.overallScore}`);
+
+        // Broadcast evaluation:complete event via WebSocket
+        if (wsHandler) {
+          console.log('[ChatRoute:Evaluation] Broadcasting evaluation:complete event');
+          const evaluationEvent: PipelineEvent = {
+            type: 'evaluation:complete',
+            evaluationId: result.evaluationId,
+            traceId: result.traceId,
+            sessionId,
+            dimensionScores: {
+              faithfulness: result.metrics.faithfulness.score,
+              contextRelevance: result.metrics.contextRelevance.score,
+              answerRelevance: result.metrics.answerRelevance.score,
+              medicalAccuracy: result.extendedMetrics?.medicalAccuracy?.score ?? 0,
+              safetyAssessment: result.extendedMetrics?.safetyAssessment?.score ?? 0,
+              evidenceTraceability: result.extendedMetrics?.evidenceTraceability?.score ?? 0,
+              completeness: result.extendedMetrics?.completeness?.score ?? 0,
+              terminologyAccuracy: result.extendedMetrics?.terminologyAccuracy?.score ?? 0,
+            },
+            layerScores: result.layerScores ?? { layer1: 0, layer2: 0, layer3: 0 },
+            overallScore: result.overallScore,
+            riskLevel: result.riskLevel ?? 'safe',
+            timestamp: Date.now(),
+          };
+          wsHandler.broadcast(evaluationEvent);
+          console.log('[ChatRoute:Evaluation] Broadcast completed');
+        } else {
+          console.warn('[ChatRoute:Evaluation] wsHandler not available, cannot broadcast');
+        }
+
+        // Trigger alert check
+        if (alertHandler) {
+          alertHandler.checkAndAlert({
+            traceId: result.traceId,
+            evaluationId: result.evaluationId,
+            metrics: result.metrics,
+            extendedMetrics: result.extendedMetrics,
+          }).catch(err => console.error('[ChatRoute:Evaluation] Alert check failed:', err));
+        }
+      },
+      onError: (error: Error) => {
+        console.warn('[ChatRoute:Evaluation] Evaluation failed:', error.message);
+      },
+    }
+  ).catch((err: unknown) => {
+    console.warn('[ChatRoute:Evaluation] Evaluation submission failed:', err);
+  });
+}
 
 /**
  * Chat routes as Fastify plugin
@@ -142,6 +230,8 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         parentChunkContent: r.parentChunkContent,
         similarityScore: r.similarityScore,
         sourceDocumentId: r.sourceDocumentId,
+        // Semantic score (Dense Cosine for display, not RRF)
+        semanticScore: r.semanticScore,
         // Context window fields
         contextWindow: r.contextWindow,
         windowStart: r.windowStart,
@@ -444,6 +534,8 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           parentChunkContent: r.parentChunkContent,
           similarityScore: r.similarityScore,
           sourceDocumentId: r.sourceDocumentId,
+          // Semantic score (Dense Cosine for display, not RRF)
+          semanticScore: r.semanticScore,
         };
         // Add optional context fields
         if (r.contextWindow !== undefined) item.contextWindow = r.contextWindow;
@@ -542,6 +634,18 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           ? await llmGenerationService.generateMultimodalAnswer(generationRequest, broadcastGeneration)
           : await llmGenerationService.generateWithStreaming(generationRequest, broadcastGeneration);
 
+        // Trigger evaluation after agent query completes (non-blocking)
+        if (enableAgent && agentResult) {
+          triggerEvaluation(
+            fastify,
+            agentResult,
+            query,
+            generationResult.answer,
+            wsHandler,
+            broadcastGeneration
+          );
+        }
+
         return reply.status(200).send({
           query,
           results: mappedResults,
@@ -561,6 +665,18 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           error: 'LLM generation not configured - returning retrieval results only',
           timestamp: Date.now(),
         });
+
+        // Trigger evaluation after agent query completes (non-blocking) - LLM disabled case
+        if (enableAgent && agentResult) {
+          triggerEvaluation(
+            fastify,
+            agentResult,
+            query,
+            '', // No answer since LLM disabled
+            wsHandler,
+            broadcastGeneration
+          );
+        }
 
         return reply.status(200).send({
           query,

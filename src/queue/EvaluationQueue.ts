@@ -98,23 +98,39 @@ export class EvaluationQueue {
 
   /**
    * 设置事件监听
+   * 使用 global:* 事件来监听跨进程的通知（Worker 在独立进程中运行）
    */
   private setupEventListeners(): void {
-    this.queue.on('completed', (job: Job<EvaluationJobData>, result: EvaluationJobResult) => {
-      const handlers = this.resultHandlers.get(String(job.id));
-      if (handlers?.onSuccess) {
-        handlers.onSuccess(result);
+    // 使用 global:completed 监听其他进程（Worker）完成的任务
+    // Bull global:completed 只传递 jobId，需要从 job 获取 returnvalue
+    this.queue.on('global:completed', async (jobId: string) => {
+      try {
+        const job = await this.queue.getJob(jobId);
+        if (!job) {
+          console.warn(`[EvaluationQueue] Job ${jobId} not found for global:completed`);
+          return;
+        }
+
+        const result = job.returnvalue as EvaluationJobResult | undefined;
+        const handlers = this.resultHandlers.get(jobId);
+        if (handlers?.onSuccess && result) {
+          handlers.onSuccess(result);
+        }
+        this.resultHandlers.delete(jobId);
+      } catch (err) {
+        console.error(`[EvaluationQueue] Error processing global:completed for job ${jobId}:`, err);
       }
-      this.resultHandlers.delete(String(job.id));
     });
 
-    this.queue.on('failed', (job: Job<EvaluationJobData>, error: Error) => {
-      const handlers = this.resultHandlers.get(String(job.id));
+    // 使用 global:failed 监听其他进程失败的任务
+    this.queue.on('global:failed', async (jobId: string, failedReason: string) => {
+      const handlers = this.resultHandlers.get(jobId);
       if (handlers?.onError) {
-        handlers.onError(error);
+        handlers.onError(new Error(failedReason));
       }
     });
 
+    // 本地 progress 事件（在同一进程内有效）
     this.queue.on('progress', (job: Job<EvaluationJobData>, progress: number) => {
       const handlers = this.resultHandlers.get(String(job.id));
       if (handlers?.onProgress) {
