@@ -410,4 +410,186 @@ describe('Metadata Flow Integration Tests', () => {
       expect(fixture.expectedMetadata.guidelineSource).toBe('CDS');
     });
   });
+
+  /**
+   * Task: VectorPayload metadata fields for GRADE evaluation
+   */
+  describe('VectorPayload metadata fields', () => {
+    /**
+     * Simulates VectorPayload construction from ChunkMetadata
+     */
+    interface VectorPayload {
+      documentId: string;
+      chunkId: string;
+      level: 'small' | 'parent' | 'image';
+      modality: 'text' | 'image';
+      pageNumber?: number;
+      contentType?: string;
+      documentYear?: number;
+      documentTitle?: string;
+      documentAuthor?: string;
+      guidelineSource?: string;
+    }
+
+    function buildPayloadFromChunk(chunk: HierarchicalChunk, documentId: string): VectorPayload {
+      return {
+        documentId,
+        chunkId: chunk.id,
+        level: 'small',
+        modality: 'text',
+        pageNumber: chunk.metadata.pageNumber,
+        contentType: chunk.metadata.contentType,
+        documentYear: chunk.metadata.documentYear,
+        documentTitle: chunk.metadata.documentTitle,
+        documentAuthor: chunk.metadata.documentAuthor,
+        guidelineSource: chunk.metadata.guidelineSource,
+      };
+    }
+
+    it('should include documentYear in payload when chunk has year', () => {
+      const metadata: ChunkMetadata = {
+        contentType: 'text',
+        documentYear: 2024,
+        documentTitle: 'ADA Standards of Care 2024',
+        guidelineSource: 'ADA',
+      };
+
+      const chunk = createHierarchicalChunk(
+        'Metformin recommendations...',
+        [],
+        'small',
+        { start: 0, end: 100 },
+        'doc_ada',
+        createDefaultQualityScore(),
+        metadata
+      );
+
+      const payload = buildPayloadFromChunk(chunk, 'doc_ada');
+
+      expect(payload.documentYear).toBe(2024);
+      expect(payload.documentTitle).toBe('ADA Standards of Care 2024');
+      expect(payload.guidelineSource).toBe('ADA');
+    });
+
+    it('should have undefined documentYear when chunk lacks year', () => {
+      const metadata: ChunkMetadata = {
+        contentType: 'text',
+        // No documentYear
+      };
+
+      const chunk = createHierarchicalChunk(
+        'General content...',
+        [],
+        'small',
+        { start: 0, end: 50 },
+        'doc_general',
+        createDefaultQualityScore(),
+        metadata
+      );
+
+      const payload = buildPayloadFromChunk(chunk, 'doc_general');
+
+      expect(payload.documentYear).toBeUndefined();
+      expect(payload.documentTitle).toBeUndefined();
+      expect(payload.guidelineSource).toBeUndefined();
+    });
+  });
+
+  /**
+   * Task: recoverFromQdrant metadata recovery
+   */
+  describe('recoverFromQdrant metadata recovery', () => {
+    /**
+     * Simulates metadata recovery from Qdrant payload
+     */
+    function recoverMetadataFromPayload(payload: {
+      contentType?: string;
+      pageNumber?: number;
+      documentYear?: number;
+      documentTitle?: string;
+      documentAuthor?: string;
+      guidelineSource?: string;
+    }): ChunkMetadata {
+      return {
+        contentType: (payload.contentType as 'text' | 'table' | 'image' | 'formula') ?? 'text',
+        boundaryConfidence: 0.5,
+        ...(payload.pageNumber !== undefined ? { pageNumber: payload.pageNumber } : {}),
+        ...(payload.documentYear !== undefined ? { documentYear: payload.documentYear } : {}),
+        ...(payload.documentTitle !== undefined ? { documentTitle: payload.documentTitle } : {}),
+        ...(payload.documentAuthor !== undefined ? { documentAuthor: payload.documentAuthor } : {}),
+        ...(payload.guidelineSource !== undefined ? { guidelineSource: payload.guidelineSource } : {}),
+      };
+    }
+
+    it('should recover documentYear from payload', () => {
+      const payload = {
+        contentType: 'text',
+        pageNumber: 15,
+        documentYear: 2024,
+        documentTitle: 'KDIGO 2023 CKD Guidelines',
+        guidelineSource: 'KDIGO',
+      };
+
+      const metadata = recoverMetadataFromPayload(payload);
+
+      expect(metadata.documentYear).toBe(2024);
+      expect(metadata.documentTitle).toBe('KDIGO 2023 CKD Guidelines');
+      expect(metadata.guidelineSource).toBe('KDIGO');
+      expect(metadata.pageNumber).toBe(15);
+    });
+
+    it('should handle legacy payload without new fields', () => {
+      const legacyPayload = {
+        contentType: 'text',
+        pageNumber: 10,
+        // No documentYear, documentTitle, guidelineSource
+      };
+
+      const metadata = recoverMetadataFromPayload(legacyPayload);
+
+      expect(metadata.documentYear).toBeUndefined();
+      expect(metadata.documentTitle).toBeUndefined();
+      expect(metadata.guidelineSource).toBeUndefined();
+      expect(metadata.pageNumber).toBe(10); // Existing field preserved
+      expect(metadata.contentType).toBe('text');
+    });
+
+    it('should handle partial metadata in payload', () => {
+      const partialPayload = {
+        contentType: 'text',
+        documentYear: 2022,
+        // No documentTitle or guidelineSource
+      };
+
+      const metadata = recoverMetadataFromPayload(partialPayload);
+
+      expect(metadata.documentYear).toBe(2022);
+      expect(metadata.documentTitle).toBeUndefined();
+      expect(metadata.guidelineSource).toBeUndefined();
+    });
+
+    it('should preserve all existing fields while adding new ones', () => {
+      const fullPayload = {
+        contentType: 'table',
+        pageNumber: 42,
+        documentYear: 2023,
+        documentTitle: 'ADA Standards of Care 2023',
+        documentAuthor: 'American Diabetes Association',
+        guidelineSource: 'ADA',
+      };
+
+      const metadata = recoverMetadataFromPayload(fullPayload);
+
+      // Existing fields preserved
+      expect(metadata.contentType).toBe('table');
+      expect(metadata.pageNumber).toBe(42);
+      expect(metadata.boundaryConfidence).toBe(0.5);
+
+      // New fields recovered
+      expect(metadata.documentYear).toBe(2023);
+      expect(metadata.documentTitle).toBe('ADA Standards of Care 2023');
+      expect(metadata.documentAuthor).toBe('American Diabetes Association');
+      expect(metadata.guidelineSource).toBe('ADA');
+    });
+  });
 });
