@@ -295,10 +295,10 @@ body {
 .clinical-content {
   flex: 1;
   padding: 24px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden; /* Prevent page-level scrolling */
   min-height: 0; /* Critical: allows flex child to shrink */
-  max-height: calc(100vh - 64px - var(--statusbar-height) - 48px); /* header + statusbar + padding */
+  display: flex; /* Enable flex for proper height propagation */
+  flex-direction: column;
 }
 
 /* ==================== Clinical Panels ==================== */
@@ -311,7 +311,9 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  height: 100%; /* Full height of grid cell */
   min-height: 0; /* Critical: allows flex child to shrink */
+  max-height: 100%; /* Constrain to grid cell height */
 }
 
 .clinical-panel-header {
@@ -349,11 +351,13 @@ body {
 }
 
 .clinical-panel-body {
-  padding: 16px 20px;
+  padding: 0; /* Remove padding for better scroll containment */
   flex: 1;
   min-height: 0; /* Critical: allows flex child to shrink */
   overflow-y: auto;
   overflow-x: hidden;
+  display: flex; /* Enable flex for children */
+  flex-direction: column;
 }
 
 /* ==================== Vital Signs Monitor ==================== */
@@ -774,10 +778,11 @@ body {
 
 .clinical-grid-chat {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: 1fr 380px; /* Increased right panel width */
   gap: 24px;
-  height: 100%;
+  flex: 1; /* Take remaining space */
   min-height: 0; /* Critical: allows grid to shrink */
+  overflow: hidden; /* Prevent overflow */
 }
 
 /* ==================== Responsive ==================== */
@@ -805,6 +810,7 @@ body {
 
   .clinical-grid-chat {
     grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr; /* Split rows when stacked */
   }
 }
 
@@ -1233,9 +1239,10 @@ body {
   background: var(--clinical-bg-dark);
   border: 1px solid var(--clinical-border-light);
   border-radius: var(--clinical-radius-lg);
-  padding: 20px 24px;
+  padding: 16px 20px; /* Reduced padding */
   position: relative;
   overflow: hidden;
+  min-width: 0; /* Prevent overflow */
 }
 
 .clinical-answer-card::before {
@@ -1360,6 +1367,12 @@ body {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--clinical-border-light);
+  min-width: 0; /* Allow content to fit */
+}
+
+/* Evidence sources container in answer card */
+.clinical-answer-card {
+  min-width: 0; /* Prevent overflow */
 }
 
 .clinical-sources-toggle {
@@ -1397,8 +1410,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 300px;
+  max-height: 400px; /* Increased from 300px */
   overflow-y: auto;
+  overflow-x: hidden; /* Prevent horizontal scroll */
+  padding-right: 4px; /* Space for scrollbar */
 }
 
 /* ==================== User Message ==================== */
@@ -1433,13 +1448,13 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 20px;
+  padding: 40px 20px; /* Reduced padding for better fit */
   text-align: center;
 }
 
 .clinical-empty-icon {
   font-size: 48px;
-  margin-bottom: 20px;
+  margin-bottom: 16px; /* Reduced margin */
 }
 
 .clinical-empty-title {
@@ -1493,6 +1508,7 @@ body {
   padding: 16px 20px;
   background: var(--clinical-bg-soft);
   border-top: 1px solid var(--clinical-border-light);
+  position: relative; /* For z-index stacking */
 }
 
 .clinical-chat-form {
@@ -1594,6 +1610,16 @@ body {
   height: 100%;
   min-height: 0; /* Critical: allows flex child to shrink */
   overflow: hidden;
+  flex: 1; /* Take full available space */
+  padding-bottom: 0; /* Remove extra padding */
+}
+
+/* Scrollable content wrapper for evidence panel */
+.clinical-evidence-panel-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .clinical-evidence-panel-wrapper {
@@ -1601,6 +1627,8 @@ body {
   min-height: 0; /* Critical: allows flex child to shrink */
   display: flex;
   flex-direction: column;
+  padding: 16px 20px; /* Add padding here instead of panel-body */
+  overflow: hidden; /* Prevent wrapper overflow */
 }
 
 .clinical-evidence-panel-header {
@@ -1610,6 +1638,7 @@ body {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--clinical-border-light);
   flex-shrink: 0; /* Prevent header from shrinking */
+  margin-bottom: 8px; /* Add spacing between header and content */
 }
 
 .clinical-evidence-panel-title-section {
@@ -1655,12 +1684,27 @@ body {
   color: var(--clinical-primary);
 }
 
+/* GRADE Indicator Badge */
+.clinical-evidence-grade-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(72, 187, 120, 0.15);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--clinical-success);
+  font-family: var(--font-mono);
+}
+
 /* Quality Distribution Bar */
 .clinical-evidence-quality-distribution {
   display: flex;
   flex-direction: column;
   gap: 6px;
   flex-shrink: 0; /* Prevent from shrinking */
+  margin-bottom: 8px; /* Add spacing */
 }
 
 .clinical-evidence-quality-bar {
@@ -1765,7 +1809,9 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 4px;
+  padding-bottom: 8px; /* Add bottom padding for better scrolling */
   scrollbar-width: thin;
+  max-height: 100%; /* Constrain to container */
 }
 
 .clinical-evidence-list::-webkit-scrollbar {
@@ -1775,6 +1821,24 @@ body {
 .clinical-evidence-list::-webkit-scrollbar-thumb {
   background: var(--clinical-border);
   border-radius: 2px;
+}
+
+.clinical-evidence-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Panel body scrollbar styling */
+.clinical-panel-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.clinical-panel-body::-webkit-scrollbar-thumb {
+  background: var(--clinical-border);
+  border-radius: 3px;
+}
+
+.clinical-panel-body::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .clinical-evidence-loading {
@@ -1823,6 +1887,8 @@ body {
   overflow: hidden;
   transition: all 0.2s ease;
   font-size: 12px;
+  width: 100%; /* Full width */
+  min-width: 0; /* Allow shrinking */
 }
 
 .clinical-evidence-card:hover {
@@ -1865,14 +1931,15 @@ body {
   font-size: 10px;
   color: var(--clinical-text-muted);
   font-family: var(--font-mono);
-  max-width: 180px;
+  max-width: 220px; /* Increased from 180px */
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .clinical-evidence-year {
   font-size: 10px;
-  color: var(--clinical-text-secondary);
+  color: var(--clinical-text-soft);
   font-weight: 500;
   margin-left: 2px;
 }
@@ -1893,6 +1960,10 @@ body {
   border-radius: 2px;
 }
 
+.clinical-evidence-confidence-bar.semantic-score {
+  width: 80px;
+}
+
 .clinical-evidence-confidence-fill {
   height: 100%;
   border-radius: 2px;
@@ -1904,6 +1975,32 @@ body {
   font-family: var(--font-mono);
   color: var(--clinical-text);
   margin-left: 6px;
+}
+
+/* RRF Ranking Display */
+.clinical-evidence-rrf-ranking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--clinical-bg-soft);
+  border-radius: 3px;
+  margin-left: 8px;
+}
+
+.clinical-evidence-rrf-rank {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--clinical-text);
+}
+
+.clinical-evidence-rrf-percentage {
+  font-size: 8px;
+  font-weight: 400;
+  font-family: var(--font-mono);
+  color: var(--clinical-text-muted);
+  opacity: 0.7;
 }
 
 /* Quality Badge */
@@ -1977,6 +2074,7 @@ body {
 /* Content */
 .clinical-evidence-content {
   overflow: hidden;
+  max-height: 400px; /* Limit expanded content height */
 }
 
 .clinical-evidence-metadata {
@@ -2014,8 +2112,9 @@ body {
   line-height: 1.6;
   color: var(--clinical-text);
   white-space: pre-wrap;
-  max-height: 200px;
+  max-height: 180px; /* Reduced from 200px for better fit */
   overflow-y: auto;
+  word-break: break-word; /* Better text wrapping */
 }
 
 /* Actions */
@@ -2050,11 +2149,12 @@ body {
 .clinical-evidence-preview {
   padding: 6px 12px 8px;
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.5; /* Improved readability */
   color: var(--clinical-text-muted);
-  max-height: 48px;
+  max-height: 60px; /* Increased from 48px */
   overflow: hidden;
   text-overflow: ellipsis;
+  word-break: break-word; /* Better text wrapping */
 }
 
 /* Dark mode adjustments */
@@ -2746,6 +2846,19 @@ body {
   height: 100%;
   min-height: 0; /* Critical: allows flex child to shrink */
   position: relative;
+  overflow: hidden; /* Prevent container overflow */
+}
+
+/* Inner padding for enhanced chat content */
+.enhanced-chat-container > .enhanced-chat-retrieval-section,
+.enhanced-chat-container > .enhanced-chat-messages,
+.enhanced-chat-container > .enhanced-chat-input-area {
+  flex-shrink: 0;
+}
+
+/* Add specific handling for the chat window panel body content */
+.clinical-panel-body > .enhanced-chat-container {
+  padding: 0; /* Remove padding from wrapper */
 }
 
 /* Settings Saved Indicator */
@@ -3401,6 +3514,7 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 16px;
+  max-height: calc(100vh - 280px); /* Dynamic max-height based on viewport */
 }
 
 /* Empty State */
@@ -3807,4 +3921,57 @@ body {
     flex-direction: column;
     gap: 8px;
   }
+}
+
+/* ==================== Modern Chat Window Styles ==================== */
+
+/* These styles work with the new ModernChatWindow component using shadcn/ui */
+
+/* Ensure clinical-panel-body properly contains the new chat window */
+.clinical-panel-body > div:first-child {
+  height: 100%;
+  min-height: 0;
+}
+
+/* Modern evidence card styling (works with shadcn Card) */
+.modern-evidence-card {
+  border-radius: 8px;
+  border: 1px solid var(--clinical-border-light);
+  background: var(--clinical-bg-dark);
+}
+
+/* Streaming indicator animation */
+.streaming-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--clinical-accent);
+  animation: streamingPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes streamingPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* Modern message card gradient header */
+.modern-message-header-gradient {
+  background: linear-gradient(135deg, rgba(44, 122, 123, 0.1) 0%, transparent 100%);
+}
+
+/* Evidence panel scrollbar for modern layout */
+.clinical-panel-body .scrollarea-viewport {
+  max-height: 100%;
+}
+
+/* Phase indicator badges */
+.phase-badge-analysis { background: rgba(49, 130, 206, 0.15); color: var(--clinical-accent); }
+.phase-badge-retrieval { background: rgba(44, 122, 123, 0.15); color: var(--clinical-primary); }
+.phase-badge-reasoning { background: rgba(99, 102, 241, 0.15); color: #6366F1; }
+.phase-badge-answer { background: rgba(72, 187, 120, 0.15); color: var(--clinical-success); }
+
+/* Dark mode adjustments for modern chat */
+.dark .modern-evidence-card {
+  border-color: var(--clinical-border);
+  background: var(--clinical-bg-soft);
 }

@@ -124,6 +124,33 @@ function createEventHandler() {
       useRetrievalStore.getState().handleRetrievalComplete(updatedResults, useRetrievalStore.getState().duration ?? 0, event.timestamp);
       useChatStore.getState().setCurrentSources(updatedResults);
     }
+
+    // Handle evaluation:complete events (RAGAS evaluation results)
+    if (event.type === 'evaluation:complete' && event.dimensionScores && event.layerScores) {
+      console.log(`[EventHandler] Received evaluation:complete, overallScore: ${event.overallScore}`);
+
+      // Update risk distribution incrementally
+      const currentMetrics = useStatsStore.getState().evaluationMetrics;
+      const newRiskDistribution = {
+        ...currentMetrics.riskDistribution,
+        total: currentMetrics.riskDistribution.total + 1,
+      };
+
+      // Increment the appropriate risk level count
+      if (event.riskLevel) {
+        newRiskDistribution[event.riskLevel] = currentMetrics.riskDistribution[event.riskLevel] + 1;
+      }
+
+      // Call handleEvaluationUpdate with new metrics
+      useStatsStore.getState().handleEvaluationUpdate({
+        avgOverall: event.overallScore ?? 0,
+        dimensionScores: event.dimensionScores,
+        layerScores: event.layerScores,
+        riskDistribution: newRiskDistribution,
+        totalEvaluations: currentMetrics.totalEvaluations + 1,
+        lastEvaluationTime: event.timestamp,
+      });
+    }
   };
 }
 

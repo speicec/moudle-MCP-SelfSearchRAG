@@ -3,7 +3,20 @@ import { create } from 'zustand';
 // Re-export from new store files
 export { useTimelineStore, type TimelineStage, type StageMetrics, type TimelineState } from './timelineStore';
 export { useChunkStore, type ChunkItem, type ChunkCreatedEvent, type ChunkFilterOptions, type PaginationState, type ChunkState } from './chunkStore';
-export { useStatsStore, type StatsUpdateEvent, type PipelineStats, type RetrievalStats, type ChunkStats, type StageTimeDistribution, type PerformanceIndicator, type StatsState } from './statsStore';
+export {
+  useStatsStore,
+  type StatsUpdateEvent,
+  type PipelineStats,
+  type RetrievalStats,
+  type ChunkStats,
+  type StageTimeDistribution,
+  type PerformanceIndicator,
+  type EvaluationMetrics,
+  type EvaluationDimensionScores,
+  type LayerScores,
+  type RiskLevelDistribution,
+  type StatsState
+} from './statsStore';
 export { useRetrievalStore, type RetrievalMatch, type RetrievalResult, type RetrievalFlowState } from './retrievalStore';
 
 // Types
@@ -38,6 +51,8 @@ export interface RetrievalResult {
   parentChunkContent: string;
   similarityScore: number;
   sourceDocumentId: string;
+  // Semantic similarity score (Dense Cosine for display, not RRF)
+  semanticScore?: number;
   // GRADE evidence evaluation (new)
   evidenceEvaluation?: {
     literatureType: 'rct' | 'meta_analysis' | 'guideline' | 'observational' | 'case_report' | 'expert_opinion';

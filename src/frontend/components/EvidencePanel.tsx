@@ -13,6 +13,7 @@ import {
   Flag,
   Building,
   Clock,
+  Search,
 } from 'lucide-react';
 
 /**
@@ -62,6 +63,8 @@ interface EvidenceResult {
     documentTitle?: string;  // Human-readable document title
     documentYear?: number;   // Publication year
   };
+  // Semantic similarity score (Dense Cosine for display, not RRF)
+  semanticScore?: number;
   // GRADE evidence evaluation (new)
   evidenceEvaluation?: EvidenceEvaluation;
 }
@@ -88,7 +91,7 @@ const AUTHORITY_CONFIG: Record<SourceAuthorityLevel, { label: string; icon: Reac
 };
 
 /**
- * Calculate evidence quality grade based on similarity
+ * Calculate evidence quality grade based on semantic similarity
  * A: ≥85% (High confidence, guideline level)
  * B: ≥70% (Moderate confidence, study level)
  * C: ≥50% (Low confidence, case report level)
@@ -102,16 +105,68 @@ function getEvidenceQuality(score: number): EvidenceQuality {
 }
 
 /**
- * Get grade from backend GRADE evaluation, fallback to similarityScore
- * Priority: backend GRADE > similarityScore threshold
+ * Get grade from backend GRADE evaluation, fallback to semanticScore
+ * Priority: backend GRADE > semanticScore threshold > similarityScore threshold
  */
 function getGradeFromEvaluation(result: EvidenceResult): EvidenceQuality {
   // If backend GRADE is available, use it
   if (result.evidenceEvaluation?.grade) {
     return result.evidenceEvaluation.grade;
   }
-  // Fallback to similarityScore threshold
+  // Use semanticScore if available (semantic similarity)
+  if (result.semanticScore !== undefined) {
+    return getEvidenceQuality(result.semanticScore);
+  }
+  // Fallback to similarityScore (RRF score) - less meaningful but still works
   return getEvidenceQuality(result.similarityScore);
+}
+
+/**
+ * Get display scores for similarity visualization
+ * Returns both semanticScore (if available) and RRF score info
+ */
+function getDisplayScores(result: EvidenceResult): {
+  semantic: { score: number; type: 'semantic' | 'keyword' };
+  rrf: { score: number; rank: number };
+} {
+  const semantic = result.semanticScore !== undefined
+    ? { score: result.semanticScore, type: 'semantic' }
+    : { score: result.similarityScore, type: 'keyword' };
+
+  // RRF score is always similarityScore, calculate estimated rank
+  // RRF score range is ~1%-4%, estimate rank based on score value
+  const rrfScore = result.similarityScore;
+  const rrfRank = Math.round(1 / (rrfScore * 60 + 1)); // Inverse of RRF formula approximation
+
+  return {
+    semantic,
+    rrf: { score: rrfScore, rank: rrfRank > 0 ? rrfRank : 1 },
+  };
+}
+
+/**
+ * Get RRF ranking display info
+ * Shows "排名 #N" and "RRF X.X%"
+ */
+function getRRFDisplay(rrfScore: number, totalResults: number): { label: string; percentage: string } {
+  // RRF score is typically 1/(k+rank) where k=60
+  // Display as percentage and estimated rank
+  const percentage = `${(rrfScore * 100).toFixed(1)}%`;
+
+  // Estimate rank from RRF score: rank ≈ 1/rrfScore - 60
+  const estimatedRank = Math.max(1, Math.round(1 / rrfScore - 60));
+
+  return {
+    label: `排名 #${estimatedRank}`,
+    percentage: `RRF ${percentage}`,
+  };
+}
+
+/**
+ * Check if result has meaningful semantic score (not just RRF)
+ */
+function hasSemanticScore(result: EvidenceResult): boolean {
+  return result.semanticScore !== undefined;
 }
 
 /**
@@ -193,6 +248,17 @@ const EvidenceCard: React.FC<{
   const qualityConfig = getQualityConfig(quality);
   const QualityIcon = qualityConfig.icon;
 
+  // Get display scores (semantic and RRF)
+  const displayScores = useMemo(
+    () => getDisplayScores(result),
+    [result]
+  );
+  const rrfDisplay = useMemo(
+    () => getRRFDisplay(result.similarityScore, 10),
+    [result.similarityScore]
+  );
+  const hasSemantic = hasSemanticScore(result);
+
   // GRADE-specific data
   const hasGRADE = hasGradeEvaluation(result);
   const literatureTypeLabel = result.evidenceEvaluation?.literatureType
@@ -248,18 +314,48 @@ const EvidenceCard: React.FC<{
         </div>
 
         <div className="clinical-evidence-quality-section">
-          {/* Confidence bar */}
-          <div className="clinical-evidence-confidence-bar">
-            <motion.div
-              className="clinical-evidence-confidence-fill"
-              initial={{ width: 0 }}
-              animate={{ width: `${result.similarityScore * 100}%` }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-              data-quality={quality}
-            />
-            <span className="clinical-evidence-confidence-value">
-              {Math.round(result.similarityScore * 100)}%
-            </span>
+          {/* Semantic similarity score (primary, left-aligned) */}
+          <div
+            className="clinical-evidence-confidence-bar semantic-score"
+            title={hasSemantic ? '语义相似度：基于向量匹配，反映内容与查询的相关程度' : '关键词匹配：仅通过 BM25 关键词搜索匹配，无语义相似度'}
+          >
+            {hasSemantic ? (
+              <>
+                <motion.div
+                  className="clinical-evidence-confidence-fill"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${displayScores.semantic.score * 100}%` }}
+                  transition={{ duration: 0.5, delay: 0.2 }}
+                  data-quality={quality}
+                />
+                <span className="clinical-evidence-confidence-value">
+                  相似度 {Math.round(displayScores.semantic.score * 100)}%
+                </span>
+              </>
+            ) : (
+              <>
+                <motion.div
+                  className="clinical-evidence-confidence-fill keyword-match"
+                  initial={{ width: 0 }}
+                  animate={{ width: '50%' }}
+                  transition={{ duration: 0.5, delay: 0.2 }}
+                  data-quality={quality}
+                />
+                <span className="clinical-evidence-confidence-value keyword-match-label">
+                  <Search className="w-3 h-3 inline-block mr-1" />
+                  关键词匹配
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* RRF ranking score (secondary, middle) */}
+          <div
+            className="clinical-evidence-rrf-ranking"
+            title="RRF 排名：融合 Dense+Sparse 搜索排名，用于排序结果顺序（得分范围 1%-4% 正常）"
+          >
+            <span className="clinical-evidence-rrf-rank">{rrfDisplay.label}</span>
+            <span className="clinical-evidence-rrf-percentage">{rrfDisplay.percentage}</span>
           </div>
 
           {/* Quality badge with GRADE type */}
@@ -353,9 +449,21 @@ const EvidenceCard: React.FC<{
                 </span>
               </div>
               <div className="clinical-evidence-meta-item">
-                <span className="clinical-evidence-meta-label">检索得分</span>
+                <span className="clinical-evidence-meta-label">
+                  {hasSemantic ? '相似度' : '匹配类型'}
+                </span>
                 <span className="clinical-evidence-meta-value">
-                  {(result.similarityScore * 100).toFixed(1)}%
+                  {hasSemantic
+                    ? `${(displayScores.semantic.score * 100).toFixed(1)}%`
+                    : '关键词匹配'
+                  }
+                </span>
+              </div>
+              {/* RRF ranking metadata */}
+              <div className="clinical-evidence-meta-item">
+                <span className="clinical-evidence-meta-label">RRF 排名</span>
+                <span className="clinical-evidence-meta-value">
+                  {rrfDisplay.label} ({rrfDisplay.percentage})
                 </span>
               </div>
               {/* GRADE-specific metadata */}
@@ -474,6 +582,12 @@ const EvidencePanel: React.FC<{
       // Use GRADE evaluation if available, fallback to similarity
       qualityCounts[getGradeFromEvaluation(r)]++;
     });
+
+    // Calculate average semantic score (prefer semanticScore over RRF score)
+    const semanticScores = results.filter(r => r.semanticScore !== undefined);
+    const avgSemanticScore = semanticScores.length > 0
+      ? semanticScores.reduce((sum, r) => sum + (r.semanticScore ?? 0), 0) / semanticScores.length
+      : null;
     const avgScore = results.length > 0
       ? results.reduce((sum, r) => sum + r.similarityScore, 0) / results.length
       : 0;
@@ -487,7 +601,10 @@ const EvidencePanel: React.FC<{
     // Check if any results have GRADE data
     const hasGradeData = results.some(r => hasGradeEvaluation(r));
 
-    return { qualityCounts, avgScore, avgCompositeScore, hasGradeData };
+    // Check if any results have semantic score
+    const hasSemanticData = semanticScores.length > 0;
+
+    return { qualityCounts, avgScore, avgSemanticScore, avgCompositeScore, hasGradeData, hasSemanticData };
   }, [results]);
 
   // Sort results - use GRADE when available
@@ -530,12 +647,24 @@ const EvidencePanel: React.FC<{
         {/* Average score indicator */}
         {results.length > 0 && (
           <div className="clinical-evidence-panel-stats">
-            <div className="clinical-evidence-stat-item">
-              <span className="clinical-evidence-stat-label">平均匹配度</span>
-              <span className="clinical-evidence-stat-value">
-                {Math.round(stats.avgScore * 100)}%
-              </span>
-            </div>
+            {/* Average semantic similarity (preferred) */}
+            {stats.avgSemanticScore !== null && (
+              <div className="clinical-evidence-stat-item">
+                <span className="clinical-evidence-stat-label">平均相似度</span>
+                <span className="clinical-evidence-stat-value">
+                  {Math.round(stats.avgSemanticScore * 100)}%
+                </span>
+              </div>
+            )}
+            {/* Average RRF score (fallback) */}
+            {stats.avgSemanticScore === null && (
+              <div className="clinical-evidence-stat-item">
+                <span className="clinical-evidence-stat-label">平均匹配度</span>
+                <span className="clinical-evidence-stat-value">
+                  {Math.round(stats.avgScore * 100)}%
+                </span>
+              </div>
+            )}
             {/* Average compositeScore from GRADE */}
             {stats.avgCompositeScore !== null && (
               <div className="clinical-evidence-stat-item">
@@ -630,5 +759,5 @@ const EvidencePanel: React.FC<{
   );
 };
 
-export { EvidenceCard, EvidencePanel };
+export { EvidenceCard, EvidencePanel, getDisplayScores, getRRFDisplay, hasSemanticScore, getGradeFromEvaluation, getEvidenceQuality };
 export default EvidencePanel;

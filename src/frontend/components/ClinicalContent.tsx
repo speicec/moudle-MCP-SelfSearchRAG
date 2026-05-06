@@ -1,16 +1,16 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import ChatWindow from './ChatWindow';
-import EnhancedChatWindow from './EnhancedChatWindow';
+import ModernChatWindow from './ModernChatWindow';
+import ModernStatsDashboard from './ModernStatsDashboard';
+import EvaluationPanel from './EvaluationPanel';
 import ClinicalDocumentManagerWrapper from './ClinicalDocumentManagerWrapper';
 import PipelineTimeline from './PipelineTimeline';
 import ChunkExplorer from './ChunkExplorer';
 import RetrievalFlow from './RetrievalFlow';
-import StatsDashboard from './StatsDashboard';
 import RetrievalResultPanel from './RetrievalResultPanel';
 import DocumentSelector from './common/DocumentSelector';
 import { useAppStore } from '../store';
-import { Brain, BookOpen, Clock, FileText, Layers, Search, BarChart3, Settings2 } from 'lucide-react';
+import { Brain, BookOpen, Clock, FileText, Layers, Search, BarChart3, ShieldCheck } from 'lucide-react';
 import type { MainTab } from './ClinicalSidebar';
 
 /**
@@ -26,14 +26,12 @@ interface ClinicalContentProps {
   activeTab: MainTab;
   onNavigateToChunks?: (docId: string) => void;
   onNavigateToDocuments?: () => void;
-  useEnhancedChat?: boolean;
 }
 
 const ClinicalContent: React.FC<ClinicalContentProps> = ({
   activeTab,
   onNavigateToChunks,
   onNavigateToDocuments,
-  useEnhancedChat = true,
 }) => {
   const selectedDocumentId = useAppStore((state) => state.selectedDocumentId);
 
@@ -48,7 +46,7 @@ const ClinicalContent: React.FC<ClinicalContentProps> = ({
           transition={{ duration: 0.3, ease: 'easeOut' }}
           className="clinical-fade-in"
         >
-          {renderTabContent(activeTab, selectedDocumentId, onNavigateToChunks, onNavigateToDocuments, useEnhancedChat)}
+          {renderTabContent(activeTab, selectedDocumentId, onNavigateToChunks, onNavigateToDocuments)}
         </motion.div>
       </AnimatePresence>
     </div>
@@ -63,7 +61,6 @@ function renderTabContent(
   selectedDocumentId: string | null,
   onNavigateToChunks?: (docId: string) => void,
   onNavigateToDocuments?: () => void,
-  useEnhancedChat?: boolean
 ) {
   switch (tab) {
     case 'documents':
@@ -74,38 +71,18 @@ function renderTabContent(
       );
 
     case 'chat':
-      // Use enhanced chat with integrated retrieval analysis
-      if (useEnhancedChat) {
-        return (
-          <div className="clinical-grid-chat">
-            <ClinicalPanel
-              title="智能诊断对话"
-              icon={<Settings2 className="clinical-panel-icon" />}
-              badge="增强"
-            >
-              <EnhancedChatWindow />
-            </ClinicalPanel>
-            <ClinicalPanel
-              title="检索依据详情"
-              icon={<BookOpen className="clinical-panel-icon" />}
-            >
-              <RetrievalResultPanel />
-            </ClinicalPanel>
-          </div>
-        );
-      }
-      // Original layout
+      // 使用新的现代化聊天布局：左侧聊天 + 右侧证据详情
       return (
         <div className="clinical-grid-chat">
           <ClinicalPanel
-            title="诊断对话"
+            title="智能诊断对话"
             icon={<Brain className="clinical-panel-icon" />}
             badge="实时"
           >
-            <ChatWindow />
+            <ModernChatWindow />
           </ClinicalPanel>
           <ClinicalPanel
-            title="检索依据"
+            title="证据来源"
             icon={<BookOpen className="clinical-panel-icon" />}
           >
             <RetrievalResultPanel />
@@ -159,7 +136,18 @@ function renderTabContent(
           title="系统指标"
           icon={<BarChart3 className="clinical-panel-icon" />}
         >
-          <StatsDashboard />
+          <ModernStatsDashboard />
+        </ClinicalPanel>
+      );
+
+    case 'evaluation':
+      return (
+        <ClinicalPanel
+          title="质量评估"
+          icon={<ShieldCheck className="clinical-panel-icon" />}
+          badge="评估"
+        >
+          <EvaluationPanel />
         </ClinicalPanel>
       );
 

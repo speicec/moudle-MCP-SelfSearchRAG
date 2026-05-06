@@ -41,6 +41,8 @@ export interface RetrievalResult {
   contextWindow?: string;
   windowStart?: number;
   windowEnd?: number;
+  // Semantic similarity score (Dense Cosine for display, not RRF)
+  semanticScore?: number;
   // GRADE evidence evaluation (new)
   evidenceEvaluation?: EvidenceEvaluation;
 }

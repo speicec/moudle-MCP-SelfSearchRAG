@@ -12,12 +12,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Cpu,
+  ShieldCheck,
 } from 'lucide-react';
 
 /**
  * Navigation tab types
  */
-export type MainTab = 'documents' | 'chat' | 'timeline' | 'chunks' | 'retrieval' | 'stats';
+export type MainTab = 'documents' | 'chat' | 'timeline' | 'chunks' | 'retrieval' | 'stats' | 'evaluation';
 
 /**
  * Navigation item configuration
@@ -38,6 +39,7 @@ export const navItems: NavItem[] = [
   { id: 'chunks', label: '组织切片', icon: <Layers className="clinical-nav-icon" />, section: 'primary' },
   { id: 'timeline', label: '处理监测', icon: <Clock className="clinical-nav-icon" />, section: 'analysis' },
   { id: 'retrieval', label: '检索分析', icon: <Search className="clinical-nav-icon" />, section: 'analysis' },
+  { id: 'evaluation', label: '质量评估', icon: <ShieldCheck className="clinical-nav-icon" />, section: 'analysis' },
   { id: 'stats', label: '系统体征', icon: <BarChart3 className="clinical-nav-icon" />, section: 'system' },
 ];
 
