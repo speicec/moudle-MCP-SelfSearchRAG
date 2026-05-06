@@ -383,6 +383,11 @@ async function storeVectorsInQdrant(
           content: DEFAULT_PAYLOAD_STORAGE_CONFIG.storeContentInPayload
             ? truncateContent(smallChunk.content, DEFAULT_PAYLOAD_STORAGE_CONFIG.maxContentSizeBytes)
             : undefined,
+          // Document-level metadata for GRADE evaluation
+          documentYear: smallChunk.metadata.documentYear,
+          documentTitle: smallChunk.metadata.documentTitle,
+          documentAuthor: smallChunk.metadata.documentAuthor,
+          guidelineSource: smallChunk.metadata.guidelineSource,
         },
       });
     } catch (error) {
@@ -421,6 +426,11 @@ async function storeVectorsInQdrant(
           content: DEFAULT_PAYLOAD_STORAGE_CONFIG.storeContentInPayload
             ? truncateContent(parentChunk.content, DEFAULT_PAYLOAD_STORAGE_CONFIG.maxContentSizeBytes)
             : undefined,
+          // Document-level metadata for GRADE evaluation
+          documentYear: parentChunk.metadata.documentYear,
+          documentTitle: parentChunk.metadata.documentTitle,
+          documentAuthor: parentChunk.metadata.documentAuthor,
+          guidelineSource: parentChunk.metadata.guidelineSource,
         },
       });
     } catch (error) {

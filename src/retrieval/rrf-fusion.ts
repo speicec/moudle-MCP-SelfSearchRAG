@@ -18,7 +18,7 @@ import type { SearchResult } from './vector-store-adapter.js';
 export interface FusionResult {
   /** Chunk/document ID */
   id: string;
-  /** Fused score */
+  /** Fused score (RRF) */
   score: number;
   /** Original dense rank (if present) */
   denseRank?: number;
@@ -28,6 +28,10 @@ export interface FusionResult {
   sources: ('dense' | 'sparse')[];
   /** Original search result payload */
   payload?: any;
+  /** Original Dense vector Cosine similarity score (for display) */
+  denseScore?: number;
+  /** Original Sparse BM25 score (for display) */
+  sparseScore?: number;
 }
 
 /**
@@ -87,6 +91,7 @@ export function rrfFusion(
       existing.score += rrfScore;
       existing.denseRank = rank;
       existing.sources.push('dense');
+      existing.denseScore = result.score; // Preserve original Dense Cosine score
     } else {
       scoreMap.set(result.id, {
         id: result.id,
@@ -94,6 +99,7 @@ export function rrfFusion(
         denseRank: rank,
         sources: ['dense'],
         payload: result.payload,
+        denseScore: result.score, // Preserve original Dense Cosine score
       });
     }
   }
@@ -111,6 +117,7 @@ export function rrfFusion(
       existing.score += rrfScore;
       existing.sparseRank = rank;
       existing.sources.push('sparse');
+      existing.sparseScore = result.score; // Preserve original Sparse BM25 score
     } else {
       scoreMap.set(result.id, {
         id: result.id,
@@ -118,6 +125,7 @@ export function rrfFusion(
         sparseRank: rank,
         sources: ['sparse'],
         payload: result.payload,
+        sparseScore: result.score, // Preserve original Sparse BM25 score
       });
     }
   }

@@ -89,6 +89,9 @@ export interface ConfidenceRetrievalResult {
   windowStart?: number;
   windowEnd?: number;
 
+  // Semantic similarity score (Dense Cosine for display, not RRF)
+  semanticScore?: number;
+
   // Enhanced confidence fields
   confidenceScore: number;
   confidenceLevel: 'high' | 'medium' | 'low';
@@ -279,6 +282,7 @@ export function createDefaultConfidenceResult(
       };
       evaluatedAt: Date;
     } | undefined;
+    semanticScore?: number;
   }
 ): ConfidenceRetrievalResult {
   // Extract chunk quality score from evaluation result
@@ -293,5 +297,6 @@ export function createDefaultConfidenceResult(
     keywordMatchScore: 0,
     positionScore: 0,
     chunkQualityScore,
+    ...(baseResult.semanticScore !== undefined ? { semanticScore: baseResult.semanticScore } : {}),
   };
 }

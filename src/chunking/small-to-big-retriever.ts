@@ -247,6 +247,7 @@ export class SmallToBigRetriever {
         smallChunkContent: hr.matchedSmallChunks[0]?.smallContent ?? '',
         parentChunkContent: hr.parentContent,
         similarityScore: hr.parentScore,
+        ...(hr.semanticScore !== undefined ? { semanticScore: hr.semanticScore } : {}),
         sourceDocumentId: parentChunk?.sourceDocumentId ?? '',
         metadata: parentChunk?.metadata ?? { contentType: 'text' },
         expandedFromSmallChunk: hr.method === 'hybrid_small',
@@ -417,6 +418,8 @@ export class SmallToBigRetriever {
       expandedFromSmallChunk: r.expandedFromSmallChunk,
       // Pass quality score for confidence calculation
       qualityScore: r.qualityScore,
+      // Pass semantic score for frontend display (Dense Cosine, not RRF)
+      ...(r.semanticScore !== undefined ? { semanticScore: r.semanticScore } : {}),
     }));
   }
 

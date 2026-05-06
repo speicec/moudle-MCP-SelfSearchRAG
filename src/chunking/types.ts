@@ -144,6 +144,8 @@ export interface HierarchicalRetrievalResult {
   sourceDocumentId: string;
   metadata: ChunkMetadata;
   expandedFromSmallChunk: boolean;
+  // Semantic similarity score (Dense Cosine for display, not RRF)
+  semanticScore?: number;
   // Context window fields (new)
   contextWindow?: string;      // extracted context around matched content
   windowStart?: number;        // start position of context window in parent

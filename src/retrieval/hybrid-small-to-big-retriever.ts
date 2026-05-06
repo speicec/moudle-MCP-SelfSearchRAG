@@ -30,8 +30,10 @@ export interface HybridSearchResult {
   parentChunkId: string;
   /** Parent content (full context) */
   parentContent: string;
-  /** Parent score (calculated from small chunks) */
+  /** Parent score (calculated from small chunks - RRF score for sorting) */
   parentScore: number;
+  /** Semantic similarity score (max Dense Cosine score for display) */
+  semanticScore?: number;
   /** Source method */
   method: 'hybrid_small' | 'fallback_parent_sparse';
   /** Small chunks that matched */
@@ -156,6 +158,11 @@ export class HybridSmallToBigRetriever {
         contentType: (payload.contentType as 'text' | 'table' | 'image' | 'formula') ?? 'text',
         boundaryConfidence: 0.5, // Default for recovered chunks
         ...(payload.pageNumber !== undefined ? { pageNumber: payload.pageNumber } : {}),
+        // Document-level metadata for GRADE evaluation
+        ...(payload.documentYear !== undefined ? { documentYear: payload.documentYear } : {}),
+        ...(payload.documentTitle !== undefined ? { documentTitle: payload.documentTitle } : {}),
+        ...(payload.documentAuthor !== undefined ? { documentAuthor: payload.documentAuthor } : {}),
+        ...(payload.guidelineSource !== undefined ? { guidelineSource: payload.guidelineSource } : {}),
       };
 
       const recoveredChunk = createHierarchicalChunk(
@@ -338,6 +345,7 @@ export class HybridSmallToBigRetriever {
         parentChunkId: parentId,
         parentContent: parentChunk.content,
         parentScore: scoreInfo.score,
+        ...(scoreInfo.semanticScore !== undefined ? { semanticScore: scoreInfo.semanticScore } : {}),
         method: 'hybrid_small', // Will be set by caller
         matchedSmallChunks,
         recoveredFrom,
@@ -387,15 +395,36 @@ export class HybridSmallToBigRetriever {
    */
   private calculateParentScores(
     parentGroups: Map<string, FusionResult[]>
-  ): Map<string, { score: number; smallResults: FusionResult[] }> {
-    const scores = new Map<string, { score: number; smallResults: FusionResult[] }>();
+  ): Map<string, { score: number; semanticScore?: number; smallResults: FusionResult[] }> {
+    const scores = new Map<string, { score: number; semanticScore?: number; smallResults: FusionResult[] }>();
 
     for (const [parentId, smallResults] of parentGroups) {
       const score = this.computeParentScore(smallResults, this.config.parentScoreStrategy);
-      scores.set(parentId, { score, smallResults });
+      const semanticScore = this.computeSemanticScore(smallResults);
+      scores.set(parentId, {
+        score,
+        ...(semanticScore !== undefined ? { semanticScore } : {}),
+        smallResults,
+      });
     }
 
     return scores;
+  }
+
+  /**
+   * Compute semantic score as max(denseScore) for frontend display
+   * Returns undefined if no dense matches (sparse-only results)
+   */
+  private computeSemanticScore(smallResults: FusionResult[]): number | undefined {
+    const denseScores = smallResults
+      .filter(r => r.denseScore !== undefined)
+      .map(r => r.denseScore!);
+
+    if (denseScores.length === 0) {
+      return undefined; // No dense matches - sparse only
+    }
+
+    return Math.max(...denseScores);
   }
 
   /**

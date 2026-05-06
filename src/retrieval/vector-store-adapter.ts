@@ -9,6 +9,7 @@
  * - Dense vectors (HNSW indexing)
  * - Sparse vectors (keyword matching)
  * - Metadata filtering (documentId, qualityScore, pageNumber)
+ * - Document-level metadata (documentYear, documentTitle, guidelineSource) for GRADE evaluation
  */
 
 /**
@@ -42,6 +43,9 @@ export interface SparseVectorMap {
 
 /**
  * Vector payload metadata
+ *
+ * Includes both chunk-level metadata (position, contentType) and document-level
+ * metadata (documentYear, documentTitle, guidelineSource) for GRADE evidence evaluation.
  */
 export interface VectorPayload {
   documentId: string;
@@ -71,6 +75,14 @@ export interface VectorPayload {
   blockType?: 'figure' | 'table' | 'formula' | 'image' | undefined;
   /** Chunk content for recovery from Qdrant (optional, configurable) */
   content?: string | undefined;
+  /** Document publication year for GRADE evidence evaluation */
+  documentYear?: number | undefined;
+  /** Document title for citation display and literature type classification */
+  documentTitle?: string | undefined;
+  /** Document author for source identification */
+  documentAuthor?: string | undefined;
+  /** Medical guideline source (ADA, KDIGO, ESC, CDS, etc.) for authority classification */
+  guidelineSource?: string | undefined;
 }
 
 /**
