@@ -255,6 +255,37 @@ const sourceCitation = {
 - Existing chunks work without changes
 - Future documents automatically get metadata
 
+### Qdrant Payload Propagation
+
+Document-level metadata is propagated to Qdrant payload for recovery during retrieval:
+
+```
+ChunkMetadata → document-processor.ts → VectorPayload → Qdrant
+                                             ↓
+                    hybrid-small-to-big-retriever.ts (recoverFromQdrant)
+                                             ↓
+                    ChunkMetadata (recovered with all fields)
+```
+
+#### VectorPayload Fields Added (2026-04-27)
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| documentYear | `number \| undefined` | GRADE time weight calculation |
+| documentTitle | `string \| undefined` | Literature type classification |
+| documentAuthor | `string \| undefined` | Source identification |
+| guidelineSource | `string \| undefined` | Authority level classification |
+
+#### Important: Already Indexed Documents
+
+Documents indexed before this change lack the new payload fields. To get complete metadata:
+
+1. **Re-upload affected documents** - This triggers re-indexing with new fields
+2. **Legacy handling** - System uses fallback values for missing fields:
+   - `documentYear` undefined → `timeWeight = 0.7`
+   - `documentTitle` undefined → uses `sourceDocumentId` as display name
+   - `guidelineSource` undefined → `sourceAuthority = 'local'`
+
 ## Testing
 
 ### Unit Tests
@@ -352,5 +383,7 @@ GUIDELINE_PATTERNS['NEW_SOURCE'] = /NEW_SOURCE|New Source Name/i;
 
 ---
 
-**Version**: 2026-04-24
-**Change**: enhance-document-metadata-extraction
+**Version**: 2026-04-27
+**Changes**: 
+- 2026-04-24: enhance-document-metadata-extraction
+- 2026-04-27: fix-grade-metadata-loss (VectorPayload propagation)

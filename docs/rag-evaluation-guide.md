@@ -55,6 +55,23 @@
 
 ## 使用方法
 
+### 0. 自动评估触发 (推荐)
+
+系统支持在 Agent 查询完成后自动触发评估，无需手动调用。
+
+```typescript
+// 环境变量配置
+ENABLE_RAGAS_EVALUATION=true  // 默认启用，设置为 false 禁用
+REDIS_HOST=localhost          // Redis 主机 (可选，无 Redis 时使用同步模式)
+REDIS_PORT=6379               // Redis 端口
+```
+
+自动评估触发流程：
+1. Agent 查询完成后 (`enableAgent=true`)
+2. 自动提交评估任务到队列 (不阻塞 HTTP 响应)
+3. 评估完成后通过 WebSocket 广播 `evaluation:complete` 事件
+4. 前端 Dashboard 实时更新评估指标
+
 ### 1. 同步评估
 
 ```typescript
@@ -203,7 +220,59 @@ import { useStatsStore } from './store/statsStore';
 
 const { evaluationMetrics, handleEvaluationUpdate } = useStatsStore();
 
-// WebSocket 自动处理 'metrics:update' 事件
+// WebSocket 自动处理 'evaluation:complete' 事件
+```
+
+### evaluation:complete WebSocket 事件
+
+当评估完成时，系统广播 `evaluation:complete` 事件：
+
+```typescript
+interface EvaluationCompleteEvent {
+  type: 'evaluation:complete';
+  evaluationId: string;
+  traceId: string;
+  sessionId?: string;
+  
+  // 8 维度分数
+  dimensionScores: {
+    faithfulness: number;
+    contextRelevance: number;
+    answerRelevance: number;
+    medicalAccuracy: number;
+    safetyAssessment: number;
+    evidenceTraceability: number;
+    completeness: number;
+    terminologyAccuracy: number;
+  };
+  
+  // 3 层分数
+  layerScores: {
+    layer1: number;  // 基础 RAGAS
+    layer2: number;  // 医疗核心
+    layer3: number;  // 医疗增强
+  };
+  
+  overallScore: number;
+  riskLevel: 'safe' | 'caution' | 'warning' | 'danger';
+  timestamp: number;
+}
+```
+
+前端监听示例：
+
+```typescript
+// useWebSocket.ts 自动处理
+if (event.type === 'evaluation:complete') {
+  useStatsStore.getState().handleEvaluationUpdate({
+    avgOverall: event.overallScore,
+    dimensionScores: event.dimensionScores,
+    layerScores: event.layerScores,
+    riskDistribution: updateRiskDistribution(event.riskLevel),
+    totalEvaluations: incrementCount(),
+    lastEvaluationTime: event.timestamp,
+  });
+}
 ```
 
 ## 最佳实践
@@ -323,6 +392,255 @@ class MedicalEvaluationPipeline {
 
 ## 更新日志
 
-- **2026-04-24**: 添加架构演进路线图引用，说明 Layer 3 当前限制和改进计划
+- **2026-05-09**: 记录 Bull 队列跨进程事件传递修复、前端评估展示架构
+- **2026-04-27**: 添加架构演进路线图引用，说明 Layer 3 当前限制和改进计划
 - **2026-04-23**: 初始版本，支持 8 维度评估
 - **2026-04-23**: 添加异步队列支持 (Bull + Redis)
+
+---
+
+## 技术问题修复记录
+
+### 1. Bull 队列跨进程事件传递问题 (2026-05-09)
+
+#### 问题描述
+
+Docker 部署时，`rag-server` 和 `evaluation-worker` 运行在不同容器（进程）中。Bull 队列的本地事件 `queue.on('completed')` 只在当前进程触发，导致：
+
+```
+rag-server 容器           evaluation-worker 容器
+┌─────────────────┐       ┌─────────────────┐
+│ Queue 实例 A    │       │ Queue 实例 B    │
+│ 监听 completed  │       │ 触发 completed  │
+│ ❌ 不触发       │       │ ✓ 触发本地      │
+└─────────────────┘       └─────────────────┘
+```
+
+#### 解决方案
+
+使用 Bull 的全局事件监听 Redis pub/sub：
+
+```typescript
+// src/queue/EvaluationQueue.ts
+
+// 修复前：本地事件（只在当前进程触发）
+this.queue.on('completed', (job, result) => { ... });
+
+// 修复后：全局事件（跨进程通过 Redis pub/sub）
+this.queue.on('global:completed', async (jobId) => {
+  const job = await this.queue.getJob(jobId);
+  const result = job.returnvalue as EvaluationJobResult;
+  handlers?.onSuccess?.(result);
+});
+```
+
+#### 相关文件变更
+
+| 文件 | 变更 |
+|------|------|
+| `src/queue/EvaluationQueue.ts` | 使用 `global:completed` 替代 `completed` |
+| `src/integration/AgentEvaluationService.ts` | 处理 `EvaluationJobResult` → `ExtendedEvaluationResult` 类型转换 |
+| `src/tracing/TraceStorage.ts` | 添加 `getDatabase()` 方法支持从存储获取完整评估结果 |
+
+---
+
+### 2. 检索得分显示修复 (fix-retrieval-score-display)
+
+#### 问题描述
+
+前端显示的"检索得分"（如 2%-3%）实际上是 RRF (Reciprocal Rank Fusion) 排名融合得分，而非语义相似度。用户困惑："为什么得分这么低？文献质量有问题吗？"
+
+#### 解决方案
+
+在 RRF 融合过程中保留原始 Dense/Sparse 搜索得分，并传递到前端：
+
+```typescript
+// src/retrieval/rrf-fusion.ts
+interface FusionResult {
+  denseScore?: number;  // Dense Cosine 相似度
+  sparseScore?: number; // Sparse BM25 得分
+}
+
+// src/frontend/components/EvidencePanel.tsx
+// 显示语义相似度而非 RRF 得分
+if (result.semanticScore !== undefined) {
+  return { score: result.semanticScore, type: 'semantic' };
+}
+```
+
+#### 验证结果
+
+```
+HTTP Response:
+  semanticScore: 0.729 (真正的语义相似度 73%)  ✓
+  similarityScore: 0.016 (RRF 排名得分，不再显示给用户)
+```
+
+---
+
+### 3. 前端评估结果展示架构
+
+#### 数据流
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    评估结果前端展示数据流                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. 后端 Worker 完成评估
+   EvaluationWorker.processJob()
+   → 返回 EvaluationJobResult
+   → Bull 队列触发 global:completed 事件
+
+2. 后端 AgentEvaluationService 处理回调
+   EvaluationQueue.on('global:completed')
+   → fetchFullEvaluationResult() 从 SQLite 获取完整数据
+   → handlers.onSuccess(ExtendedEvaluationResult)
+
+3. 后端 chat.ts 广播 WebSocket 事件
+   wsHandler.broadcast({
+     type: 'evaluation:complete',
+     dimensionScores: { faithfulness, contextRelevance, ... },
+     layerScores: { layer1, layer2, layer3 },
+     overallScore, riskLevel
+   })
+
+4. 前端 WebSocket 接收事件
+   useWebSocket.ts → createEventHandler()
+   → useStatsStore.handleEvaluationUpdate(metrics)
+
+5. 前端 Zustand Store 状态更新
+   statsStore.ts → set({ evaluationMetrics: metrics })
+
+6. 前端 UI 渲染
+   StatsDashboard.tsx → <EvaluationCard ... />
+```
+
+#### 关键组件
+
+| 文件 | 作用 |
+|------|------|
+| `src/frontend/hooks/useWebSocket.ts` | 监听 `evaluation:complete` WebSocket 事件 |
+| `src/frontend/store/statsStore.ts` | Zustand 状态管理，存储评估指标数据 |
+| `src/frontend/components/stats/EvaluationCard.tsx` | UI 组件，渲染评估分数卡片 |
+| `src/frontend/components/StatsDashboard.tsx` | 主 Dashboard，包含 EvaluationCard |
+
+#### WebSocket 事件结构
+
+```typescript
+interface EvaluationCompleteEvent {
+  type: 'evaluation:complete';
+  evaluationId: string;
+  traceId: string;
+  sessionId?: string;
+  
+  // 8 维度分数
+  dimensionScores: {
+    faithfulness: number;
+    contextRelevance: number;
+    answerRelevance: number;
+    medicalAccuracy: number;
+    safetyAssessment: number;
+    evidenceTraceability: number;
+    completeness: number;
+    terminologyAccuracy: number;
+  };
+  
+  // 3 层分数
+  layerScores: {
+    layer1: number;  // 基础 RAGAS
+    layer2: number;  // 医疗核心
+    layer3: number;  // 医疗增强
+  };
+  
+  overallScore: number;
+  riskLevel: 'safe' | 'caution' | 'warning' | 'danger';
+  timestamp: number;
+}
+```
+
+#### EvaluationCard 组件展示内容
+
+```
+┌─────────────────────────────────────────────────┐
+│ 评估概览                          [优秀/良好/需优化] │
+├─────────────────────────────────────────────────┤
+│ 综合分数     │ 评估总数     │ 最后更新          │
+│   52%        │     5       │ 08:06:01         │
+└─────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────┐
+│ 8 维度评估分数                                    │
+├─────────────────────────────────────────────────┤
+│ ○ 忠实度    52%   │ ○ 医疗准确性  0%   │
+│ ○ 上下文相关 52%  │ ○ 安全评估    0%   │
+│ ○ 答案相关  52%   │ ○ 证据可追溯  0%   │
+│                   │ ○ 完整性      0%   │
+│                   │ ○ 术语准确性  0%   │
+└─────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────┐
+│ 分层分数                                          │
+├─────────────────────────────────────────────────┤
+│ [基础 RAGAS] 52%  │ [医疗核心] 52% │ [医疗增强] 52% │
+└─────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────┐
+│ 风险等级分布                                      │
+├─────────────────────────────────────────────────┤
+│ ████████  ████████  ████████  ████████           │
+│ 安全(3)    注意(1)   警告(0)   危险(0)            │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+### 4. Docker 部署验证结果 (2026-05-09)
+
+#### 测试环境
+
+- Docker Compose 多容器部署
+- rag-server + evaluation-worker (2 replicas) 分离部署
+- Redis 作为 Bull 队列后端
+
+#### 验证结果
+
+```
+WebSocket 客户端接收:
+  evaluationId: 44d85e66-da9b-46e5-b8b9-baf022080377    ✓
+  traceId: trace-1777277139411-15daqk                   ✓
+  sessionId: session-1777277139411-h9kq5h               ✓
+  overallScore: 0.515                                   ✓
+  riskLevel: safe                                       ✓
+
+Dimension Scores (8维度):
+  faithfulness: 0.515        ✓
+  contextRelevance: 0.515    ✓
+  answerRelevance: 0.515     ✓
+  medicalAccuracy: 0         ✓ (简化结果默认值)
+  safetyAssessment: 0        ✓
+  evidenceTraceability: 0    ✓
+  completeness: 0            ✓
+  terminologyAccuracy: 0      ✓
+
+Layer Scores (3层级):
+  layer1: 0.515    ✓
+  layer2: 0.515    ✓
+  layer3: 0.515    ✓
+```
+
+#### 测试命令
+
+```bash
+# 启动服务
+docker-compose up -d
+
+# 检查健康状态
+curl http://localhost:3001/api/health
+
+# 查看评估日志
+docker logs rag-server | grep "ChatRoute:Evaluation"
+
+# 查看 Worker 日志
+docker logs evaluation-worker-1 | tail -20
+```
