@@ -72,6 +72,10 @@ interface VectorStoreAdapter {
   - contentType (string)
   - position (object: {start, end})
   - content (string, optional) ← 用于元数据恢复
+  - documentYear (integer, optional) ← 文档年份，用于 GRADE 时效权重计算
+  - documentTitle (string, optional) ← 文档标题，用于文献类型识别
+  - documentAuthor (string, optional) ← 文档作者，用于来源识别
+  - guidelineSource (string, optional) ← 指南来源，用于权威级别判断
 
 ### Content Field Behavior
 
@@ -91,6 +95,28 @@ interface VectorStoreAdapter {
 #### Scenario: Content field size limit
 - **WHEN** chunk content exceeds 10KB
 - **THEN** content is truncated to 10KB with truncation marker
+
+### Document-level Metadata Fields
+
+文档级元数据字段用于 GRADE 证据评估，从 ChunkMetadata 传递到 Qdrant Payload。
+
+#### Scenario: documentYear stored when available
+- **WHEN** chunk.metadata.documentYear is defined (e.g., 2024)
+- **THEN** payload.documentYear = chunk.metadata.documentYear
+
+#### Scenario: documentYear omitted when unavailable
+- **WHEN** chunk.metadata.documentYear is undefined
+- **THEN** payload does not include documentYear field (undefined values not stored)
+
+#### Scenario: guidelineSource stored for authority classification
+- **WHEN** chunk.metadata.guidelineSource is defined (e.g., "ADA", "KDIGO")
+- **THEN** payload.guidelineSource = chunk.metadata.guidelineSource
+- **AND** GRADE evaluation can determine sourceAuthority level
+
+#### Scenario: Legacy payloads without document-level metadata
+- **WHEN** payload from older version lacks documentYear, documentTitle, guidelineSource
+- **THEN** recoverFromQdrant creates metadata with undefined values for these fields
+- **AND** GRADE evaluation uses default fallback values (timeWeight=0.7, authority='local')
 
 ### Get Point with Full Payload
 
