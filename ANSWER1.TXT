@@ -1,0 +1,1135 @@
+ ▐▛███▜▌   Claude Code v2.1.133
+▝▜█████▛▘  deepseek-v4-pro · API Usage Billing
+  ▘▘ ▝▝    D:\Code\moudle-MCP-SelfSearchRAG
+
+> /openspec-explore                                                             
+这个项目现在做了什么，agent是怎么做的？怎么测评的？怎么实现的                   
+
+● Let me start by checking if there are any active OpenSpec changes, then dive
+  deep into the codebase to understand what this project is about.
+
+● Bash(openspec list --json 2>$null; if (-not $?) { echo "no openspec cli" })
+  ⎿  Error: Exit code 2
+     /usr/bin/bash: eval: line 1: syntax error near unexpected token `{'
+     /usr/bin/bash: eval: line 1: `openspec list --json 2>$null; if (-not $?) { 
+     echo "no openspec cli" }'
+
+● Bash(git log --oneline -20)
+  ⎿  Cancelled: parallel tool call Bash(openspec list --json 2>$null; if (-not 
+     $…) errored
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Bash(Get-ChildItem -Directory | Select-Object Name)
+  ⎿  Cancelled: parallel tool call Bash(openspec list --json 2>$null; if (-not 
+     $…) errored
+
+● Bash(git log --oneline -20)
+  ⎿  6045178 @ docs(文档): 更新元数据文档与 RAG 评估指南
+     149d653 @ chore(统计): 更新 ESLint 类型修复使用日志
+     4542b32 @ test: 新增元数据验证、RRF 融合与前端组件测试
+     … +17 lines (ctrl+o to expand)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● PowerShell(Get-ChildItem -Directory | Select-Object Name)
+  ⎿  (No output)
+
+  Searched for 2 patterns, listed 1 directory (ctrl+o to expand)
+
+● Now let me read the core source files to understand the architecture.
+
+  Searched for 2 patterns, read 13 files (ctrl+o to expand)
+
+● Now let me read the evaluation system and the frontend App to understand how
+  everything ties together.
+
+  Searched for 2 patterns, read 9 files (ctrl+o to expand)
+
+● I've now read through the core architecture. Here's a comprehensive picture of
+   the project.
+
+  ---
+  What This Project Is
+
+  This is an Enhanced RAG MCP Server — a medical-domain RAG system exposed as an
+   MCP (Model Context Protocol) server so that Claude (or other AI assistants)
+  can ingest documents, search them, and get AI-generated answers backed by
+  evidence. It has its own Web UI for human operators.
+
+                              ┌──────────────────────┐
+                              │      USER ENTRY       │
+                              ├──────────┬───────────┤
+                              │ Web UI   │ MCP call  │
+                              │ (React)  │ (Claude)  │
+                              └────┬─────┴─────┬─────┘
+                      HTTP+WS      │           │  MCP Protocol
+                                   ▼           ▼
+      ┌────────────────────────────────────────────────────────────┐
+      │                    SERVER LAYER                            │
+      │  ┌──────────────┐  ┌───────────────┐  ┌──────────────────┐│
+      │  │ HTTP Server  │  │ WebSocket     │  │ MCP Server       ││
+      │  │ (Fastify)    │  │ Handler       │  │ (stdio)          ││
+      │  └──────┬───────┘  └───────┬───────┘  └────────┬─────────┘│
+      │         │                  │                    │          │
+      │         ▼                  ▼                    ▼          │
+      │  ┌─────────────────────────────────────────────────────┐   │
+      │  │              Agent + Retrieval + Evaluation          │   │
+      │  └─────────────────────────────────────────────────────┘   │
+      └────────────────────────────────────────────────────────────┘
+                                   │
+                      ┌────────────┼────────────┐
+                      ▼            ▼            ▼
+                ┌──────────┐ ┌──────────┐ ┌──────────┐
+                │ Qdrant   │ │ SQLite   │ │ Local    │
+                │ (Vectors)│ │ (Traces) │ │ Models   │
+                └──────────┘ └──────────┘ └──────────┘
+
+  ---
+  1. Document Ingestion Pipeline
+
+  When a document (PDF, image) is uploaded, it flows through a 5-stage pipeline
+  orchestrated by the Harness:
+
+  Document → [INGEST] → [PARSE] → [CHUNK] → [EMBED] → [INDEX]
+                │           │          │          │          │
+                ▼           ▼          ▼          ▼          ▼
+           Validator    PDF.js    Semantic   BGE-M3    Qdrant
+           + Queue      VLM OCR   Chunker    Hybrid    (Dense+
+                        Tables    Quality    (1024d)   Sparse)
+                        Formulas  Filter
+
+  Each stage emits WebSocket events (stage:start, stage:complete, chunk:created)
+   so the frontend shows real-time progress.
+
+  Key details:
+  - PDF parsing: pdfjs-dist + VLM for images/tables/formulas
+  - Semantic chunking: similarity-cliff detection finds natural boundaries
+  - Hybrid embedding: BGE-M3 model produces Dense (1024d) + Sparse vectors
+  - Hierarchical chunks: small chunks → parent chunks (small-to-big retrieval)
+  - Quality filter: scores chunks on info density, repetition ratio, semantic
+  completeness, document relevance
+
+  ---
+  2. How the Agent Works
+
+  The MedicalAgent (src/medical/agent/MedicalAgent.ts) has two execution modes:
+
+  ReAct Mode (default)
+
+  User Query
+      │
+      ▼
+  ┌─────────────────┐
+  │ Entity          │  Extract diseases, drugs, indicators
+  │ Recognition     │  from medical dictionaries
+  └────────┬────────┘
+           │
+           ▼
+  ┌─────────────────┐
+  │ Complexity      │  Judge if planning is needed
+  │ Assessment      │
+  └────────┬────────┘
+           │
+           ▼
+      ┌─────────┐
+      │ReAct Loop│  ◄── iterate up to maxIterations
+      └────┬─────┘
+           │
+      ┌────▼────────────────────────────────────┐
+      │  Reason → Retrieve → Observe → Decide   │
+      │                                          │
+      │  • Query rewriting + expansion          │
+      │  • Multi-query retrieval                │
+      │  • Rule-based satisfaction check:       │
+      │    - retrieval_count ≥ 3?               │
+      │    - similarity ≥ 0.7?                  │
+      │    - entity_coverage ≥ 0.8?             │
+      │  • Stop or continue loop                │
+      └──────────────────────┬──────────────────┘
+                             │
+                             ▼
+                      ┌──────────────┐
+                      │ Generate     │
+                      │ Answer       │
+                      │ + Safety     │
+                      │ Check        │
+                      └──────────────┘
+
+  Planning Mode (for complex queries)
+
+  Instead of a loop, it builds a Task DAG — decomposes the query into
+  parallel/sequential subtasks, validates the DAG, executes tasks, and can
+  re-plan if results are insufficient.
+
+  Visibility
+
+  Every step emits events via the AgentEmitter → WebSocket → Frontend:
+  - agent:input → agent:entities → agent:complexity → agent:mode →
+  agent:template → agent:dag → agent:execution → agent:complete
+
+  ---
+  3. How Retrieval Works
+
+  The EnhancedRetrievalPipeline (src/retrieval/enhanced-retrieval-pipeline.ts)
+  is a 7-stage flow:
+
+  Query → [1.Analyzer] → [2.Rewriter] → [3.Decomposer] → [4.Expander]
+                                                                │
+                                                                ▼
+                                                       [5.Retriever]
+                                                       (small-to-big
+                                                        multi-query)
+                                                                │
+                                                                ▼
+                                                       [6.Reranker]
+                                                       hybrid: local
+                                                       model or confidence
+                                                       calculator
+                                                                │
+                                                                ▼
+                                                       [7.Assembler]
+                                                       → Context
+
+  Key design decisions:
+  - Small-to-big retrieval: first finds small chunks, then expands to parent
+  chunks
+  - RRF fusion: merges dense + sparse results with Reciprocal Rank Fusion
+  - Hybrid reranker: uses a local cross-encoder for ≤20 results, falls back to
+  confidence scoring for larger sets
+  - Dynamic topK: adjusts based on average parent chunk token length
+
+  MCP Tools exposed
+
+  ┌─────────────────┬──────────────────────────────────────┐
+  │      Tool       │             What it does             │
+  ├─────────────────┼──────────────────────────────────────┤
+  │ ingest_document │ Upload + pipeline-process a document │
+  ├─────────────────┼──────────────────────────────────────┤
+  │ query           │ Search indexed content               │
+  ├─────────────────┼──────────────────────────────────────┤
+  │ get_document    │ Get document metadata by ID          │
+  ├─────────────────┼──────────────────────────────────────┤
+  │ list_documents  │ List all indexed documents           │
+  ├─────────────────┼──────────────────────────────────────┤
+  │ delete_document │ Remove from index                    │
+  ├─────────────────┼──────────────────────────────────────┤
+  │ get_stats       │ System statistics                    │
+  └─────────────────┴──────────────────────────────────────┘
+
+  ---
+  4. How Evaluation Works
+
+  This is the most sophisticated part. The evaluation system has 3 layers × 8 
+  dimensions:
+
+  ┌───────────────────────────────────────────────────┐
+  │              EVALUATION FRAMEWORK                  │
+  ├───────────────────────────────────────────────────┤
+  │ Layer 1: 基础 RAGAS                                │
+  │   • faithfulness (忠实度)                          │
+  │   • contextRelevance (上下文相关性)                 │
+  │   • answerRelevance (答案相关性)                    │
+  ├───────────────────────────────────────────────────┤
+  │ Layer 2: 医疗核心                                  │
+  │   • medicalAccuracy (医疗准确性)                    │
+  │   • safetyAssessment (安全评估)                     │
+  ├───────────────────────────────────────────────────┤
+  │ Layer 3: 医疗增强                                  │
+  │   • evidenceTraceability (证据可追溯性)             │
+  │   • completeness (完整性)                           │
+  │   • terminologyAccuracy (术语准确性)                │
+  └───────────────────────────────────────────────────┘
+
+  Trigger flow
+
+  Agent completes query
+          │
+          ▼
+  AgentEvaluationService.submitFromAgentResult()
+          │
+     ┌────┴────┐
+     │ Redis   │  (if available, queue mode)
+     │ Queue   │
+     └────┬────┘
+          │  OR
+     ┌────┴────┐
+     │ Sync    │  (no Redis, direct evaluation)
+     └────┬────┘
+          │
+          ▼
+    Computes all 8 dimension scores + 3 layer scores
+          │
+          ├──► WebSocket broadcast: evaluation:complete
+          │       → Frontend EvaluationPanel updates
+          │
+          ├──► Risk level determination:
+          │       safe / caution / warning / danger
+          │       (based on overall score + safety score)
+          │
+          └──► AlertHandler.checkAndAlert()
+                  → fires alerts if risk ≥ warning
+
+  Evidence evaluation (GRADE system)
+
+  Every retrieved source is graded:
+  - Literature type: RCT > Meta-analysis > Guideline > Observational > Case
+  Report > Expert Opinion
+  - Grade A/B/C/D: based on type, recency, authority, consistency
+  - Overall evidence grade computed across all sources
+
+  Recall evaluation tests
+
+  src/__tests__/recall-evaluation.test.ts tests recall@k against known
+  query-answer pairs with Chinese medical/technical documents. This directly
+  measures retrieval quality.
+
+  ---
+  5. Frontend (React UI)
+
+  The frontend is a medical workstation-style React app with shadcn/ui +
+  Tailwind + Framer Motion:
+
+  ┌────────────────────┬─────────────────────────────────────────────────────┐
+  │     Component      │                       Purpose                       │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ ClinicalApp        │ Main layout: sidebar + content                      │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ ModernChatWindow   │ Chat with streaming answers, evidence cards (GRADE  │
+  │                    │ A/B/C/D badges)                                     │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ EvaluationPanel    │ 8-dimension radar, 3-layer scores, risk             │
+  │                    │ distribution                                        │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ StatsDashboard     │ Quality distribution, stage timing charts,          │
+  │                    │ performance badges                                  │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ PipelineVisualizer │ Real-time pipeline progress                         │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ PipelineTimeline   │ Animated stage flow                                 │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ RetrievalFlow      │ Visual query→retrieval→answer flow                  │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ DocumentManager    │ Upload + list documents                             │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ TraceExplorer      │ Browse past agent traces                            │
+  └────────────────────┴─────────────────────────────────────────────────────┘
+
+  Communication: WebSocket singleton for all real-time updates, REST API for
+  document operations.
+
+  Stores (Zustand)
+
+  - chatStore - chat messages, streaming state
+  - statsStore - evaluation data, risk distribution, layer scores
+
+  ---
+  Key Architectural Insights
+
+  1. Plugin architecture: Pipeline stages are composed of plugins, registered
+  via PluginRegistry. This makes the system extensible.
+  2. Hybrid embedding strategy: Dense (semantic) + Sparse (keyword) vectors
+  stored in Qdrant, fused via RRF — combines the best of both worlds.
+  3. Medical domain specialization: Custom dictionaries for diseases, drugs,
+  indicators; GRADE evidence evaluation; safety layer for contraindication
+  detection.
+  4. Evaluation is built-in: Not an afterthought — every agent query
+  automatically triggers evaluation, and results are persisted + broadcast in
+  real-time.
+  5. Dual-mode agent: ReAct loop for simple queries, Planning+DAG for complex
+  multi-step medical reasoning.
+
+  ---
+  What aspect would you like to dig deeper into — the agent reasoning loop, the
+  evaluation methodology, the retrieval pipeline, or the frontend visualization?
+
+✻ Churned for 3m 19s
+
+※ recap: You asked how this project works. I mapped the full architecture — document ingestion pipeline, dual-mode medical agent (ReAct + Planning), 7-stage retrieval with hybrid reranking, and the 8-dimension/3-layer evaluation system with auto-trigger and WebSocket broadcasting. Ready to dive into whichever layer you want. (disable recaps in /config)
+
+> 用中文                                                                        
+
+● 好的，全部用中文讲。刚才的分析已经是中文了。你想深入了解哪个部分？
+
+  - Agent 推理循环 — ReAct 模式 vs Planning 模式的决策逻辑、规则化 satisfaction
+  check
+  - 评估体系 — 8维度 × 3层的打分机制、GRADE 证据评级、风险判定
+  - 检索管线 — 混合检索 RRF 融合、小到大块检索、Hybrid Reranker 路由策略
+  - 前端可视化 — WebSocket 实时事件流、评估面板、Pipeline 时间线
+
+  或者你有具体想搞清楚的问题？
+✻ Churned for 10s
+
+> /openspec-explore                                                             
+这个项目现在做了什么，agent是怎么做的？怎么测评的？怎么实现的                   
+
+● 上次已经做了整体架构梳理。这次让我换个角度——不再罗列组件，而是追踪几个具体问题
+  的真实代码路径，以及看看有没有值得注意的设计选择。
+
+  Searched for 4 patterns, read 8 files (ctrl+o to expand)
+
+● 上次梳理了组件清单。这次我追踪了具体代码路径，看看完整的数据流和关键设计决策。
+
+  ---
+  端到端：一条用户查询的实际旅程
+
+  用户在前端输入: "2型糖尿病合并高血压，二甲双胍联合氨氯地平是否安全？"
+
+  第一阶段：Agent 启动（chat.ts → MedicalAgent）
+
+  POST /api/chat/generate  (ModernChatWindow 发请求)
+      │
+      ▼
+  chat.ts: 创建 MedicalAgent(llmCaller, retrievor)
+      │
+      ▼
+  MedicalAgent.run(input)
+      │
+      ├─→ extractMedicalEntities(query)
+      │     │ 遍历字典匹配:
+      │     │   疾病: 2型糖尿病, 高血压
+      │     │   药物: 二甲双胍(antidiabetic), 氨氯地平(antihypertensive)
+      │     │   指标: (无)
+      │     └─→ confidence = 0.85 (匹配到了标准术语)
+      │
+      ├─→ AgentExecutor.run(query)
+      │
+      └─→ 选择执行模式...
+
+  第二阶段：模式选择（AgentExecutor.chooseExecutionMode）
+
+  entities.confidence = 0.85
+      │
+      ▼
+  ≥ lowConfidenceThreshold (0.3)?  → YES, 不跳过Agent循环
+      │
+      ▼
+  enablePlanning = true?
+      │
+      ▼
+  assessComplexity(entities, query)
+      │ 检查: entityCount=2, hasComparison=false, hasConditions=false,
+  hasInteraction=true
+      │ → level: 'medium', needsPlanning: false
+      │
+      ▼
+  → ReAct 模式 (不需要Planning)
+
+  这里有个有意思的设计：药物相互作用查询虽然涉及两个药物，但因为
+  hasComparison=false（不是"比较A和B"的结构化对比），所以判定为中等复杂度，走
+  ReAct。
+
+  第三阶段：ReAct 循环核心
+
+  ┌──────────────────────────────────────────────────────┐
+  │              ReAct Loop (最多5次迭代)                  │
+  │                                                      │
+  │  ┌─────────┐    ┌─────────┐    ┌───────────┐        │
+  │  │ THINK   │───▶│ ACT     │───▶│ OBSERVE   │        │
+  │  │ (LLM)   │    │(检索/   │    │(记录+证据 │        │
+  │  │ 分析状态 │    │ 扩展)   │    │ 评估)     │        │
+  │  └─────────┘    └─────────┘    └─────┬─────┘        │
+  │       ▲                              │               │
+  │       │         ┌──────────┐         │               │
+  │       └─────────│ DECIDE   │◀────────┘               │
+  │                 │ (规则化)  │                         │
+  │                 └──────────┘                         │
+  │                      │                               │
+  │               satisfied? ───YES──▶ 退出循环          │
+  └──────────────────────────────────────────────────────┘
+
+  关键代码路径 — THINK 阶段（AgentExecutor.think）:
+
+  THINK 提示词 (AgentPrompts.ts):
+    你是一个医学推理专家。当前状态：
+    - 第 {iteration} 轮迭代
+    - 已识别实体：{entities}
+    - 安全评估：{safetyAssessment}
+    - 已有检索结果：{retrievalResults}
+
+    请决定下一步动作：
+    - retrieve: 需要更多信息
+    - expand_query: 扩展查询
+    - stop: 信息充足，可以回答
+
+  → LLM 返回 ReasoningDecision { action, reason, confidence }
+
+  关键代码路径 — DECIDE 阶段（规则化决策）:
+
+  // AgentExecutor 第600行附近 - 规则化 satisfaction check
+  const ruleHits = [
+    retrieval_count ≥ 3,        // 至少3个检索结果
+    similarity ≥ 0.7,           // 最高相似度达标
+    entity_coverage ≥ 0.8,      // 实体覆盖率
+  ]
+
+  // 还有 early termination:
+  if (safetyAssessment.severity === 'absolute') {
+    // 绝对禁忌 → 直接跳过循环，立即生成安全警告
+    // 例如: 查询中包含已知致命药物组合
+  }
+
+  这个设计很务实：LLM 负责"想"（think），规则负责"判"（decide）。即使 LLM 幻觉说
+   "信息够了"，如果检索结果不足3条，规则层也会判定为不满足。
+
+  第四阶段：证据评估（每次检索后自动执行）
+
+  OBSERVE 阶段 (AgentExecutor 第569行):
+
+    retrievalData = [
+      { content: "二甲双胍...", source: { documentName:
+  "中国2型糖尿病防治指南2020" } },
+      { content: "氨氯地平...", source: { documentName: "ISH高血压指南2020" } },
+    ]
+
+    ↓ evaluateMultipleSourcesEnhanced(retrievalData)
+
+    对每个来源:
+    ┌─────────────────────────────────────────────────────┐
+    │ classifyLiteratureType(text)                        │
+    │   → "指南" → guideline                              │
+    │                                                     │
+    │ checkGuidelineTimeliness(guidelineId)               │
+    │   → 2020年，当前2026年 → 已过期!                     │
+    │                                                     │
+    │ 综合评分:                                            │
+    │   typeWeight(guideline) × recencyWeight(0.5)        │
+    │   × authorityWeight(international)                  │
+    │   × consistencyScore                                │
+    │   → compositeScore = 0.72 → Grade B                  │
+    └─────────────────────────────────────────────────────┘
+
+    ↓ sortEvidenceByQuality → 高质量排前面
+    ↓ calculateOverallGrade → 整体证据等级
+
+  第五阶段：评估自动触发
+
+  Agent完成 → AgentExecutor.run() 返回 AgentResult
+      │
+      ▼
+  chat.ts: triggerEvaluation(fastify, agentResult, query, answer, ...)
+      │
+      ▼
+  AgentEvaluationService.submitFromAgentResult()
+      │
+      ├─ Redis 可用?
+      │   YES → EvaluationQueue.addJob(traceData)
+      │         → EvaluationWorker 异步处理
+      │         → MedicalEvaluationPipeline.evaluate(trace)
+      │
+      │   NO  → 同步直接评估（不阻塞响应，但同一线程）
+      │
+      ▼
+  MedicalEvaluationPipeline.evaluate(trace):
+
+      Layer 1 (基础RAGAS) - 调LLM评估:
+        ├─ evaluateFaithfulness(answer, chunks)      → 0.90
+        ├─ evaluateContextRelevance(query, chunks)    → 0.80
+        └─ evaluateAnswerRelevance(query, answer)     → 0.85
+
+      Layer 2 (医疗核心) - 调LLM评估:
+        ├─ evaluateMedicalAccuracy(answer, query)     → 0.88
+        └─ evaluateSafetyAssessment(answer, query)    → 0.95
+
+      Layer 3 (医疗增强) - Layer3Evaluator:
+        ├─ evaluateEvidenceTraceability               → 0.75
+        ├─ evaluateCompleteness                       → 0.80
+        └─ evaluateTerminologyAccuracy                → 0.85
+
+      加权计算:
+      overallScore = 0.20×0.90 + 0.10×0.80 + 0.10×0.85
+                   + 0.20×0.88 + 0.20×0.95
+                   + 0.10×0.75 + 0.05×0.80 + 0.05×0.85
+                   = 0.867
+
+      riskLevel:
+        safetyAssessment(0.95) ≥ 0.85 ✓
+        faithfulness(0.90) ≥ 0.85 ✓
+        → 'safe'
+
+      ↓
+
+      WebSocket broadcast: evaluation:complete
+      → 前端 EvaluationPanel 实时更新
+      → AlertHandler 检查是否需要告警
+
+  权重设计的观察
+
+  faithfulness:        0.20 ┐
+  safetyAssessment:    0.20 ├─ 核心权重 (60%)
+  medicalAccuracy:     0.20 ┘
+  contextRelevance:    0.10 ┐
+  answerRelevance:     0.10 ├─ 辅助权重 (30%)
+  evidenceTraceability:0.10 ┘
+  completeness:        0.05 ┐
+  terminologyAccuracy: 0.05 ┘─ 微调权重 (10%)
+
+  这是一个安全优先的权重分配——faithfulness（忠实度）和
+  safety（安全性）各占20%，是最高单项权重。完整性只占5%，这在医疗场景是合理的：
+  宁可回答不完整，不能回答不安全。
+
+  ---
+  几个有意思的设计选择
+
+  1. 假 LLM 回退（Planning 模式）
+
+  // AgentExecutor 第334行
+  // 注释里直接写了 "假LLM实现"
+  llmCall: async (prompt: string) => {
+    return JSON.stringify({
+      tasks: [
+        { id: 'retrieve_1', type: 'retrieve', ... },
+        { id: 'evaluate_1', type: 'evaluate', ... },
+        { id: 'answer', type: 'generate_answer', ... },
+      ],
+    });
+  }
+
+  Planning 模式里的 DAG 生成目前用的是硬编码模板，不是真正的 LLM
+  规划。这可能是一个 TODO 或成本控制策略。
+
+  2. 评估的 LLM 成本
+
+  MedicalEvaluationPipeline 对每次查询调用 LLM
+  8次（8个维度各一次）。默认配置用的是 deepseek-reasoner，retry=3。如果加上
+  Planning 模式的 LLM 调用，一条查询可能触发 10+ 次 LLM 调用。
+
+  3. Redis 是可选依赖
+
+  有 Redis → 评估进队列 → Worker 异步处理 → 不阻塞主请求
+  无 Redis → 评估同步执行 → 仍不阻塞HTTP响应(但占用主线程)
+
+  即使 Redis 挂了，系统降级为同步模式，不会丢失评估能力。
+
+  4. WebSocket 事件粒度
+
+  Agent 执行过程中发射的事件序列：
+  agent:input → agent:entities → agent:complexity → agent:mode
+  → agent:query_rewrite → agent:template? → agent:dag?
+  → agent:execution (多次) → agent:complete
+  → evaluation:complete (异步, 稍后到达)
+
+  前端可以逐帧展示 Agent 的思考过程，就像看一个医生的诊断过程。
+
+  ---
+  想继续深入哪个方向？比如：
+  - 评估准确性问题：8个维度都依赖LLM打分，self-evaluation 的可靠性怎么保证？
+  - 性能瓶颈：一条查询经过 LLM think + LLM decide + 检索 + LLM rerank + LLM
+  generate + LLM evaluate×8，延迟如何？
+  - Planning 模式的真实状态：那个硬编码的 DAG 生成什么时候换成真正的 LLM 规划？
+
+✻ Baked for 2m 21s
+
+※ recap: 我们正在探索这个医学 RAG 项目的 Agent 推理循环、检索管线、评估体系的具体代码路径。聊到了 ReAct 模式 → 证据评估 → 自动评分 → WebSocket 推送的完整链路。你想继续深入哪个方向？ (disable recaps in /config)
+
+> 这个查询是怎么做的，混合识别还是bm25识别？怎么做到的意图识别                  
+
+● 好问题，让我追踪实际的检索代码路径和意图识别逻辑。
+
+  Searched for 3 patterns, read 8 files (ctrl+o to expand)
+
+● 现在完全清楚了。这个项目没有用 BM25，而是用了一套更现代的方案。
+
+  ---
+  检索到底怎么做：Dense + Sparse Hybrid，不是 BM25
+
+  用户查询: "2型糖尿病合并高血压，二甲双胍联合氨氯地平是否安全？"
+                                │
+                                ▼
+                ┌───────────────────────────────┐
+                │   BGE-M3 模型 (Xenova/bge-m3) │
+                │   @huggingface/transformers   │
+                │   本地运行，不需要 API           │
+                └───────────────┬───────────────┘
+                                │
+              ┌─────────────────┴─────────────────┐
+              ▼                                   ▼
+      ┌───────────────┐                   ┌───────────────┐
+      │  Dense 向量    │                   │  Sparse 向量   │
+      │  1024 维       │                   │  学习的稀疏词权  │
+      │  语义匹配       │                   │  关键词匹配     │
+      │  "降糖药"也能  │                   │  "二甲双胍"    │
+      │   匹配"二甲双胍"│                   │  精确命中      │
+      └───────┬───────┘                   └───────┬───────┘
+              │                                   │
+              ▼                                   ▼
+      ┌───────────────┐                   ┌───────────────┐
+      │ Qdrant        │                   │ Qdrant        │
+      │ HNSW 索引      │                   │ Sparse 索引    │
+      │ Cosine 距离    │                   │ 倒排索引       │
+      └───────┬───────┘                   └───────┬───────┘
+              │                                   │
+              │  Dense Top-K=60                   │  Sparse Top-K=60
+              │  (可配置)                          │  (可配置)
+              ▼                                   ▼
+      ┌─────────────────────────────────────────────────────┐
+      │              RRF Fusion (k=60)                       │
+      │                                                     │
+      │   对每条结果计算:                                     │
+      │   score = 1/(60 + dense_rank) + 1/(60 + sparse_rank) │
+      │                                                     │
+      │   同时出现在两条路的结果 → 分数叠加                     │
+      │   只在一条路出现的结果 → 单路分数                       │
+      │                                                     │
+      │   overlap (交集) 结果天然排名更高                       │
+      └─────────────────────┬───────────────────────────────┘
+                            │
+                            ▼
+                ┌───────────────────────┐
+                │  Fused Top-K=60       │
+                │  (小块的RRF融合结果)    │
+                └───────────┬───────────┘
+                            │
+                            ▼
+                ┌───────────────────────┐
+                │  Parent Expansion     │
+                │  按 parentId 分组      │
+                │  parentScore =        │
+                │    max(child scores)   │
+                │  扩展到完整上下文       │
+                └───────────┬───────────┘
+                            │
+                ┌───────────┴───────────┐
+                │ 结果 ≥ minResults(5)?  │
+                └───────────┬───────────┘
+                      YES   │   NO
+                      ▼     │     ▼
+                直接返回    │  Fallback:
+                           │  Parent Sparse Index
+                           │  直接搜父块sparse索引
+
+  为什么不是 BM25？
+
+  项目的 Sparse 向量来自 BGE-M3 模型内置的稀疏输出，不是传统的 BM25 统计算法：
+
+  // hybrid-embedding-service.ts 第451行注释:
+  // "This provides BM25-style sparse vectors for keyword matching"
+  //
+  // BGE-M3 在训练时学到了哪些词对检索重要
+  // 输出的 sparse vector 是 {term_index: weight} 的映射
+  // 效果类似 BM25（关键词匹配），但是学习出来的，不是统计出来的
+
+  代码里 rrf-fusion.ts 变量名叫 sparseScore，注释写的是 "Original Sparse BM25
+  score"——这只是概念上的类比，实际计算的是 BGE-M3 的 sparse embedding 在 Qdrant
+  里的检索分数。
+
+  对比一下
+
+                  BM25                    本项目 Sparse
+  来源           统计算法 (TF-IDF变体)      BGE-M3 神经网络学习
+  计算位置        应用层                    模型内部
+  词权重          IDF 统计                  训练得到的 attention 权重
+  维度            词表大小                  词表大小 (term index map)
+  优势            可解释、无模型依赖          与 Dense 同模型，语义+关键词一体
+  劣势            需要分词、调参             依赖模型质量
+
+  ---
+  意图识别怎么做：三层递进
+
+  意图识别不是单一模块，而是三个独立系统在不同阶段协作：
+
+  第 0 层：QueryAnalyzer（检索管线内部）
+
+  QueryAnalyzer.analyze(query)
+      │
+      ├─→ 快速路径 (不用 LLM):
+      │     detectFilters(query)  → 正则提取年份、月份、类别
+      │     heuristicComplexity(query) → 规则判断:
+      │       "对比/比较/区别" → complex
+      │       "2023年/第3章" → structured
+      │       "怎么/如何/为什么/多个?" → complex
+      │       长度 > 50 → complex
+      │       其他 → simple
+      │
+      │     如果 simple + 无filter → 直接返回，不调 LLM
+      │
+      ├─→ LLM 路径 (complex 或 structured):
+      │     ANALYSIS_PROMPT_TEMPLATE 发送给 LLM:
+      │     "分析以下查询: 复杂度、是否需要分解、是否需要重写、
+      │      检测的过滤条件、建议子查询、重写后查询"
+      │     → 解析 LLM JSON → 得到 QueryAnalysisResult
+      │
+      └─→ 有缓存 (Map<string, QueryAnalysisResult>), TTL 可配置
+
+  作用: 决定后续检索管线要不要做
+  rewrite/decompose/expand。这是检索策略层面的意图识别。
+
+  第 1 层：EntityRecognizer（词典匹配）
+
+  extractMedicalEntities(query)
+      │
+      ├─→ matchDiseases(query)
+      │     遍历 ALL_DISEASES 词典 (疾病名称 + 别名)
+      │     indexOf() 字符串匹配
+      │     → [{ matchedTerm: "2型糖尿病", entityId: "disease_dm2", ... }]
+      │
+      ├─→ matchDrugs(query)
+      │     遍历 ALL_DRUGS (降糖药 + 降压药 + 甲状腺药)
+      │     匹配: canonicalName / aliases / brands
+      │     → [{ matchedTerm: "二甲双胍", entityId: "drug_metformin", ... },
+      │        { matchedTerm: "氨氯地平", entityId: "drug_amlodipine", ... }]
+      │
+      └─→ matchIndicators(query)
+           遍历 ALL_INDICATORS (血糖/血压/血脂/肾功能等)
+           → [] (这个查询里没有)
+
+      最终: confidence = matchedCount / totalDictionarySize 的变体
+
+  作用:
+  识别出"这个查询在问什么病、什么药、什么指标"。这是医学领域的实体级意图识别。
+
+  第 2 层：IntentAnalyzer（规则化意图分类）
+
+  analyzeIntent(entities, query)
+      │
+      ├─→ classifyQueryTypes(query, entities)
+      │     ├─ detectComparison()     → /哪个|对比|比较|区别|vs/  → comparison?
+      │     ├─ detectSafetyCheck()    → /禁忌|副作用|相互作用|安全/ →
+  safety_check?
+      │     └─ detectDecisionSupport()→ /能不能|是否可以用|建议/   →
+  decision_support?
+      │     默认: information_query
+      │
+      ├─→ identifyPrimaryFocus()
+      │     "哪种实体在查询被提到最前面?" → 第一个匹配的实体
+      │
+      ├─→ predictRetrievalNeeds()
+      │     safety_check → 所有实体 required
+      │     comparison → primary required, secondary recommended
+      │     information → primary required, 其他 optional
+      │
+      └─→ detectSpecialNeeds()
+            interaction (drugs >= 2) → checkInteraction: true
+            indicators 有阈值 → calculateIndicator: true
+            年份过滤 → requireYearFilter: true
+
+  作用: 决定"这个查询是什么类型、需要重点搜什么、要不要检查药物相互作用"。这是任
+  务级的意图识别。
+
+  第 3 层：ComplexityJudge（决定走 ReAct 还是 Planning）
+
+  assessComplexity(entities, query)
+      │
+      │ 规则优先级 (从高到低):
+      │
+      ├─→ detectYearFilter()      → structured, needsPlanning=true
+      ├─→ detectSafetyIntent()    → structured, needsPlanning=true
+      ├─→ detectDrugRecommend()   → moderate, needsPlanning=true
+      ├─→ entityCount<=1 + noCmp  → simple, needsPlanning=false ← 走 ReAct
+      ├─→ hasComparison           → complex, needsPlanning=true
+      ├─→ entityCount 2-3         → moderate, needsPlanning=true
+      └─→ otherwise               → complex, needsPlanning=true
+
+  作用: 最终决定 Agent 的执行模式。
+
+  ---
+  完整流程串起来
+
+  "2型糖尿病合并高血压，二甲双胍联合氨氯地平是否安全？"
+      │
+      ├─ [QueryAnalyzer]
+      │   复杂度: complex (含"是否安全"隐式对比 + 长查询 > 50)
+      │   需要分解: true → ["二甲双胍安全性", "氨氯地平安全性",
+  "二甲双胍氨氯地平相互作用"]
+      │   需要重写: false (已经是专业术语)
+      │
+      ├─ [EntityRecognizer]
+      │   疾病: 2型糖尿病, 高血压
+      │   药物: 二甲双胍, 氨氯地平
+      │   confidence: 0.85
+      │
+      ├─ [IntentAnalyzer]
+      │   类型: safety_check, decision_support
+      │   焦点: primary=二甲双胍, secondary=氨氯地平
+      │   特殊需求: checkInteraction=true
+      │
+      ├─ [ComplexityJudge]
+      │   entityCount=4, drugs≥2 → hasInteraction=true
+      │   → moderate, needsPlanning=true
+      │
+      ├─ [检索: HybridSmallToBigRetriever]
+      │   Dense(1024d) + Sparse(learned) → RRF(k=60) → Parent Expansion
+      │
+      ├─ [ReAct Loop]
+      │   THINK(LLM) → RETRIEVE → OBSERVE(证据评级) → DECIDE(规则化)
+      │   可能迭代2-3轮
+      │
+      └─ [Answer + 评估]
+          生成回答 → 自动触发8维度评估 → WebSocket推送结果
+
+  ---
+  一句话总结
+
+  - 检索: BGE-M3 的 Dense(语义) + Sparse(关键词) 双路并行检索，用 RRF(k=60)
+  融合，不是 BM25
+  - 意图识别: 三层递进 — QueryAnalyzer(检索策略) → EntityRecognizer(医学实体) →
+  IntentAnalyzer(任务类型) → ComplexityJudge(执行模式)，前两个有 LLM
+  参与，后三个纯规则
+
+  想看哪个环节的具体实现细节？
+
+✻ Sautéed for 2m 24s
+
+※ recap: 我们在深入探索这个医学 RAG 项目的检索和意图识别机制。刚才梳理了 Dense+Sparse 混合检索（非 BM25）和三层意图识别的完整链路，正准备回答你想深入看哪个具体环节的实现。 (disable recaps in /config)
+
+> 怎么触发的评估，在这个过程中评估用来干了什么                                  
+
+  Searched for 1 pattern, read 5 files (ctrl+o to expand)
+
+● 现在完全追踪清楚了。评估不是一个独立的环节，而是嵌入在请求生命周期中的安全网。
+
+  ---
+  触发点：POST /generate 的第 638 行
+
+  POST /api/chat/generate
+      │
+      ├─ 1. Agent 执行 (MedicalAgent.run)
+      │     ├─ 实体识别
+      │     ├─ ReAct/Planning 循环
+      │     └─ 生成回答
+      │
+      ├─ 2. 检索 + LLM 生成答案
+      │
+      └─ 3. ⚡ 评估触发 (第638行)
+           if (enableAgent && agentResult) {
+             triggerEvaluation(fastify, agentResult, query, answer, wsHandler,
+  broadcastGeneration);
+           }
+           │
+           └─ 注意: 这行在 return reply.status(200).send(...) 之前
+              但 submitFromAgentResult 是异步非阻塞的
+              → HTTP 响应先返回，评估在后台跑
+
+  关键：只有启用 Agent 模式时才触发评估 (enableAgent=true)。纯检索模式 (POST 
+  /query) 不触发评估。
+
+  ---
+  完整触发链路
+
+  triggerEvaluation()                           ← chat.ts:24
+      │
+      ├─ 1. 把 query + answer 注入 AlertHandler
+      │      alertHandler.setQueryAnswer(sessionId, query, answer)
+      │      作用: 告警触发时可以附带原始问答上下文
+      │
+      ├─ 2. evaluationService.submitFromAgentResult(agentResult, query,
+  sessionId, {
+      │        onSuccess: callback,   ← 评估完成后的回调
+      │        onError: callback,     ← 评估失败的回调
+      │    })
+      │
+      └─ 3. 异常被 try-catch 包裹，即使评估崩了也不影响主请求
+
+  AgentEvaluationService.submitFromAgentResult()   ←
+  AgentEvaluationService.ts:315
+      │
+      ├─ buildTraceDataFromResult(agentResult, query, sessionId)
+      │     │
+      │     ├─ 从 AgentResult 提取:
+      │     │   • query (原始查询)
+      │     │   • answer.text (生成的答案)
+      │     │   • retrievalResults → chunks (检索到的证据)
+      │     │   • entities (识别的医学实体)
+      │     │   • reasoningTrace (Agent 推理链)
+      │     │   • stats (迭代次数、耗时等)
+      │     │
+      │     └─ 构建 TraceContextData (结构化追踪数据)
+      │
+      ├─ storage.saveTrace(traceData)   ← 持久化到 SQLite (traces.db)
+      │
+      └─ submitEvaluation(traceData, handlers)
+            │
+            ├─ Redis 可用?
+            │   YES ──→ EvaluationQueue.addJob(traceData)
+            │            │
+            │            └─→ Bull Queue (Redis-backed)
+            │                  │
+            │                  ▼
+            │            ┌─────────────────────────┐
+            │            │  EvaluationWorker       │
+            │            │  (独立进程/NPM script)    │
+            │            │                         │
+            │            │  worker:evaluation       │
+            │            │  npx tsx src/workers/    │
+            │            │  evaluation-worker.ts    │
+            │            └───────────┬─────────────┘
+            │                        │
+            │            MedicalEvaluationPipeline.evaluate(traceData)
+            │                        │
+            │            ┌───────────┼───────────┐
+            │            │ 8 次 LLM 调用评估       │
+            │            │ • faithfulness         │
+            │            │ • contextRelevance     │
+            │            │ • answerRelevance      │
+            │            │ • medicalAccuracy      │
+            │            │ • safetyAssessment     │
+            │            │ • evidenceTraceability │
+            │            │ • completeness         │
+            │            │ • terminologyAccuracy  │
+            │            └───────────┬───────────┘
+            │                        │
+            │                        ▼
+            │            ┌─────────────────────────┐
+            │            │ Storage.saveEvaluation() │
+            │            │ → SQLite (traces.db)     │
+            │            └───────────┬─────────────┘
+            │                        │
+            │                        ▼
+            │            ┌─────────────────────────┐
+            │            │ callback: onSuccess()    │
+            │            └───────────┬─────────────┘
+            │                        │
+            │          NO ──→ 直接同步执行(降级)
+            │
+            ▼
+      onSuccess(result: ExtendedEvaluationResult)
+            │
+            ├─ ❶ WebSocket broadcast: evaluation:complete
+            │     → 前端 EvaluationPanel 实时更新 8 维度分数
+            │     → StatsDashboard 更新统计
+            │
+            ├─ ❷ AlertHandler.checkAndAlert(result)
+            │     → 检查 safety/faithfulness/medicalAccuracy
+            │     → 阈值不达标 → 创建告警 → WebSocket 广播
+            │                                    → SQLite 存储
+            │                                    → 可选: 人工审核队列
+            │
+            └─ ❸ StatsAggregationService 更新聚合指标
+
+  ---
+  评估用来干了什么：4 个用途
+
+  用途 1：前端实时质量展示
+
+  WebSocket event: evaluation:complete
+      │
+      ▼
+  ┌──────────────────────────────────────────────┐
+  │          EvaluationPanel (前端)               │
+  │                                              │
+  │   Layer 1 基础 RAGAS                          │
+  │   ├─ 忠实度        0.90  ████████████▌       │
+  │   ├─ 上下文相关性    0.80  ██████████          │
+  │   └─ 答案相关性      0.85  ██████████▌        │
+  │                                              │
+  │   Layer 2 医疗核心                             │
+  │   ├─ 医疗准确性      0.88  ███████████        │
+  │   └─ 安全评估        0.95  ████████████       │
+  │                                              │
+  │   Layer 3 医疗增强                             │
+  │   ├─ 证据可追溯性    0.75  █████████          │
+  │   ├─ 完整性          0.80  ██████████         │
+  │   └─ 术语准确性      0.85  ██████████▌        │
+  │                                              │
+  │   综合: 0.867  ● 安全                         │
+  └──────────────────────────────────────────────┘
+
+  用途 2：风险等级自动判定
+
+  // evaluation/types.ts: determineRiskLevel()
+  //
+  // safetyAssessment < 0.5              → danger   ← 必须人工介入
+  // faithfulness < 0.5 || safety < 0.7  → warning  ← 强烈建议审核
+  // faithfulness < 0.7 || safety < 0.85 → caution  ← 注意观察
+  // 其他                                → safe     ← 正常通过
+
+  这个风险等级直接下发到前端，用户一眼就能看到这个回答是否可信。医疗场景下，"我
+  不知道"比"我编了一个危险的错误答案"好得多。
+
+  用途 3：告警触发 + 人工审核
+
+  AlertHandler.checkAndAlert(result)
+      │
+      ├─ checkSafety()
+      │     safetyScore < 0.5 → critical alert
+      │     safetyScore < 0.7 → warning alert
+      │     告警内容: "回答包含绝对禁忌" / "存在危险建议"
+      │
+      ├─ checkFaithfulness()
+      │     faithfulness < 0.5 → warning alert (幻觉严重)
+      │     faithfulness < 0.7 → monitor alert (需要监控)
+      │
+      ├─ checkMedicalAccuracy()
+      │     术语错误过多 → warning alert
+      │     指南违规 → warning alert
+      │
+      └─ processAlert()
+            ├─ WebSocket broadcast: alert:new
+            │     → 前端 AlertCard 弹出告警
+            │
+            ├─ SQLite 存储告警历史
+            │
+            ├─ 告警聚合 (5分钟内相同类型去重)
+            │
+            └─ 速率限制 (默认 10条/分钟)
+                 → 超限丢弃 (防止告警风暴)
+
+  告警配置 (alert/config.ts):
+
+  ALERT_SAFETY_CRITICAL_THRESHOLD  = 0.5   ← 环境变量
+  ALERT_SAFETY_CRITICAL_THRESHOLD
+  ALERT_SAFETY_WARNING_THRESHOLD   = 0.7   ← 环境变量
+  ALERT_SAFETY_WARNING_THRESHOLD
+  ALERT_FAITHFULNESS_WARNING       = 0.5   ← 环境变量
+  ALERT_FAITHFULNESS_WARNING_THRESHOLD
+  ALERT_FAITHFULNESS_MONITOR       = 0.7   ← 环境变量
+  ALERT_FAITHFULNESS_MONITOR_THRESHOLD
+
+  用途 4：历史追踪和统计
+
+  所有评估结果 → SQLite (data/traces.db)
+      │
+      ├─ evaluations 表:
+      │   evaluation_id, trace_id, timestamp,
+      │   faithfulness_score, context_relevance_score,
+      │   answer_relevance_score, overall_score,
+      │   metrics_json, metadata_json
+      │
+      ├─ 前端 TraceExplorer: 可以回看历史评估
+      │
+      └─ StatsAggregationService:
+          监听 evaluation:complete 事件
+          → 实时更新平均分、风险分布、趋势图
+
+  ---
+  一图总结
+
+                       POST /api/chat/generate
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+          Agent 执行      检索+LLM生成      HTTP 响应
+          (ReAct/          (流式)           (立即返回
+           Planning)                         给用户)
+              │               │
+              └───────┬───────┘
+                      │
+              agentResult +
+              answer + query
+                      │
+                      ▼
+            ┌─────────────────┐
+            │ triggerEvaluation│  ← 非阻塞
+            └────────┬────────┘
+                     │
+          ┌──────────┴──────────┐
+          ▼                     ▼
+      Redis 队列             同步执行
+      (Worker 异步)          (降级方案)
+          │                     │
+          └──────────┬──────────┘
+                     ▼
+        MedicalEvaluationPipeline
+          8次LLM调用 → 8维度分数
+                     │
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+      WebSocket   告警判定    持久化
+      →前端面板   →人工审核   →SQLite
+
+  评估的本质：Agent 生成回答，LLM
+  自己再当一回"考官"给这个回答打分。如果打分不及格（safety < 0.5），系统会发出告
+  警——不是说"不能用"，而是说"这个回答需要人工确认"。在医疗场景下，这层安全网比
+  Agent 更关键。
+
+✻ Worked for 2m 36s

@@ -65,7 +65,10 @@
       "Bash(docker volume *)",
       "Bash(HF_ENDPOINT=https://hf-mirror.com npm run download-models)",
       "Bash(git reset *)",
-      "Bash(docker-compose config *)"
+      "Bash(docker-compose config *)",
+      "PowerShell(Get-ChildItem \"D:\\\\Code\\\\moudle-MCP-SelfSearchRAG\\\\docs\\\\diagrams\\\\\" | ForEach-Object { \"$\\($_.Name\\) \\($\\($_.Length\\) bytes\\)\" })",
+      "Bash(docker run *)",
+      "PowerShell(docker run *)"
     ]
   }
 }

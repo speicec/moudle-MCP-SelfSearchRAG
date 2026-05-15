@@ -1,0 +1,99 @@
+@startuml
+skinparam backgroundColor #f0f4f8
+skinparam defaultFontSize 10
+skinparam sequenceMessageAlign center
+
+title MCP Server — 工具调用时序图
+
+actor "MCP Client\n(Claude Desktop)" as Client
+participant "McpServer\n(StdioServerTransport)" as McpServer
+participant "Document\nStorage" as DocStore
+participant "McpRetrieval\nService" as RetrievalSvc
+participant "Hierarchical\nStore" as HierStore
+participant "SmallToBig\nRetriever" as Retriever
+participant "Embedding\nService" as EmbedSvc
+participant "Medical\nAgent" as MedAgent
+participant "LLM\nGeneration" as LLM
+
+== 工具发现 ==
+
+Client -> McpServer: ListToolsRequest
+McpServer --> Client: tools[]\n{ingest_document, query, get_document,\nlist_documents, medical_query,\nmedical_agent, type_fix}
+
+== 文档管理工具 ==
+
+Client -> McpServer: CallTool: ingest_document\n{document_path, metadata}
+McpServer -> DocStore: 读取文档文件
+DocStore --> McpServer: document
+McpServer -> McpServer: 触发 Pipeline 处理\n(Ingest→Parse→Chunk→Embed→Index)
+McpServer --> Client: {status: "initiated"}
+
+== 文档列表 ==
+
+Client -> McpServer: CallTool: list_documents\n{limit, status_filter}
+McpServer -> DocStore: list({limit, status})
+DocStore --> McpServer: documents[]
+McpServer --> Client: JSON documents[]
+
+== 获取文档 ==
+
+Client -> McpServer: CallTool: get_document\n{document_id}
+McpServer -> DocStore: get(document_id)
+alt 文档存在
+  DocStore --> McpServer: document
+  McpServer --> Client: JSON document
+else 文档不存在
+  DocStore --> McpServer: null
+  McpServer --> Client: Error: Document not found
+end
+
+== 查询检索工具 ==
+
+Client -> McpServer: CallTool: query\n{query_text, top_k, threshold}
+McpServer -> RetrievalSvc: query(query_text, {topK, threshold})
+RetrievalSvc -> Retriever: retrieveWithMetadata(query_text)
+Retriever -> EmbedSvc: embedText(query_text)
+EmbedSvc --> Retriever: queryEmbedding[]
+Retriever -> HierStore: getAllSmallChunks()
+HierStore --> Retriever: smallChunks[]
+Retriever -> Retriever: cosine similarity 计算\n阈值过滤
+Retriever -> HierStore: getParentChunks(matchedIds)
+HierStore --> Retriever: parentChunks[] (完整上下文)
+Retriever -> Retriever: 提取 contextWindow\n去重合并
+Retriever --> RetrievalSvc: HierarchicalRetrievalResult[]
+RetrievalSvc -> RetrievalSvc: 映射为 McpRetrievalResult
+RetrievalSvc --> McpServer: McpRetrievalResult[]\n{smallChunkId, parentChunkContent,\nsimilarityScore, contextWindow}
+McpServer --> Client: JSON {query, results, totalResults}
+
+== 医学查询工具 ==
+
+Client -> McpServer: CallTool: medical_query\n{query, domain, include_guidelines}
+McpServer -> RetrievalSvc: query(queryText, {topK: 10, threshold: 0.3})
+RetrievalSvc --> McpServer: retrievalResults[]
+McpServer -> McpServer: handleMedicalQuery()\n实体识别 + 领域知识匹配
+McpServer --> Client: Markdown 格式答案
+
+== 医学 Agent 工具 ==
+
+Client -> McpServer: CallTool: medical_agent\n{query, domain, max_iterations}
+McpServer -> McpServer: validateMedicalAgentInput()
+McpServer -> MedAgent: createMedicalAgent(llmCaller, retrievalFn, config)
+McpServer -> MedAgent: run({query, domain})
+activate MedAgent
+MedAgent -> MedAgent: 实体识别 + 复杂度评估
+MedAgent -> MedAgent: 模式选择 (ReAct/Planning)
+loop ReAct 循环 (max 5 iterations)
+  MedAgent -> RetrievalSvc: retrieval(query, topK)
+  RetrievalSvc --> MedAgent: results[]
+  MedAgent -> LLM: reasonClinical(state)
+  LLM --> MedAgent: AgentDecision
+  MedAgent -> MedAgent: 规则化判断是否满足
+end
+MedAgent -> LLM: generateMedicalAnswer(entities, results)
+LLM --> MedAgent: MedicalAnswer
+MedAgent --> McpServer: AgentResult
+deactivate MedAgent
+McpServer -> McpServer: formatAgentResultAsMarkdown()
+McpServer --> Client: Markdown {结论, 证据等级, 推理追踪, 来源}
+
+@enduml

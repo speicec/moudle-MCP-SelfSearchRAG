@@ -1,0 +1,57 @@
+@startbpmn
+title 文档处理主流水线 (Document Processing Pipeline)
+
+skinparam backgroundColor #f0f4f8
+
+start
+
+:上传文档;
+
+:格式验证;
+
+:元数据提取;
+
+:队列注册;
+
+:判断文档类型;
+
+switch (文档类型?)
+case (文本PDF)
+  :pdfjs-dist 提取文本层;
+case (图片PDF)
+  :pdfjs-dist 渲染为 PNG;
+  :PaddleOCR 版面分析;
+  :VLM 增强处理\n(DashScope qwen3-vl-flash);
+case (其他格式)
+  :格式特定解析器;
+case (不支持)
+  :返回错误;
+  stop
+endswitch
+
+:句子切片 (Sentence Split);
+
+:句子嵌入 (Sentence Embedding);
+
+:断崖检测 (Cliff Detection);
+
+:语义边界切分;
+
+:层级Chunk构建\n(Parent + Small Chunks);
+
+:质量过滤 (QualityFilter);
+
+:文本嵌入\n(API/Local/Hybrid);
+
+:图片嵌入\n(CLIP-ViT);
+
+:向量存储\n(Qdrant/In-Memory);
+
+:层级存储\n(HierarchicalStore);
+
+:图片存储\n(ImageStore);
+
+:处理完成\n(Document Ready);
+
+stop
+@endbpmn
