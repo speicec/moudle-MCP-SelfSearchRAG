@@ -1,0 +1,116 @@
+@startuml
+scale 1.6
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+skinparam activityBackgroundColor #DCFCE7
+skinparam activityBorderColor #22C55E
+skinparam activityFontColor #14532D
+skinparam arrowColor #059669
+skinparam swimlaneBorderColor #86B086
+skinparam partitionBackgroundColor #F0FDF4
+
+title 文档摄取全流程 — 从PDF上传到可检索知识库\n(4-Stage Pipeline: Ingest → Parse → Chunk → Embed)
+
+|用户入口|
+start
+:用户上传医学指南PDF
+选择上传方式 (Web UI 拖拽 / MCP ingest_document);
+|用户入口|
+
+|#E8F5E9|INGEST 摄入阶段|
+:文档格式校验\n(支持: PDF/PNG/JPG, 最大 100MB, 最多 500页);
+if (格式有效?) then (否)
+  :返回错误提示\n"不支持的文件格式或大小超限";
+  stop
+else (是)
+endif
+:加入处理队列\n(内存队列, FIFO顺序);
+:创建文档元数据\n{documentId, fileName, uploadTime,\npageCount, format, status="processing"};
+:发射 WebSocket 事件\n→ "stage:start" (ingest);
+|#E8F5E9|
+
+|#E8F5E9|PARSE 解析阶段|
+:读取PDF文件;
+:检测PDF类型;
+if (PDF类型?) then (纯文本PDF)
+  :[文本路径] PdfParser\n提取原生文本层 + 内嵌图片;
+  :逐页提取 textBlocks\n(保留页面位置坐标);
+  :提取内嵌 images\n(保存为 Buffer);
+else (纯图片PDF / 扫描件)
+  :[图片路径] PdfToImageConverter\n(pdfjs-dist, scale=2, 144dpi);
+  :PDF页面 → PNG Buffer 数组\n{pageNumber, imageBuffer, width, height};
+  :PaddleOCR 版面分析\n(PP-Structure, table=false);
+  :识别页面布局\n→ OcrBlock[]: text/table/figure/formula/title;
+  :text 类型块: 直接OCR识别文本;
+  :table/figure/formula 块: 仅获取bbox, 无内容;
+  fork
+    :VLM增强 - Table\n按bbox裁剪 → Base64;
+    :调用 DashScope qwen3-vl-flash\n"请分析表格，转为Markdown格式";
+    :block.text = VLM结果;
+  fork again
+    :VLM增强 - Figure\n按bbox裁剪 → Base64;
+    :调用 DashScope qwen3-vl-flash\n"请描述图表类型和数据趋势";
+    :block.text = VLM描述;
+  fork again
+    :VLM增强 - Formula\n按bbox裁剪 → Base64;
+    :调用 DashScope qwen3-vl-flash\n"请识别公式，输出LaTeX格式";
+    :block.text = LaTeX公式;
+  end fork
+endif
+:合并为 ParsedContent\n{pages[{textBlocks, tables(VLM), images(VLM), formulas(VLM)}], totalPages};
+:发射 WebSocket 事件\n→ "stage:complete" (parse)\n→ "stage:start" (chunk);
+|#E8F5E9|
+
+|#E0F2F1|CHUNK 语义分块阶段|
+:从 ParsedContent 提取纯文本序列;
+:句子切分\n(中文: 。！？\n 英文: .!?\n);
+:对每个句子生成 Embedding\n(Local Transformers: multilingual-e5-small, 384维);
+
+partition "断崖检测 Cliff Detection" {
+  :计算相邻句子余弦相似度\nsim_i = cosine(e_i, e_{i+1});
+  :候选断崖点筛选\nsim_i < similarityThreshold (0.7);
+  :梯度验证\ngradient_i = |sim_i - sim_{i-1}|\n要求 gradient_i > 0.15;
+  :去噪过滤\n要求连续 minCliffWidth(2) 个候选点;
+  :选择最终语义边界位置;
+}
+
+:在边界位置创建 Parent Chunks\n(每个 1000-2000 tokens);
+
+partition "子块创建 Small Chunks" {
+  :在每个 Parent 内部\n创建 4-6 个 Child Chunks\n(每个 200-500 tokens);
+  :建立父子关系映射\nchild.parentId → parent.chunkId;
+}
+
+partition "质量过滤 Quality Filter" {
+  :评估每个 Chunk 质量\n(完整性 / 连贯性 / 信息密度);
+  if (质量分数 ≥ 阈值?) then (否)
+    :标记为低质量, 丢弃;
+  else (是)
+    :保留进入下一阶段;
+  endif
+}
+
+:发射 WebSocket 事件\n→ "stage:complete" (chunk)\n→ "chunk:created"\n→ "stage:start" (embed);
+|#E0F2F1|
+
+|#FEF3C7|EMBED 嵌入阶段|
+:为所有 Parent + Child Chunks\n生成 Embedding 向量\n(Local Transformers, 384维);
+:生成 Image Embedding\n(对图片块使用 CLIP 模型);
+:缓存 Embedding 结果\n(内存缓存, TTL可配置);
+
+partition "存储写入" {
+  :HierarchicalStore\n存储 Parent-Child 层级结构;
+  :ImageStore\n存储图片块 Buffer + VLM描述;
+  :DocumentStore\n更新状态 status="ready";
+}
+
+:发射 WebSocket 事件\n→ "stage:complete" (embed)\n→ "pipeline:complete";
+|#FEF3C7|
+
+|用户入口|
+:前端收到通知\n文档处理完成, 可检索;
+stop
+|用户入口|
+
+@enduml

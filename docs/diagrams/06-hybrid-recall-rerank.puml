@@ -1,0 +1,124 @@
+@startuml
+scale 1.6
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+skinparam activityBackgroundColor #FEF3C7
+skinparam activityBorderColor #CA8A04
+skinparam activityFontColor #78350F
+skinparam arrowColor #D97706
+skinparam swimlaneBorderColor #FCD34D
+skinparam partitionBackgroundColor #FFFBEB
+
+title 多路召回 + 混合重排融合策略\n(三引擎并行检索 → RRF融合 → 双模式路由重排 → 四因子置信度评分)
+
+|#FFFBEB|查询输入|
+start
+:用户查询: "二甲双胍肾功能不全禁忌"
+ + 扩展术语: ["格华止","美迪康","禁用"];
+|#FFFBEB|
+
+fork
+  partition "**语义检索 Semantic Search**" {
+    :Embedding Service\n生成查询向量 (384维);
+    :VectorStore.search()\n遍历所有Chunk的Embedding\n计算余弦相似度;
+    :输出 Top-K 语义结果\n按相似度降序\nDenseResults[];
+  }
+fork again
+  partition "**关键词检索 Keyword Search**" {
+    :分词: 二甲双胍/肾功能不全/禁忌;
+    :BM25-inspired 词频评分\nscore += (tf×2.5)/(tf+1.2×(docLen/100));
+    :遍历所有Chunk的文本内容\n计算关键词匹配分数;
+    :输出 Top-K 关键词结果\n按词频分数降序\nSparseResults[];
+  }
+fork again
+  partition "**Hybrid Search 混合检索**" {
+    :同时调用 SemanticEngine\n和 KeywordEngine;
+    :权重融合:\nDEFAULT_HYBRID_WEIGHTS\nsemantic: 0.7, keyword: 0.3;
+    :双路命中 → 分数叠加\n单路命中 → 仅加权;
+    :去重排序;
+  }
+end fork
+
+|#FEF3C7|RRF 融合 Reciprocal Rank Fusion|
+:输入: DenseResults + SparseResults;
+
+:核心公式:\nscore(id) = Σ 1/(k + rank_i)\n其中 k = 60 (默认);
+
+:示例计算:\n结果A: Dense排#1, Sparse排#3\n  score = 1/(60+1) + 1/(60+3)\n       = 0.0164 + 0.0159 = 0.0323\n\n结果B: Dense排#2, Sparse排#1\n  score = 1/(60+2) + 1/(60+1)\n       = 0.0161 + 0.0164 = 0.0325\n\n结果C: 仅Dense排#5\n  score = 1/(60+5) = 0.0154;
+
+:按 RRF Score 降序排列\n→ FusedResults[];
+
+note right
+  RRF 的优势:
+  • 不需要分数归一化
+  • 对不同评分尺度鲁棒
+  • 双路都命中的结果自然排名更高
+  • 保证多样性和互补性
+end note
+|#FEF3C7|
+
+|#FDE68A|HybridReranker 双模式路由|
+:输入: FusedResults[] (假设共N条);
+if (N ≤ 20 且 LocalReranker可用?) then (是)
+  partition "**本地重排器 LocalReranker**" {
+    :加载 bge-reranker-v2-m3 模型;
+    :对每个 (query, chunkContent) 对\n计算 Cross-Attention 相关性分数;
+    :输出 RerankedResults[]\n高精度但计算较慢;
+    note right
+      适用: 小样本(≤20)
+      特点: 跨注意力机制, 精度最高
+      模型: bge-reranker-v2-m3
+    end note
+  }
+else (否 → 大样本>20)
+  partition "**内部置信度计算 ConfidenceCalculator**" {
+    :无需外部模型, 直接计算四因子分数;
+    note right
+      适用: 大样本(>20)
+      特点: 快速, 无额外模型依赖
+    end note
+  }
+endif
+|#FDE68A|
+
+|#FCD34D|四因子置信度评分|
+:对每条结果计算 4 个维度的分数;
+
+partition "因子1: 向量相似度 (权重 0.35)" {
+  :similarityScore = result.similarityScore (直接使用);
+}
+partition "因子2: 关键词匹配 (权重 0.25)" {
+  :提取 query 和 content 的关键词;
+  :keywordMatchScore = Jaccard(queryTerms, contentTerms)\n= |交集| / |并集|;
+}
+partition "因子3: 位置分数 (权重 0.20)" {
+  :positionScore = 1 - normalizedPosition × 0.5\nposition=0 → 1.0, position=last → 0.5;
+}
+partition "因子4: 分块质量 (权重 0.20)" {
+  :chunkQualityScore = result.chunkQualityScore 或 0.5;
+}
+
+:组合计算:\nconfidence = 0.35×similarity + 0.25×keyword\n            + 0.20×position + 0.20×quality;
+:Clamp 到 [0, 1];
+
+:置信度等级标注:\n≥0.7 → HIGH (🟢 可信任)\n≥0.4 → MEDIUM (🟡 需注意)\n<0.4 → LOW (🔴 低质量);
+|#FCD34D|
+
+|#FBBF24|低置信度处理 LowConfidenceHandler|
+:计算所有结果的平均置信度 avgConfidence;
+if (avgConfidence < 0.3?) then (是)
+  :返回 NoMatchResult:\n{status: "no_match",\n suggestion: "请尝试更具体的查询\n或检查文档内容是否覆盖该主题"};
+  stop
+else (否)
+  :继续下一步;
+endif
+|#FBBF24|
+
+|#D97706|结果输出|
+:按置信度降序输出结果;
+:每个结果包含:\n• chunkContent (上下文窗口)\n• confidenceScore\n• confidenceLevel (high/medium/low)\n• similarityScore\n• sourceDocumentId\n• chunkId;
+stop
+|#D97706|
+
+@enduml

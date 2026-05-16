@@ -1,0 +1,98 @@
+<div style="width: 1920px; min-height: 1080px; box-sizing: border-box; position: relative; background: #f5f9f5; padding: 28px; border-radius: 8px; border: 1px solid #c3d9c3; font-family: 'Microsoft YaHei', sans-serif;">
+<style scoped>
+.arch-wrapper{display:flex;gap:16px}.arch-sidebar{width:230px;flex-shrink:0}.arch-main{flex:1;min-width:0}.arch-title{text-align:center;font-size:30px;font-weight:bold;color:#14532d;margin-bottom:10px}.arch-subtitle{text-align:center;font-size:15px;color:#6b8f6b;margin-bottom:20px}
+.arch-layer{margin:8px 0;padding:16px;border-radius:8px;box-shadow:0 2px 8px rgba(22,101,52,0.06)}.arch-layer-title{font-size:16px;font-weight:bold;margin-bottom:10px;text-align:center}
+.arch-grid{display:grid;gap:8px}.arch-grid-2{grid-template-columns:repeat(2,1fr)}.arch-grid-3{grid-template-columns:repeat(3,1fr)}.arch-grid-4{grid-template-columns:repeat(4,1fr)}.arch-grid-5{grid-template-columns:repeat(5,1fr)}
+.arch-box{border-radius:6px;padding:12px 14px;text-align:center;font-size:13px;font-weight:600;line-height:1.5;color:#14532d;background:rgba(255,255,255,0.9);border:1px solid rgba(34,197,94,0.15)}.arch-box.highlight{background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);border:2px solid #16a34a}.arch-box.tech{font-size:12px;color:#166534;background:rgba(240,253,244,0.8)}.arch-box.warn{background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);border:2px solid #ca8a04;color:#854d0e;font-size:13px}
+.arch-layer.external{background:linear-gradient(135deg,#f3f8f3 0%,#e8f0e8 100%);border:2px dashed #a3c0a3}.arch-layer.external .arch-layer-title{color:#6b8f6b}
+.arch-layer.user{background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);border:2px solid #22c55e}.arch-layer.user .arch-layer-title{color:#15803d}
+.arch-layer.service{background:linear-gradient(135deg,#d1fae5 0%,#a7f3d0 100%);border:2px solid #059669}.arch-layer.service .arch-layer-title{color:#047857}
+.arch-layer.orchestration{background:linear-gradient(135deg,#ecfdf5 0%,#ccfbf1 100%);border:2px solid #14b8a6}.arch-layer.orchestration .arch-layer-title{color:#0f766e}
+.arch-layer.storage{background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);border:2px solid #ca8a04}.arch-layer.storage .arch-layer-title{color:#854d0e}
+.arch-layer.retrieval{background:linear-gradient(135deg,#ede9fe 0%,#ddd6fe 100%);border:2px solid #7c3aed}.arch-layer.retrieval .arch-layer-title{color:#5b21b6}
+.arch-layer.generation{background:linear-gradient(135deg,#fce7f3 0%,#fbcfe8 100%);border:2px solid #db2777}.arch-layer.generation .arch-layer-title{color:#9d174d}
+.arch-sidebar-panel{border-radius:8px;padding:14px;background:linear-gradient(135deg,#e8f0e8 0%,#dce6dc 100%);border:2px solid #86b086;margin-bottom:10px;box-shadow:0 1px 3px rgba(22,101,52,0.04)}.arch-sidebar-title{font-size:14px;font-weight:bold;text-align:center;color:#14532d;margin-bottom:8px}
+.arch-sidebar-item{font-size:12px;text-align:center;color:#166534;background:rgba(255,255,255,0.85);padding:6px 8px;border-radius:4px;margin:4px 0;border:1px solid rgba(34,197,94,0.12)}.arch-sidebar-item.metric{background:#dcfce7;border:1px solid #22c55e;color:#15803d;font-weight:600}
+.arch-pipeline{display:flex;gap:8px;align-items:center}.arch-stage{flex:1;border-radius:6px;padding:14px;text-align:center;font-size:12px;font-weight:600;color:#0f766e;background:rgba(255,255,255,0.9);border:1px solid #5eead4}.arch-stage.active{background:linear-gradient(135deg,#ccfbf1 0%,#99f6e4 100%);border:2px solid #14b8a6}
+.arch-arrow{font-size:22px;color:#14b8a6;font-weight:bold}.arch-conn{stroke:#94a3b8;stroke-width:1.5;fill:none}.arch-conn-dashed{stroke:#94a3b8;stroke-width:1.5;fill:none;stroke-dasharray:6 4}.arch-conn-label{font-size:9px;fill:#64748b;font-family:sans-serif}
+</style>
+<div class="arch-title">SelfSearchRAG 医学知识检索增强生成系统</div>
+<div class="arch-subtitle">Multi-stage Document Processing → Semantic Chunking → Hybrid Retrieval → Medical Agent Generation</div>
+<div class="arch-wrapper">
+<div class="arch-sidebar">
+<div class="arch-sidebar-panel"><div class="arch-sidebar-title">入口方式</div><div class="arch-sidebar-item metric">Web UI (React)</div><div class="arch-sidebar-item metric">MCP Client (Claude)</div><div class="arch-sidebar-item">API (REST)</div></div>
+<div class="arch-sidebar-panel"><div class="arch-sidebar-title">通信协议</div><div class="arch-sidebar-item">HTTP/SSE 流式</div><div class="arch-sidebar-item">WebSocket 实时</div><div class="arch-sidebar-item">MCP JSON-RPC</div></div>
+<div class="arch-sidebar-panel"><div class="arch-sidebar-title">关键指标</div><div class="arch-sidebar-item metric">召回率 ≥90%</div><div class="arch-sidebar-item metric">检索 &lt;1.5s</div><div class="arch-sidebar-item metric">LLM调用 &lt;3次</div></div>
+</div>
+<div class="arch-main">
+<div class="arch-layer user">
+<div class="arch-layer-title">用户入口层 User Entry</div>
+<div class="arch-grid arch-grid-2">
+<div class="arch-box highlight">Web UI (React SPA)<br><small>可视化上传/检索/评估 | 实时Pipeline监控 | Agent交互面板</small></div>
+<div class="arch-box highlight">MCP Client (Claude Desktop)<br><small>medical_query | medical_agent | medical_agent_plan | ingest_document</small></div>
+</div>
+</div>
+<div class="arch-layer service">
+<div class="arch-layer-title">服务层 Service Layer (Fastify)</div>
+<div class="arch-grid arch-grid-3">
+<div class="arch-box">HTTP Routes<br><small>POST /api/documents/upload<br>GET /api/documents<br>POST /api/chat/generate (SSE)<br>GET /api/stats</small></div>
+<div class="arch-box highlight">WebSocket Handler<br><small>stage:start/progress/complete<br>agent:entities/complexity/mode<br>retrieval:start/match/complete<br>generation:thinking/answer<br>stats:update</small></div>
+<div class="arch-box">Pipeline Emitter<br><small>事件广播器<br>Pipeline执行状态<br>→ WebSocket推送</small></div>
+</div>
+</div>
+<div class="arch-layer orchestration">
+<div class="arch-layer-title">编排层 Harness Orchestrator (可插拔Pipeline + Lifecycle Hooks)</div>
+<div class="arch-pipeline">
+<div class="arch-stage active">INGEST<br><small>Validator<br>Queue</small></div><div class="arch-arrow">→</div>
+<div class="arch-stage active">PARSE<br><small>PdfParser<br>OcrPlugin<br>VlmPlugin</small></div><div class="arch-arrow">→</div>
+<div class="arch-stage active">CHUNK<br><small>SemanticChunker<br>CliffDetector<br>QualityFilter</small></div><div class="arch-arrow">→</div>
+<div class="arch-stage active">EMBED<br><small>EmbeddingService<br>ImageEmbedding<br>Cache</small></div>
+</div>
+<div style="text-align:center;margin-top:8px;font-size:10px;color:#0f766e">Hooks: preExecution → onStageStart → onStageComplete → postExecution → onError</div>
+</div>
+<div class="arch-layer storage">
+<div class="arch-layer-title">存储层 Storage Layer</div>
+<div class="arch-grid arch-grid-3">
+<div class="arch-box">Document Store<br><small>文档元数据<br>uploadTime / status<br>pageCount / format</small></div>
+<div class="arch-box highlight">Hierarchical Store<br><small>层级分块存储<br>Parent Chunk (1000-2000 tokens)<br>Child Chunks (4-6 per parent)<br>上下文窗口提取</small></div>
+<div class="arch-box">Image Store<br><small>图片块存储<br>page → imageBuffers<br>blockType → crops<br>VLM理解结果</small></div>
+</div>
+</div>
+<div class="arch-layer retrieval">
+<div class="arch-layer-title">检索层 Retrieval Layer (Enhanced Pipeline)</div>
+<div class="arch-grid arch-grid-4">
+<div class="arch-box">QueryAnalyzer<br><small>复杂度判断<br>simple/complex/structured<br>滤镜检测(year/month)</small></div>
+<div class="arch-box">Small-to-Big Retriever<br><small>Phase1: 小块精准定位<br>Phase2: 父块上下文展开<br>相似度阈值 0.75</small></div>
+<div class="arch-box highlight">HybridReranker<br><small>双模式路由<br>≤20→LocalReranker (bge)<br>>20→InternalConfidence<br>四因子加权评分</small></div>
+<div class="arch-box">ContextAssembler<br><small>置信度标注<br>动态TopK截断<br>去重合并</small></div>
+</div>
+<div class="arch-grid arch-grid-3" style="margin-top:6px">
+<div class="arch-box tech">QueryRewriter<br><small>口语→专业术语</small></div>
+<div class="arch-box tech">QueryExpander<br><small>同义词扩展</small></div>
+<div class="arch-box tech">QueryDecomposer<br><small>复杂问题分解(max 5)</small></div>
+</div>
+</div>
+<div class="arch-layer generation">
+<div class="arch-layer-title">生成层 Generation Layer</div>
+<div class="arch-grid arch-grid-2">
+<div class="arch-box highlight">LLM Generation Service<br><small>DeepSeek API (deepseek-reasoner)<br>reasoning_content: 思考链过程<br>content: 最终答案<br>SSE流式推送 → WebSocket → 前端实时显示</small></div>
+<div class="arch-box">Medical Agent Framework<br><small>实体识别 → 安全层 → ReAct/Planning<br>三层综合回答(安全/证据/检索)<br>8维RAG评估体系<br>异步评估队列(Redis+Bull)</small></div>
+</div>
+</div>
+<div class="arch-layer external">
+<div class="arch-layer-title">外部服务层 External Services</div>
+<div class="arch-grid arch-grid-4">
+<div class="arch-box tech">PaddleOCR Service<br><small>Python FastAPI :8080<br>版面分析 + OCR识别<br>输出: bbox+blockType+text</small></div>
+<div class="arch-box tech">DashScope VLM<br><small>阿里云 qwen3-vl-flash<br>图片理解: table/figure/formula<br>输出: Markdown表格/图表描述</small></div>
+<div class="arch-box tech">DeepSeek API<br><small>deepseek-reasoner模型<br>思考链推理<br>SSE流式响应</small></div>
+<div class="arch-box tech">Local Transformers<br><small>multilingual-e5-small<br>384维文本嵌入<br>离线无API成本</small></div>
+</div>
+</div>
+</div>
+<div class="arch-sidebar">
+<div class="arch-sidebar-panel"><div class="arch-sidebar-title">Pipeline事件</div><div class="arch-sidebar-item">stage:start</div><div class="arch-sidebar-item">stage:progress</div><div class="arch-sidebar-item">stage:complete</div><div class="arch-sidebar-item">chunk:created</div><div class="arch-sidebar-item">pipeline:complete</div></div>
+<div class="arch-sidebar-panel"><div class="arch-sidebar-title">Agent事件</div><div class="arch-sidebar-item">agent:input</div><div class="arch-sidebar-item">agent:entities</div><div class="arch-sidebar-item">agent:complexity</div><div class="arch-sidebar-item">agent:mode</div><div class="arch-sidebar-item">agent:query_rewrite</div><div class="arch-sidebar-item">agent:dag</div><div class="arch-sidebar-item">agent:execution</div><div class="arch-sidebar-item">agent:complete</div></div>
+<div class="arch-sidebar-panel"><div class="arch-sidebar-title">安全 & 评估</div><div class="arch-sidebar-item warn">Safety Layer</div><div class="arch-sidebar-item warn">禁忌检测</div><div class="arch-sidebar-item">GRADE 证据评级</div><div class="arch-sidebar-item">8维RAG评估</div><div class="arch-sidebar-item">早终止机制</div></div>
+</div>
+</div>
+</div>

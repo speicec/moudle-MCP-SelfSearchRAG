@@ -1,0 +1,119 @@
+@startuml
+scale 1.6
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+skinparam sequenceMessageAlign center
+skinparam participantBackgroundColor #DCFCE7
+skinparam participantBorderColor #22C55E
+skinparam noteBackgroundColor #FEF3C7
+skinparam noteBorderColor #CA8A04
+
+title 增强检索全流程 — 从用户提问到组装上下文\n(8-Stage Enhanced Pipeline: Analyze → Rewrite → Expand → Decompose → Retrieve → Rerank → Assemble → Generate)
+
+actor "用户" as User
+participant "Web UI / MCP" as Client
+participant "QueryAnalyzer\n(LLM+启发式)" as Analyzer
+participant "QueryRewriter\n(LLM)" as Rewriter
+participant "QueryExpander\n(词典)" as Expander
+participant "QueryDecomposer\n(规则)" as Decomposer
+participant "Small-to-Big\nRetriever" as Retriever
+participant "HybridReranker\n(双模式路由)" as Reranker
+participant "ContextAssembler\n(动态TopK)" as Assembler
+database "HierarchicalStore\n(向量+关键词)" as Store
+participant "LLM\nGeneration\nService" as LLM
+
+User -> Client: "二甲双胍的禁忌症有哪些？"
+Client -> Analyzer: POST /api/chat/generate\n{query, enableAgent: true}
+
+== Stage 1: Query Analysis 查询分析 ==
+
+Analyzer -> Analyzer: 启发式判断:\n• 复杂度指标匹配 → 'complex'\n• 过滤条件检测 → 无年月筛选\n• 长度 > 20字
+
+Analyzer -> Analyzer: 缓存检查 → Miss\nLLM深度分析 (可选, 5s超时):\n{\n  complexity: "complex",\n  needsDecomposition: true,\n  needsRewrite: false,\n  detectedFilters: {},\n  intent: "药物禁忌查询",\n  keywords: ["二甲双胍","禁忌症"]\n}
+
+Analyzer --> Client: QueryAnalysisResult
+
+== Stage 2: Query Rewrite 查询重写 ==
+
+Client -> Rewriter: query = "二甲双胍的禁忌症有哪些？"
+
+Rewriter -> Rewriter: 口语化检测:\n无口语化特征\n→ 跳过重写,保持原查询
+
+Rewriter --> Client: rewrittenQuery = "二甲双胍的禁忌症有哪些？"
+
+== Stage 3: Query Expansion 查询扩展 ==
+
+Client -> Expander: 查询 + 实体识别结果
+
+Expander -> Expander: 加载 config/synonyms.json\n匹配过程:\n"二甲双胍" → 别名["格华止","美迪康"]\n"禁忌症" → 相关["禁用","慎用","不良反应"]\n\n双向匹配:\n查询含主词 → 添加别名\n查询含别名 → 添加主词
+
+Expander --> Client: expandedTerms = ["格华止", "美迪康", "禁用", "不良反应"]
+
+== Stage 4: Query Decomposition 查询分解 ==
+
+Client -> Decomposer: 复杂度=complex, 触发分解
+
+Decomposer -> Decomposer: 遍历 DECOMPOSITION_PATTERNS:\n• comparison: 无匹配 (?)\n• multiple_questions: 无匹配 (?)\n• and_clause: 无"和/与/以及" (?)\n• 检查多问号: 无 (?)\n\n结果: 无需分解
+
+Decomposer --> Client: subQueries = [], wasDecomposed = false
+
+== Stage 5: Small-to-Big Retrieval 两阶段检索 ==
+
+Client -> Retriever: 执行检索\nprimaryQuery + expandedTerms
+
+Retriever -> Store: **Phase 1: 小块精准定位**\n向量化查询 → 384维向量
+
+Store -> Store: 遍历所有 Child Chunks:\n计算 cosSim(queryEmbedding, childEmbedding)\n\nChild #1: cosSim = 0.42 :(|\nChild #2: cosSim = 0.31 :(|\nChild #3: cosSim = 0.88 :)|\nChild #4: cosSim = 0.67 :\|\nChild #7: cosSim = 0.79 :)\n...
+
+Store --> Retriever: matched children:\n[{id:child-3, score:0.88},\n {id:child-7, score:0.79},\n {id:child-4, score:0.67}]
+
+Retriever -> Store: **Phase 2: 父块展开**\nlookupParent(child-3) → parent-A\nlookupParent(child-7) → parent-A (同一父块!)\nlookupParent(child-4) → parent-B
+
+Store --> Retriever: parent-A: 二甲双胍章节完整内容 (1800 tokens)\nparent-B: 药物相互作用章节 (1500 tokens)
+
+Retriever -> Retriever: 去重: child-3和child-7 → parent-A\n只返回 parent-A 一次\n\n提取上下文窗口:\n在parent-A中定位child-3位置\n前300+匹配+后500字符
+
+Retriever --> Client: RetrievedContext[]:\n[{parentId, content, similarityScore:0.88,\n  contextWindow, sourceDocumentId}]
+
+== Stage 6: Hybrid Reranking 混合重排 ==
+
+Client -> Reranker: RetrievedContext[] (假设共15条结果)
+
+Reranker -> Reranker: 样本数 = 15 ≤ 20\n→ 路由到 LocalReranker
+
+Reranker -> Reranker: LocalReranker (bge-reranker-v2-m3):\n对每条结果重新打分\n结合: 相似度 + 关键词匹配 + 位置 + 质量
+
+Reranker -> Reranker: 四因子加权计算:\n• similarityWeight: 0.35\n• keywordMatchWeight: 0.25 (Jaccard)\n• positionWeight: 0.20\n• chunkQualityWeight: 0.20
+
+Reranker --> Client: ConfidenceRetrievalResult[]\n按综合置信度降序排列
+
+== Stage 7: Context Assembly 上下文组装 ==
+
+Client -> Assembler: 输入: rerankedResults + query
+
+Assembler -> Assembler: DynamicTopK 计算:\neffectiveWindow = modelContextWindow(64K)\n  - systemPromptTokens(2000)\n  - outputReservation(1000)\ntargetTokens = 38400\ncoarseTopK = ceil(38400 × 2.0 / avgParentTokens)
+
+Assembler -> Assembler: 按置信度截断 topN\n标注每条结果的置信度等级:\n• high (≥0.7) → 🟢\n• medium (≥0.4) → 🟡\n• low (<0.4) → 🔴
+
+Assembler -> Assembler: 低置信度检测:\nif avgConfidence < 0.3:\n  return NoMatchResult\n  "请尝试更具体的查询"
+
+Assembler --> Client: EnhancedAssembledContext\n{chunks, totalTokens, avgConfidence,\n confidenceLevels, topK}
+
+== Stage 8: LLM Generation 答案生成 ==
+
+Client -> LLM: POST /v1/chat/completions (DeepSeek)\n{\n  model: "deepseek-reasoner",\n  messages: [{\n    system: "你是医学知识助手...",\n    user: "基于以下内容回答: {context}\\n问题: {query}"\n  }],\n  stream: true\n}
+
+LLM -> LLM: 思考链生成\nreasoning_content:\n"用户询问二甲双胍的禁忌症，\n检索结果包含ADA指南和KDIGO指南，\n需要重点关注肾功能相关禁忌..."
+
+LLM --> Client: SSE thinking chunk: "用户询问二甲双胍..."
+
+LLM -> LLM: 生成最终答案\ncontent:\n"## 结论\\n二甲双胍的主要禁忌症包括..."
+
+LLM --> Client: SSE answer chunk: "## 结论\\n二甲双胍的..."
+
+LLM --> Client: SSE [DONE]
+
+Client -> User: 流式展示:\n• 思考过程 (可折叠)\n• 结构化回答\n• 证据等级 + 来源引用\n• 置信度标注
+
+@enduml

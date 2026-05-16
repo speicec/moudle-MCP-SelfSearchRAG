@@ -1,0 +1,125 @@
+@startuml
+scale 1.6
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+skinparam sequenceMessageAlign center
+skinparam participantBackgroundColor #E0E7FF
+skinparam participantBorderColor #6366F1
+skinparam noteBackgroundColor #FEF3C7
+skinparam noteBorderColor #CA8A04
+
+title MCP Server 工具交互流程\n(Claude Desktop ↔ MCP Server → SelfSearchRAG Engine)
+
+actor "Claude Desktop\n(AI助手)" as Claude
+participant "MCP Client\n(stdin/stdout)" as MCPClient
+participant "MCP Server\n(mcp-tools.ts)" as MCPServer
+participant "Document\nManager" as DocMgr
+participant "Enhanced\nRetrieval" as Retrieval
+participant "Medical\nAgentExecutor" as Agent
+database "Storage\n(Document/Hierarchical/Image)" as Store
+
+== 工具注册与发现 ==
+
+Claude -> MCPClient: 启动时建立连接
+MCPClient -> MCPServer: 初始化 MCP Server
+MCPServer --> MCPClient: tools/list → 返回可用工具列表
+
+note over MCPClient, MCPServer
+  **注册的 MCP 工具 (5个)**:
+  1. `ingest_document` - 文档摄入
+  2. `search_medical` - 医学知识检索
+  3. `medical_query` - 简化医学查询
+  4. `medical_agent` - ReAct模式查询
+  5. `medical_agent_plan` - Planning模式查询
+end note
+
+== 工具1: ingest_document 文档摄入 ==
+
+Claude -> MCPClient: 用户: "帮我分析这份\nADA_Standards_2024.pdf"
+MCPClient -> MCPServer: tool_call: ingest_document\n{document_path, metadata: {source:"ADA", year:2024}}
+
+MCPServer -> DocMgr: 触发文档摄入 Pipeline
+
+DocMgr -> DocMgr: INGEST: 验证格式 → 创建元数据
+DocMgr -> DocMgr: PARSE: PDF解析 (文本PDF路径)
+DocMgr -> DocMgr: CHUNK: 语义分块 (断崖检测)
+DocMgr -> DocMgr: EMBED: 生成向量 + 写入存储
+
+DocMgr -> Store: 写入:\n• DocumentStore: metadata\n• HierarchicalStore: parent+child chunks\n• ImageStore: extracted images
+
+DocMgr --> MCPServer: Pipeline 完成\n{documentId, totalChunks, totalPages}
+
+MCPServer --> Claude: {\n  "success": true,\n  "documentId": "doc-ada-2024",\n  "totalChunks": 48,\n  "totalPages": 120,\n  "status": "ready"\n}
+
+== 工具2: search_medical 医学检索 ==
+
+Claude -> MCPClient: 用户: "二甲双胍的用法用量"
+MCPClient -> MCPServer: tool_call: search_medical\n{query, topK: 5, threshold: 0.0}
+
+MCPServer -> Retrieval: 执行 EnhancedRetrievalPipeline
+
+Retrieval -> Retrieval: Analyze → Rewrite → Expand\n→ Small-to-Big Retrieve → Rerank
+
+Retrieval -> Store: 向量检索 (所有chunks)
+
+Retrieval --> MCPServer: RetrievedContext[] (5条结果)
+
+MCPServer --> Claude: {\n  "results": [{\n    "content": "二甲双胍起始剂量500mg...",\n    "similarityScore": 0.92,\n    "sourceDocument": "ADA_Standards_2024",\n    "confidenceLevel": "high"\n  }, ...]\n}
+
+== 工具3: medical_query 简化医学查询 ==
+
+Claude -> MCPClient: 用户: "二甲双胍禁忌症"
+MCPClient -> MCPServer: tool_call: medical_query\n{query, domain: "diabetes", include_guidelines: true}
+
+MCPServer -> Agent: 创建简化 Agent\n(仅实体识别 + 检索, 无ReAct循环)
+
+Agent -> Agent: 实体识别:"二甲双胍" (drug), "禁忌症" (intent)
+
+Agent -> Retrieval: 检索 + 重排
+
+Agent --> MCPServer: 结构化医学回答
+
+MCPServer --> Claude: {\n  "entities": [\n    {name:"二甲双胍", type:"drug", confidence:0.95}\n  ],\n  "strategy": {primaryQuery, expandedTerms},\n  "answer": "## 结论\\n二甲双胍的绝对禁忌症包括...",\n  "retrievalResults": [...]\n}
+
+== 工具4: medical_agent ReAct模式 ==
+
+Claude -> MCPClient: 用户: "糖尿病合并肾功能不全\neGFR=35，二甲双胍能用吗"
+MCPClient -> MCPServer: tool_call: medical_agent\n{query, domain:"all", max_iterations:5}
+
+MCPServer -> Agent: createAgentExecutor({\n  enablePlanning: false,\n  useRuleBasedDecide: true\n})
+
+Agent -> Agent: Phase 1: 实体识别\n"糖尿病"(disease), "二甲双胍"(drug), "eGFR=35"(indicator)
+
+Agent -> Agent: Phase 2: Safety Layer\n→ severity = "relative"
+
+Agent -> Agent: Phase 3: Query Planning\n→ primaryQuery + expandedTerms
+
+Agent -> Agent: Phase 4: ReAct Loop\nIteration 1: Think→Act(检索)→Observe\nIteration 2: Think→规则决策满足→跳出
+
+Agent -> Agent: Phase 5: 三层回答生成\nSafety → Retrieval → Evidence
+
+Agent --> MCPServer: Structured MedicalAnswer
+
+MCPServer --> Claude: {\n  "answer": "## 🔍 检索分析\\n...\\n\\n## 结论\\n慎用...\\n\\n## Agent执行统计\\n迭代:2, LLM调用:1, 耗时:1500ms"\n}
+
+== 工具5: medical_agent_plan Planning模式 ==
+
+Claude -> MCPClient: 用户: "二甲双胍和利拉鲁肽\n哪个更适合肾功能不全患者"
+MCPClient -> MCPServer: tool_call: medical_agent_plan\n{query, enable_planning: true, max_replan_rounds:2}
+
+MCPServer -> Agent: createAgentExecutor({\n  enablePlanning: true,\n  maxReplanRounds: 2\n})
+
+Agent -> Agent: 复杂度评估: "complex" (多药物对比)
+
+Agent -> Agent: 模板匹配:\nguideline_year_filter ✗\ndrug_contraindication ✗\ndecision_support ✗\n**drug_comparison ✓ 匹配成功**
+
+Agent -> Agent: 构建 DAG:\nparallel_retrieve {\n  retrieve_metformin\n  retrieve_liraglutide\n}\n→ compare_drugs\n→ generate_answer
+
+Agent -> Agent: 并行检索 + 对比评估\n→ 综合回答生成
+
+Agent --> MCPServer: Structured MedicalAnswer + DAG信息
+
+MCPServer --> Claude: {\n  "answer": "## 🔍 检索分析\\n...\\n\\n## 结论\\n利拉鲁肽在肾功能不全患者中\n安全性优于二甲双胍\\n\\n## Planning 模式信息\\n复杂度: complex\\n模板: 药物对比\\n\\n## 执行 Dag\\nretrieve_metformin ✓\\nretrieve_liraglutide ✓\\ncompare_drugs ✓\\ngenerate_answer ✓\\n并行组:parallel_retrieve\\n\\n## Agent执行统计\\n任务:5, LLM调用:1, 耗时:2500ms"\n}
+
+@enduml

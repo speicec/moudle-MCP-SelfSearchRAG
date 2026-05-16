@@ -1,0 +1,135 @@
+@startuml
+scale 1.6
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+skinparam sequenceMessageAlign center
+skinparam participantBackgroundColor #FCE7F3
+skinparam participantBorderColor #DB2777
+skinparam noteBackgroundColor #FEF3C7
+skinparam noteBorderColor #CA8A04
+
+title 用户使用医学助手全流程\n(从提问到获得带证据的结构化医学回答)
+
+actor "医生/患者\n(用户)" as User
+participant "Web UI\n(React)" as Frontend
+participant "HTTP Server\n(Fastify)" as Server
+participant "Medical\nAgentExecutor" as Agent
+participant "Entity\nRecognizer" as Entity
+participant "Safety\nLayer" as Safety
+participant "Query\nPlanner" as Planner
+participant "Enhanced\nRetrieval" as Retrieval
+participant "Medical\nReasoner" as Reasoner
+participant "Evidence\nEvaluator" as Evidence
+
+User -> Frontend: 输入查询:\n"糖尿病患者合并肾功能不全\neGFR=35，二甲双胍能否使用？"
+
+Frontend -> Frontend: 构建请求:\n{query, enableAgent: true, topK: 5,\n maxContextTokens: 4000}
+
+Frontend -> Server: POST /api/chat/generate\n(Content-Type: application/json)
+
+Server -> Agent: 创建 AgentExecutor\nmaxIterations: 5\nconfidenceThreshold: 0.8\nuseRuleBasedDecide: true
+
+Server -> Frontend: WebSocket → "agent:input"
+
+== Phase 1: 实体识别 Entity Recognition ==
+
+Agent -> Entity: identifyEntities(query)
+
+Entity -> Entity: 词典匹配:\n疾病词典: "糖尿病" ✓\n药物词典: "二甲双胍" ✓\n指标词典: "eGFR" ✓\n关系词典: "能否使用" → 禁忌检查
+
+Entity -> Entity: 提取数值:\neGFR = 35 (指标值)
+
+Entity --> Agent: entities = [\n  {name:"二甲双胍", type:"drug", confidence:0.95},\n  {name:"糖尿病", type:"disease", confidence:0.90},\n  {name:"eGFR", type:"indicator", value:35, confidence:0.92}\n]
+
+Server -> Frontend: WebSocket → "agent:entities"\n{entityMatches, keywordMatches}
+
+== Phase 2: 安全预检查 Safety Layer (最高优先级) ==
+
+Agent -> Safety: performSafetyCheck(entities, thresholds)
+
+Safety -> Safety: Step 1: 禁忌阈值匹配\ndrug="二甲双胍", indicator="eGFR=35"\n\n从配置加载禁忌阈值:\n• eGFR ≥ 45 → 可用\n• eGFR 30-45 → 慎用(relative)\n• eGFR < 30 → 禁用(absolute)\n\n判断: 35 在 30-45 范围\n→ severity = "relative"
+
+Safety -> Safety: Step 2: 药物相互作用检测\n仅一个药物 → 无相互作用
+
+Safety --> Agent: SafetyAssessment {\n  severity: "relative",\n  contraindicationMatches: [{\n    drug: "二甲双胍",\n    indicator: "eGFR",\n    patientValue: 35,\n    threshold: "<45 (慎用)",\n    severity: "relative",\n    recommendation: "eGFR 30-45时慎用，需减量"\n  }]\n}
+
+Server -> Frontend: WebSocket → "agent:complexity"\n{level:"moderate", needsPlanning:false}
+
+== Phase 3: 查询规划 Query Planning ==
+
+Agent -> Planner: buildQueryStrategy(entities, query)
+
+Planner -> Planner: 构建主查询:\n"二甲双胍 eGFR 肾功能不全 禁忌症 用法"\n\n扩展术语:\n"格华止"、"美迪康"\n"肾小球滤过率"\n"Metformin contraindication renal"
+
+Planner -> Planner: 构建过滤条件:\n• 指南年份: 2020-2024\n• 领域: diabetes, nephrology
+
+Planner --> Agent: QueryStrategy {\n  primaryQuery: "二甲双胍 eGFR 肾功能不全 禁忌症",\n  expandedTerms: [...],\n  filters: {year: [2020,2024]},\n  subQueries: []\n}
+
+Server -> Frontend: WebSocket → "agent:query_rewrite"\n{queryRewriting, query}
+
+== Phase 4: ReAct 循环 (ReAct Mode) ==
+
+Agent -> Agent: 初始化状态:
+• iteration = 0
+• satisfied = false
+• maxIterations = 5
+
+== Iteration 1 ==
+
+Agent -> Agent: **Think**: 规则化决策\n(useRuleBasedDecide=true)\n\n检查满足规则 (按优先级):\n1. retrievalCount ≥ 3? → 待检索\n2. maxSimilarity > 0.7? → 待检索\n3. entityCoverage ≥ 80%? → 待检索\n→ 结论: 需要检索
+
+Agent -> Retrieval: **Act**: 执行检索\nquery=primaryQuery + expandedTerms
+
+Retrieval -> Retrieval: EnhancedRetrievalPipeline:\nAnalyze → Rewrite → Expand →\nSmall-to-Big → Rerank → Assemble
+
+Retrieval --> Agent: retrievalResults: 5条\n(ADA指南, KDIGO指南, 中国2型糖尿病指南...)
+
+Agent -> Agent: **Observe**: 记录检索结果
+• 实体覆盖率: 100% (二甲双胍✓ eGFR✓ 肾功能✓)
+• 最高相似度: 0.88
+
+== Iteration 2 ==
+
+Agent -> Agent: **Think**: 规则化决策
+\n检查满足规则:\n1. retrievalCount(5) ≥ 3 ✓\n2. maxSimilarity(0.88) > 0.7 ✓\n3. entityCoverage(100%) ≥ 80% ✓\n→ 结论: SATISFIED
+
+Agent -> Agent: satisfied = true\n跳出循环
+\nLLM调用次数: 0!
+
+Server -> Frontend: WebSocket → "agent:execution"\n{executorState, satisfied:true}
+
+== Phase 5: 答案生成 Answer Generation ==
+
+Agent -> Reasoner: 三层综合回答\nparseAnswer(response, entities, retrievalResults,\n  safetyAssessment, evidenceEvaluation)
+
+Reasoner -> Reasoner: **Layer 1: Safety Layer 优先**
+safetyAssessment.severity = "relative"\n→ 结论优先采用安全建议
+
+Reasoner -> Evidence: evaluateEvidence(retrievalResults)
+
+Evidence -> Evidence: 文献类型识别:\nADA Standards → guideline → Grade B\nKDIGO GL → guideline → Grade B\n中国指南 → guideline → Grade B
+
+Evidence -> Evidence: 权威度评分:\nADA: 国际 1.0\nKDIGO: 国际 1.0\n中国指南: 国家 0.8\n\n时效性检查:\n2024年 → weight = 1.0 (最新)
+
+Evidence --> Reasoner: EvidenceEvaluation {\n  overallGrade: "B",\n  sourceTypes: ["guideline"],\n  compositeScore: 0.86\n}
+
+Reasoner -> Reasoner: **Layer 2: 检索结果综合**\n合并多个指南的推荐意见
+
+Reasoner -> Reasoner: 构建结构化回答
+
+Reasoner --> Agent: MedicalAnswer {\n  conclusion: {\n    text: "慎用：eGFR 30-45ml/min时\n          二甲双胍需减量使用",\n    confidence: "high"\n  },\n  details: { points: [\n    "eGFR≥45: 可正常使用",\n    "eGFR 30-45: 慎用，需减量至500-850mg/日",\n    "eGFR<30: 禁用"\n  ]},\n  evidenceGrade: { grade: "B", sourceType: "guideline" },\n  sources: [\n    "ADA Standards 2024, Section 9",\n    "KDIGO CKD Guidelines 2024"\n  ],\n  warnings: [\n    "本回答仅供参考，不构成医疗建议",\n    "请咨询专业医生后再做决定"\n  ]\n}
+
+Server -> Frontend: WebSocket → "agent:complete"\n{agentResult: {satisfied:true,\n  retrievalCount:5, totalTimeMs:1500,\n  iterations:2, llmCallCount:1}}
+
+== Phase 6: 流式输出答案 ==
+
+Reasoner -> Server: 格式化 Markdown 回答
+
+Server -> Frontend: SSE 流式推送
+
+Frontend -> Frontend: 解析并渲染:\n• 🟢 结论 (高置信度)\n• 📋 详细说明 (3条)\n• 📊 证据等级 (Grade B)\n• 📚 来源引用 (2条)\n• ⚠️ 注意事项
+
+Frontend -> User: 🔍 检索分析\n━━━━━━━━━━━━━━\n原始查询 → 实体识别 → 优化查询 → 执行路径\n\n## 结论\n慎用：eGFR 30-45ml/min时二甲双胍需减量使用\n\n## 详细说明\n• eGFR≥45: 可正常使用\n• eGFR 30-45: 慎用，需减量至500-850mg/日\n• eGFR<30: 禁用\n\n## 证据等级\nGrade B - ADA指南推荐\n\n## 来源引用\n1. ADA Standards 2024, Section 9\n2. KDIGO CKD Guidelines 2024\n\n## ⚠️ 注意事项\n本回答仅供参考，不构成医疗建议
+
+@enduml

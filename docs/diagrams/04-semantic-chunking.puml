@@ -1,0 +1,104 @@
+@startuml
+scale 1.6
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+skinparam activityBackgroundColor #D1FAE5
+skinparam activityBorderColor #059669
+skinparam activityFontColor #064E3B
+skinparam arrowColor #059669
+skinparam swimlaneBorderColor #6EE7B7
+skinparam partitionBackgroundColor #ECFDF5
+
+title 语义分块与断崖检测算法\n(Semantic Chunking + Cliff Detection → Hierarchical Parent-Child Structure)
+
+|#ECFDF5|输入准备|
+start
+:从 ParsedContent 提取纯文本;
+:按段落分段, 再按句子切分\n中文: 。！？；\n英文: .!?;\\n;
+:得到句子序列\nS = [s1, s2, s3, ..., sn];
+
+:Local Transformers\nmultilingual-e5-small\n为每个句子生成 Embedding;
+:Embedding 序列\nE = [e1, e2, e3, ..., en]\n每个 384维向量;
+
+note right
+  为什么不直接按段落切分?
+  段落内可能包含多个语义主题
+  断崖检测能找到真正的主题转换点
+  让每个 Chunk 语义更聚焦
+end note
+|#ECFDF5|
+
+|#D1FAE5|Step 1: 相邻相似度计算|
+:遍历 i = 1 到 n-1\nsim_i = cosine(e_i, e_{i+1});
+:输出 相似度序列\nSim = [sim_1, sim_2, ..., sim_{n-1}];
+
+:可视化示例:\nSim = [0.85, 0.82, 0.78, 0.45, 0.72, 0.68, 0.51, 0.49, 0.80, 0.83];
+note right
+  0.78 → 0.45 出现断崖!
+  表示第3句和第4句之间
+  语义发生了突变
+end note
+|#D1FAE5|
+
+|#A7F3D0|Step 2: 候选断崖点筛选|
+:遍历所有 sim_i\nif sim_i < similarityThreshold (0.7)\n→ 加入 candidates;
+:示例: candidates = [3, 6, 7]\nsim_3=0.45, sim_6=0.51, sim_7=0.49;
+|#A7F3D0|
+
+|#6EE7B7|Step 3: 梯度验证|
+:遍历每个 candidate i\n计算 gradient_i = |sim_i - sim_{i-1}|;
+:验证条件: gradient > gradientThreshold (0.15);
+:示例计算:\ngradient_3 = |0.45 - 0.78| = 0.33 > 0.15 ✓\ngradient_6 = |0.51 - 0.68| = 0.17 > 0.15 ✓\ngradient_7 = |0.49 - 0.51| = 0.02 < 0.15 ✗ (排除);
+
+:validated = [3, 6];
+|#6EE7B7|
+
+|#34D399|Step 4: 去噪过滤|
+:要求至少 minCliffWidth (2) 个连续候选点;
+:检查 validated:\n[3, 6] → 索引差=3 > 1, 非连续;
+:validated = [] (全部被过滤);
+
+if (validated为空?) then (是)
+  :降低阈值重试\n相似度阈值从0.7 → 0.65;
+  :重新筛选\n→ candidates = [3, 4, 6, 7];
+  :梯度验证 → validated = [3, 4, 6];
+  :去噪: [3,4]连续✓ → 保留;
+  :去噪: [6]孤立 → 排除;
+  :validated = [3, 4];
+else (否)
+  :直接进入边界确定;
+endif
+|#34D399|
+
+|#10B981|Step 5: 最终边界确定|
+:相邻断崖组取梯度最大者;
+:[3,4]组: gradient_3=0.33, gradient_4=0.28\n→ 选 index=3;
+:输出: 语义边界位置 boundaries = [3];
+
+:含义: 在第3句和第4句之间切分\n这是语义主题变化最剧烈的位置;
+|#10B981|
+
+|#059669|Step 6: 创建层级Chunk结构|
+:在 boundaries 位置切分文本\n创建 Parent Chunks:\n- Parent A: 句子 1-3 (约1200 tokens)\n- Parent B: 句子 4-10 (约1600 tokens);
+
+:每个 Parent 内部\n按自然段落再次切分\n创建 Child Chunks (4-6个):\n- Parent A→Child A1,A2,A3,A4\n- Parent B→Child B1,B2,B3,B4,B5;
+
+:建立父子映射关系\nchild.parentId → parent.chunkId;
+|#059669|
+
+|#047857|Step 7: 质量评估与过滤|
+:对每个 Chunk 评估质量:\n• 语义连贯性: 句子间平均相似度\n• 信息密度: 有效token/总token\n• 完整性: 是否有截断的句子;
+
+if (质量分数 < 质量阈值?) then (是)
+  :标记为低质量\n合并到相邻Chunk;
+else (否)
+  :保留;
+endif
+
+:存储到 HierarchicalStore;
+:发射 WebSocket 事件\n→ "chunk:created";
+
+stop
+
+@enduml

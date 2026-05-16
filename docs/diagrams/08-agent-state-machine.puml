@@ -1,0 +1,142 @@
+@startuml
+scale 1.6
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+skinparam stateBackgroundColor #ECFDF5
+skinparam stateBorderColor #059669
+skinparam stateFontColor #064E3B
+skinparam arrowColor #047857
+
+title Medical Agent 框架设计\n(ReAct 模式 + Planning 模式 → 双模式智能执行引擎)
+
+state "用户查询" as Query
+state "实体识别\nEntity Recognition" as EntityRec
+state "安全预检查\nSafety Layer" as Safety
+state "复杂度评估\nComplexity Assessment" as Complexity
+
+state "PlanAndExecute 模式" as PlanMode {
+  state "模板匹配\nTemplate Matching" as TemplateMatch
+  state "构建 DAG\nBuild Task DAG" as BuildDAG
+  state "并行执行\nParallel Execute" as ParallelExec
+  state "结果聚合\nResult Aggregation" as Aggregate
+  state "重规划?\nReplan?" as Replan
+  state "回退到ReAct\nFallback to ReAct" as Fallback
+}
+
+state "ReAct 循环\nReAct Loop" as ReActLoop {
+  state "Think\n推理分析" as Think
+  state "Act\n执行动作" as Act
+  state "Observe\n观察结果" as Observe
+  state "Decide\n规则化决策" as Decide
+  state "满足?" as Satisfied
+}
+
+state "证据评估\nEvidence Evaluation" as EvidenceEval
+state "三层综合回答\n3-Layer Answer" as Answer
+state "质量检查\nQuality Check" as QualityCheck
+state "WebSocket推送\n结果输出" as Output
+
+[*] --> Query
+
+Query --> EntityRec: 用户输入查询
+
+EntityRec --> EntityRec: 词典匹配:\n• 疾病词典 (糖尿病, 高血压...)\n• 药物词典 (二甲双胍, 利拉鲁肽...)\n• 指标词典 (eGFR, HbA1c...)\n• 关系关键词 (禁忌, 对比, 相互作用...)
+
+EntityRec --> Safety: 实体识别完成\n→ WebSocket: agent:entities
+
+Safety --> Safety: **Layer 1 (最高优先级)**\nStep 1: 禁忌阈值匹配\n  drug × indicator × patientValue\n  vs contraindicationThresholds\n\nStep 2: 药物相互作用检测\n  drug × drug → interaction?\n\nStep 3: 严重程度判定\n  absolute > relative > interaction\n  > safe
+
+Safety --> Query: 绝对禁忌!\n早终止 Early Termination
+note right on link
+  绝对禁忌场景:
+  • eGFR<30 + 二甲双胍
+  • 禁忌症直接命中
+  → 跳过所有检索, 直接返回安全建议
+  → 0 次 LLM 调用, <1秒响应
+end note
+
+Safety --> Complexity: 非绝对禁忌\n→ WebSocket: agent:complexity
+
+Complexity --> Complexity: 判断复杂度:\n• **simple**: 单实体, 无对比\n• **moderate**: 2-3实体, 单意图\n• **complex**: 多实体/对比/综合\n• **structured**: 含年份/条件过滤
+
+Complexity --> PlanMode: level ∈ {moderate, complex}\n且 enablePlanning=true
+Complexity --> ReActLoop: level = simple\n或 enablePlanning=false
+
+state "Planning 模式入口" as PlanEntry
+Complexity --> PlanEntry
+PlanEntry --> TemplateMatch
+
+TemplateMatch --> TemplateMatch: 6个内置模板 (零LLM):\n1. 指南年份过滤 (3 tasks)\n2. 药物禁忌检查 (3 tasks)\n3. 药物对比 (5 tasks, 含并行)\n4. 指标药物查询 (5 tasks)\n5. 指标决策支持 (5 tasks)\n6. 疾病用药建议 (3 tasks)
+
+TemplateMatch --> BuildDAG: 模板匹配成功
+
+BuildDAG --> BuildDAG: 构建任务 DAG:\n• 定义任务节点 (retrieve/evaluate/generate)\n• 定义依赖关系\n• 标记并行组\n\n示例 (药物对比):\nparallel_retrieve {\n  retrieve_drugA\n  retrieve_drugB\n}\n→ compare_drugs\n→ generate_answer
+
+BuildDAG --> ParallelExec: → WebSocket: agent:dag
+
+ParallelExec --> ParallelExec: 并行执行独立任务\n每个任务内部可调用:\n• retrieve (EnhancedRetrievalPipeline)\n• evaluate (EvidenceEvaluator)\n• generate (LLM)
+
+ParallelExec --> Aggregate: 所有任务完成
+
+Aggregate --> Replan
+
+Replan --> Replan: 检查重规划条件:\n• entityCoverage < 80%?\n• evidenceQuality < 0.3?\n• failedRatio > 20%?\n• criticalTaskFailed?
+
+Replan --> BuildDAG: 需要重规划\n(最多 maxReplanRounds=2 次)
+Replan --> Answer: 满足条件
+Replan --> Fallback: 重规划次数耗尽
+
+Fallback --> ReActLoop: 回退到 ReAct 模式
+
+ReActLoop --> Think
+
+Think --> Think: 规则化决策 (ruleBasedDecide=true)\n检查满足规则 (按优先级):\n1. retrievalCount ≥ minRetrievalCount(3)\n2. maxSimilarity > minSimilarityScore(0.7)\n3. entityCoverage ≥ minEntityCoverage(0.8)\n4. absoluteContraindication hit\n\n任一满足 → 标记 satisfied=true
+
+Think --> Act: 需要继续检索
+
+Act --> Act: 执行动作:\n• retrieve: 调用 EnhancedRetrievalPipeline\n• expand_query: 扩展查询词\n• need_more: 请求更多信息
+
+Act --> Observe
+
+Observe --> Observe: 记录本轮结果:\n• 检索结果数量 + 质量\n• 实体覆盖率变化\n• 证据质量变化
+
+Observe --> Decide
+
+Decide --> Decide: 检查 canContinue():\n• status != completed\n• status != failed\n• !maxIterationsReached\n• !satisfied\n• !error
+
+Decide --> Think: NOT SATISFIED\n迭代数 < maxIterations(5)
+Decide --> Satisfied: SATISFIED\n或 satisfied=true
+
+Satisfied --> Answer
+Satisfied --> ReActLoop: 边界情况, 继续
+
+Think --> Satisfied: satisfied=true\n直接跳出 (早终止)
+
+Answer --> Answer: **三层综合回答生成**:
+Layer 1 (Safety): 安全评估结论
+  绝对禁忌 → 直接采用安全建议
+
+Layer 2 (Retrieval): 检索结果综合
+  多来源交叉验证
+
+Layer 3 (Evidence): 证据等级标注
+  GRADE A/B/C/D
+
+Answer --> EvidenceEval
+
+EvidenceEval --> EvidenceEval: 5维度综合评估:\n• GRADE 等级 (40%)\n• 来源权威度 (20%)\n  - 国际 1.0 / 国家 0.8 / 地方 0.6\n• 时效性 (20%)\n  - weight = 1.0 - years×0.05 (≥0.5)\n• 一致性 (10%)\n  - 正向词/反向词冲突检测\n• 适用性 (10%)
+
+EvidenceEval --> QualityCheck
+
+QualityCheck --> QualityCheck: 质量自检:\n1. 结论是否明确准确?\n2. 证据是否充分?\n3. 来源是否可追溯?\n4. 是否有适当警告?
+
+QualityCheck --> Output: VALID\n→ WebSocket: agent:complete
+
+QualityCheck --> Answer: INVALID\n需要修正
+
+Output --> Output: 提交异步评估任务 (Redis+Bull)\n8维RAG评估:\n• Faithfulness (20%)\n• Medical Accuracy (20%)\n• Safety Assessment (20%)\n• Context Relevance (10%)\n• Answer Relevance (10%)\n• Evidence Traceability (10%)\n• Completeness (5%)\n• Terminology Accuracy (5%)
+
+Output --> [*]: 返回结构化回答
+
+@enduml

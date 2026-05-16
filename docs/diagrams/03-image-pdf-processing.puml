@@ -1,0 +1,122 @@
+@startuml
+scale 1.6
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+skinparam activityBackgroundColor #EDE9FE
+skinparam activityBorderColor #7C3AED
+skinparam activityFontColor #4C1D95
+skinparam arrowColor #7C3AED
+skinparam swimlaneBorderColor #A78BFA
+skinparam partitionBackgroundColor #F5F3FF
+
+title 图片PDF专项处理流程\n(扫描文档 OCR + VLM增强 → 结构化可检索内容)
+
+|输入检测|
+start
+:用户上传PDF文档;
+:PDF解析器读取文件;
+:检查 totalText 长度;
+if (totalText > 0?) then (是 → 普通PDF)
+  :走标准文本解析路径;
+  stop
+else (否 → 纯图片PDF/扫描件)
+endif
+|输入检测|
+
+|#F5F3FF|Step 1: PDF→图片渲染|
+:使用 pdfjs-dist\n配置: scale=2 (144dpi), format=png;
+:逐页渲染 PDF → Canvas;
+
+:输出 PageImage[] 数组\n每页包含:\n• pageNumber: 页码\n• imageBuffer: PNG二进制\n• width / height: 像素尺寸;
+
+note right
+  为什么 scale=2?
+  144dpi 保证 OCR 精度
+  同时控制内存占用
+end note
+|#F5F3FF|
+
+|#EDE9FE|Step 2: OCR版面分析|
+:发送 PageImage 到 PaddleOCR Service\n(Python FastAPI, localhost:8080);
+:POST /ocr/layout\nBody: {image_base64, config: {table: false}};
+:PaddleOCR PP-Structure 处理\n1. 版面检测 (Layout Detection)\n2. 文字方向识别\n3. 区域分类;
+
+:输出 OcrBlock[] 数组\n每个 Block 包含:\n• type: text|table|figure|formula|title|header\n• bbox: [x1,y1,x2,y2] 页面坐标\n• text: OCR文本 (仅text/title)\n• confidence: 识别置信度\n• cells: 表格单元格 (仅table);
+
+note right
+  table=false 配置
+  意味着table/figure/formula类型
+  只返回 bbox 位置信息
+  不返回内容理解
+end note
+|#EDE9FE|
+
+|#DDD6FE|Step 3: VLM增强理解|
+:遍历所有 OcrBlock\n筛选 type in [table, figure, formula];
+:对每个 Block 执行增强;
+
+fork
+  partition "表格处理 Table" {
+    :按 bbox 从原图裁剪区域\n→ croppedBuffer;
+    :转为 Base64 编码;
+    :调用 DashScope API\nmodel: qwen3-vl-flash;
+    :Prompt:\n"请分析此表格，转换为Markdown表格格式，\n总结关键数据，说明表格展示的信息";
+    :VLM 返回 Markdown 表格\n+ 数据摘要;
+    :block.text = VLM理解结果;
+  }
+fork again
+  partition "图表处理 Figure" {
+    :按 bbox 从原图裁剪\n→ croppedBuffer;
+    :转为 Base64 编码;
+    :调用 DashScope API\nmodel: qwen3-vl-flash;
+    :Prompt:\n"请分析此图表：\n1. 判断图表类型(柱状图/折线图/饼图等)\n2. 描述数据趋势\n3. 总结核心结论";
+    :VLM 返回\n图表类型 + 趋势描述 + 结论;
+    :block.text = VLM理解结果;
+  }
+fork again
+  partition "公式处理 Formula" {
+    :按 bbox 从原图裁剪\n→ croppedBuffer;
+    :转为 Base64 编码;
+    :调用 DashScope API\nmodel: qwen3-vl-flash;
+    :Prompt:\n"请识别此公式：\n1. 输出LaTeX格式\n2. 解释各符号含义\n3. 说明公式用途";
+    :VLM 返回\nLaTeX公式 + 符号解释 + 用途;
+    :block.text = VLM理解结果;
+  }
+end fork
+
+:VLM处理结果汇总
+table → Markdown表格+数据摘要
+figure → 图表类型+趋势+结论
+formula → LaTeX+符号解释;
+
+note right
+  VLM增强的价值:
+  • 表格从"不可检索的图片"
+    变成"可全文检索的Markdown"
+  • 图表含义被文本化, 可语义匹配
+  • 公式可被检索和引用
+end note
+|#DDD6FE|
+
+|#C4B5FD|Step 4: 合并结构化输出|
+:将 OCR text 结果 + VLM 理解结果\n合并为 ParsedContent;
+
+:输出数据结构:\nParsedContent {\n  pages: [{\n    pageNumber: 1,\n    textBlocks: [{type, content(OCR), position}],\n    tables: [{content(VLM Markdown), cells, imageBuffer}],\n    images: [{content(VLM描述), position, imageBuffer}],\n    formulas: [{content(VLM LaTeX), latex, imageBuffer}]\n  }],\n  totalPages: N\n};
+
+note right
+  关键设计原则:
+  • VLM理解结果 → content 字段
+  • 原图 Buffer → metadata.imageBuffer
+  • bbox 坐标 → 可定位到原页面位置
+  • 所有内容参与后续 Embedding
+end note
+|#C4B5FD|
+
+|#F5F3FF|后续处理|
+:进入语义分块阶段\n(与普通PDF合并处理);
+:进入嵌入生成阶段;
+stop
+|#F5F3FF|
+
+@enduml

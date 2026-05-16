@@ -1,0 +1,197 @@
+@startuml
+scale 1.6
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 14
+skinparam sequenceMessageAlign center
+skinparam participantBackgroundColor #FEE2E2
+skinparam participantBorderColor #EF4444
+skinparam noteBackgroundColor #FEF3C7
+skinparam noteBorderColor #CA8A04
+
+title WebSocket 实时事件流 — Pipeline & Agent 全生命周期\n(前端 ↔ WebSocket ↔ PipelineEmitter ↔ AgentExecutor)
+
+actor "用户" as User
+participant "React Frontend\n(useWebSocket)" as Frontend
+participant "WebSocket\nHandler" as WS
+participant "Pipeline\nEmitter" as Emitter
+participant "Harness\nOrchestrator" as Harness
+participant "Agent\nExecutor" as Agent
+
+== 连接建立 ==
+
+Frontend -> WS: new WebSocket("ws://localhost:3000/ws")
+WS --> Frontend: connected
+Frontend -> Frontend: 初始化事件监听器\n(useRetrievalStore / useStatsStore)
+
+== 场景A: 文档上传 → Pipeline处理 ==
+
+User -> Frontend: 拖拽上传 PDF 文件
+Frontend -> WS: 上传完成，开始监听
+
+Frontend -> Harness: POST /api/documents/upload
+
+Harness -> Emitter: 开始 INGEST Stage
+Emitter -> WS: **stage:start**
+WS --> Frontend: {"type":"stage:start",\n "stage":"ingest", "documentId":"doc-001",\n "timestamp": 1715000000}
+
+Frontend -> Frontend: 更新 UI:\n📥 Ingest Stage → 进行中 (spinner)
+
+Harness -> Harness: INGEST 完成
+Harness -> Emitter:
+Emitter -> WS: **stage:progress**
+WS --> Frontend: {"type":"stage:progress",\n "stage":"ingest", "progress":100,\n "status":"completed"}
+
+Emitter -> WS: **stage:complete**
+WS --> Frontend: {"type":"stage:complete",\n "stage":"ingest"}
+
+Harness -> Harness: PARSE 完成
+Emitter -> WS: **stage:start** (parse)
+WS --> Frontend: {"type":"stage:start",\n "stage":"parse"}
+
+Emitter -> WS: **stage:complete** (parse)
+WS --> Frontend: {"type":"stage:complete",\n "stage":"parse"}
+
+Harness -> Harness: CHUNK 进行中
+Emitter -> WS: **stage:start** (chunk)
+WS --> Frontend: {"type":"stage:start",\n "stage":"chunk"}
+
+Emitter -> WS: **chunk:created**
+WS --> Frontend: {"type":"chunk:created",\n "chunkId":"parent-A",\n "childCount":4,\n "tokenCount":1200,\n "qualityScore":0.85}
+
+Emitter -> WS: **chunk:created**
+WS --> Frontend: {"type":"chunk:created",\n "chunkId":"parent-B",\n "childCount":5,\n "tokenCount":1600,\n "qualityScore":0.92}
+
+Frontend -> Frontend: ChunkExplorer 实时更新:\nParent-A (1200 tokens, 4 children) 🟢\nParent-B (1600 tokens, 5 children) 🟢
+
+Emitter -> WS: **stage:complete** (chunk)
+WS --> Frontend: {"type":"stage:complete",\n "stage":"chunk"}
+
+Harness -> Harness: EMBED 完成
+Emitter -> WS: **stage:start** (embed)
+Emitter -> WS: **stage:complete** (embed)
+Emitter -> WS: **pipeline:complete**
+WS --> Frontend: {"type":"pipeline:complete",\n "documentId":"doc-001",\n "totalDuration":3200,\n "totalChunks":9}
+
+Frontend -> Frontend: PipelineTimeline 显示:\nINGEST ████ 0.3s\nPARSE  ████████ 1.2s\nCHUNK  ██████ 1.1s\nEMBED  ████ 0.6s
+
+== 场景B: Medical Agent 查询 ==
+
+User -> Frontend: 输入查询: "二甲双胍eGFR=35能否使用"
+
+Frontend -> WS: 发起查询请求 (enableAgent: true)
+
+Frontend -> Agent: POST /api/chat/generate
+
+Agent -> Agent: 开始执行
+
+Agent -> Emitter: Phase 1: 输入解析
+Emitter -> WS: **agent:input**
+WS --> Frontend: {"type":"agent:input",\n "agentPhase":"input",\n "query":"二甲双胍eGFR=35能否使用",\n "timestamp":1715001000}
+
+Frontend -> Frontend: 显示: 🔍 分析查询...
+
+Agent -> Agent: 实体识别完成
+
+Agent -> Emitter: Phase 2: 实体识别
+Emitter -> WS: **agent:entities**
+WS --> Frontend: {"type":"agent:entities",\n "agentPhase":"entities",\n "entityMatches":[{\n   "matchedTerm":"二甲双胍",\n   "canonicalName":"二甲双胍",\n   "entityType":"drug",\n   "confidence":0.9\n },{\n   "matchedTerm":"eGFR",\n   "entityType":"indicator",\n   "extractedValue":35\n }]}
+
+Frontend -> Frontend: 高亮显示实体:\n• 🏥 药物: 二甲双胍\n• 📊 指标: eGFR = 35
+
+Agent -> Agent: 复杂度评估完成
+
+Agent -> Emitter:
+Emitter -> WS: **agent:complexity**
+WS --> Frontend: {"type":"agent:complexity",\n "agentPhase":"complexity",\n "complexity":{\n   "level":"moderate",\n   "needsPlanning":false,\n   "entityCount":2,\n   "reason":"单药物+指标值查询"\n }}
+
+Agent -> Agent: 模式选择完成
+
+Agent -> Emitter:
+Emitter -> WS: **agent:mode**
+WS --> Frontend: {"type":"agent:mode",\n "agentPhase":"mode",\n "executionMode":"react",\n "executionReason":"简单查询,使用ReAct循环"}
+
+Frontend -> Frontend: 显示执行模式: 🧠 ReAct 模式
+
+Agent -> Agent: 查询优化完成
+
+Agent -> Emitter:
+Emitter -> WS: **agent:query_rewrite**
+WS --> Frontend: {"type":"agent:query_rewrite",\n "agentPhase":"query_rewrite",\n "queryRewriting":{\n   "primaryQuery":"二甲双胍 eGFR 肾功能禁忌症",\n   "expandedTerms":["格华止","肾功能不全"]\n }}
+
+Frontend -> Frontend: 优化查询显示:\n"二甲双胍 eGFR 肾功能禁忌症"\n扩展: 格华止, 肾功能不全
+
+Agent -> Agent: ReAct 循环执行中
+
+Agent -> Emitter:
+Emitter -> WS: **agent:execution**
+WS --> Frontend: {"type":"agent:execution",\n "agentPhase":"execution",\n "executorState":{\n   "iteration":1,\n   "satisfied":false,\n   "retrievalCount":0\n }}
+
+Emitter -> WS: **agent:execution**
+WS --> Frontend: {"type":"agent:execution",\n "agentPhase":"execution",\n "executorState":{\n   "iteration":2,\n   "satisfied":true,\n   "retrievalCount":5\n }}
+
+Frontend -> Frontend: 实时更新:\n🔄 Iteration 1: 检索中...\n✅ Iteration 2: 满足条件
+
+Agent -> Agent: Agent 执行完成
+
+Agent -> Emitter:
+Emitter -> WS: **agent:complete**
+WS --> Frontend: {"type":"agent:complete",\n "agentPhase":"complete",\n "agentResult":{\n   "satisfied":true,\n   "retrievalCount":5,\n   "totalTimeMs":1500,\n   "iterations":2,\n   "llmCallCount":1\n }}
+
+Frontend -> Frontend: Agent 面板显示统计:\n📊 检索结果: 5条\n⏱️ 耗时: 1.5s\n🔄 迭代: 2次\n🧠 LLM调用: 1次
+
+== 场景C: LLM 生成 (流式) ==
+
+Agent -> Emitter: 开始生成答案
+
+Emitter -> WS: **generation:start**
+WS --> Frontend: {"type":"generation:start"}
+
+Emitter -> WS: **generation:thinking**
+WS --> Frontend: {"type":"generation:thinking",\n "content":"用户询问二甲双胍在eGFR=35时..."}
+
+Frontend -> Frontend: 显示思考过程 (折叠):\n💭 "用户询问二甲双胍在eGFR=35时..."
+
+Emitter -> WS: **generation:answer**
+WS --> Frontend: {"type":"generation:answer",\n "content":"## 结论\\n慎用..."}
+
+Emitter -> WS: **generation:answer**
+WS --> Frontend: {"type":"generation:answer",\n "content":"eGFR 30-45ml/min时\n需减量至500-850mg/日"}
+
+Frontend -> Frontend: 流式渲染答案
+(逐字输出)
+
+Emitter -> WS: **generation:complete**
+WS --> Frontend: {"type":"generation:complete"}
+
+== 场景D: 统计数据更新 ==
+
+Agent -> Emitter: 检索完成，更新统计
+
+Emitter -> WS: **stats:update**
+WS --> Frontend: {"type":"stats:update",\n "totalDocuments":12,\n "totalChunks":248,\n "avgRetrievalTime":1200,\n "cacheHitRate":0.45}
+
+Frontend -> Frontend: StatsDashboard 更新:\n📄 文档: 12\n📦 Chunks: 248\n⚡ 平均检索: 1.2s\n💾 缓存命中: 45%
+
+Emitter -> WS: **metrics:update**
+WS --> Frontend: {"type":"metrics:update",\n "evaluationMetrics":{\n   "avgFaithfulness":0.88,\n   "avgMedicalAccuracy":0.85,\n   "avgSafetyScore":0.92\n }}
+
+Frontend -> Frontend: 评估面板更新:\n✅ Faithfulness: 88%\n✅ Medical Accuracy: 85%\n✅ Safety: 92%
+
+== 事件类型总览 ==
+
+note over Frontend, Agent
+  **WebSocket 事件分类 (共 5 大类)**:
+
+  **Pipeline 事件**: stage:start → stage:progress → stage:complete → chunk:created → pipeline:complete
+
+  **Agent 事件**: agent:input → agent:entities → agent:complexity → agent:mode → agent:query_rewrite → agent:template → agent:dag → agent:execution → agent:complete
+
+  **Generation 事件**: generation:start → generation:thinking → generation:answer → generation:complete
+
+  **Stats 事件**: stats:update → metrics:update
+
+  **Error 事件**: error
+end note
+
+@enduml
