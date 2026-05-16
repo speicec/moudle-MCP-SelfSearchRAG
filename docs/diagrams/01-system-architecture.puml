@@ -1,0 +1,134 @@
+@startuml
+skinparam backgroundColor #F5F9F5
+skinparam defaultFontName Microsoft YaHei
+skinparam defaultFontSize 13
+skinparam rectangleBackgroundColor #DCFCE7
+skinparam rectangleBorderColor #22C55E
+skinparam nodeBackgroundColor #DCFCE7
+skinparam nodeBorderColor #22C55E
+skinparam packageBackgroundColor #F0FDF4
+skinparam packageBorderColor #86B086
+skinparam databaseBackgroundColor #FEF3C7
+skinparam databaseBorderColor #CA8A04
+skinparam cloudBackgroundColor #F3F8F3
+skinparam cloudBorderColor #A3C0A3
+skinparam componentBackgroundColor #EDE9FE
+skinparam componentBorderColor #7C3AED
+skinparam arrowColor #059669
+skinparam noteBackgroundColor #FEF3C7
+skinparam noteBorderColor #CA8A04
+
+title SelfSearchRAG 医学知识检索增强生成系统\n(7层架构: 用户 → 服务 → 编排 → 存储 → 检索 → 生成 → 外部服务)
+
+package "用户入口层 User Entry" as UserLayer #DCFCE7 {
+  component "Web UI\n(React SPA)\n\n可视化上传/检索/评估\n实时Pipeline监控\nAgent交互面板" as WebUI #16A34A
+  component "MCP Client\n(Claude Desktop)\n\nmedical_query\nmedical_agent\nmedical_agent_plan\ningest_document" as MCPClient #16A34A
+  component "API Client\n(REST)" as APIClient
+}
+
+package "服务层 Service Layer (Fastify)" as ServiceLayer #D1FAE5 {
+  component "HTTP Routes\n\nPOST /api/documents/upload\nGET /api/documents\nPOST /api/chat/generate SSE\nGET /api/stats" as HTTP
+  component "WebSocket Handler\n\nstage:start/progress/complete\nagent:entities/complexity/mode\nretrieval:start/match/complete\ngeneration:thinking/answer" as WS #16A34A
+  component "Pipeline Emitter\n\n事件广播器\nPipeline执行状态\n→ WebSocket推送" as Emitter
+}
+
+package "编排层 Harness Orchestrator" as OrchLayer #ECFDF5 {
+  rectangle "INGEST\nValidator\nQueue" as Ingest #14B8A6
+  rectangle "PARSE\nPdfParser\nOcrPlugin\nVlmPlugin" as Parse #14B8A6
+  rectangle "CHUNK\nSemanticChunker\nCliffDetector\nQualityFilter" as Chunk #14B8A6
+  rectangle "EMBED\nEmbeddingService\nImageEmbedding\nCache" as Embed #14B8A6
+  note right of OrchLayer
+    Hooks:
+    preExecution → onStageStart
+    → onStageComplete → postExecution
+    → onError
+  end note
+}
+
+package "存储层 Storage Layer" as StorageLayer #FEF3C7 {
+  database "Document Store\n\n文档元数据\nuploadTime / status\npageCount / format" as DocStore
+  database "Hierarchical Store\n\n层级分块存储\nParent (1000-2000 tokens)\nChild (4-6 per parent)\n上下文窗口提取" as HierStore #CA8A04
+  database "Image Store\n\n图片块存储\npage → imageBuffers\nblockType → crops\nVLM理解结果" as ImgStore
+}
+
+package "检索层 Retrieval Layer" as RetrievalLayer #EDE9FE {
+  component "QueryAnalyzer\n\n复杂度判断\nsimple/complex/structured\n滤镜检测(year/month)" as Analyzer
+  component "Small-to-Big Retriever\n\nPhase1: 小块精准定位\nPhase2: 父块上下文展开\n相似度阈值 0.75" as StB
+  component "HybridReranker\n\n双模式路由\n≤20→LocalReranker(bge)\n>20→InternalConfidence\n四因子加权评分" as Reranker #7C3AED
+  component "ContextAssembler\n\n置信度标注\n动态TopK截断\n去重合并" as Assembler
+  component "QueryRewriter\n口语→专业术语" as Rewriter #A78BFA
+  component "QueryExpander\n同义词扩展" as Expander #A78BFA
+  component "QueryDecomposer\n复杂问题分解(max 5)" as Decomposer #A78BFA
+}
+
+package "生成层 Generation Layer" as GenLayer #FCE7F3 {
+  component "LLM Generation Service\n\nDeepSeek API (deepseek-reasoner)\nreasoning_content: 思考链过程\ncontent: 最终答案\nSSE流式→WebSocket→前端" as LLMService #DB2777
+  component "Medical Agent Framework\n\n实体识别→安全层→ReAct/Planning\n三层综合回答(安全/证据/检索)\n8维RAG评估体系\n异步评估队列(Redis+Bull)" as AgentFW #F472B6
+}
+
+cloud "外部服务层 External Services" as ExtLayer #F3F8F3 {
+  component "PaddleOCR Service\n\nPython FastAPI :8080\n版面分析+OCR识别\n输出: bbox+blockType+text" as OCR
+  component "DashScope VLM\n\n阿里云 qwen3-vl-flash\n图片理解: table/figure/formula\n输出: Markdown/图表描述" as VLM
+  component "DeepSeek API\n\ndeepseek-reasoner模型\n思考链推理\nSSE流式响应" as DSAPI
+  component "Local Transformers\n\nmultilingual-e5-small\n384维文本嵌入\n离线无API成本" as LocalTF
+}
+
+' ===== 数据流连接 =====
+
+' 用户 → 服务层
+WebUI --> HTTP : HTTP REST
+MCPClient --> HTTP : MCP JSON-RPC
+APIClient --> HTTP : REST
+
+' 服务层内部
+HTTP --> Emitter : Context流转
+WS --> Emitter : Event广播
+
+' 服务层 → 编排层
+HTTP --> Ingest : 文档上传触发
+Emitter --> OrchLayer : Hooks驱动
+
+' 编排层 Pipeline 流
+Ingest --> Parse : Context流转
+Parse --> Chunk : Context流转
+Chunk --> Embed : Context流转
+
+' 编排层 → 存储层
+Embed --> HierStore : 写入Parent+Child Chunks
+Embed --> ImgStore : 写入图片块
+Parse --> ImgStore : 图片提取
+Ingest --> DocStore : 写入元数据
+
+' 存储层 → 检索层
+HierStore --> StB : 向量检索
+ImgStore --> StB : 图片检索
+
+' 检索层内部流
+Analyzer --> Rewriter : 口语需重写
+Analyzer --> Decomposer : 复杂需分解
+Analyzer --> Expander : 同义词扩展
+Rewriter --> StB : 检索
+Expander --> StB : 检索
+Decomposer --> StB : 子查询检索
+StB --> Reranker : 检索结果
+Reranker --> Assembler : 重排结果
+
+' 检索层 → 生成层
+Assembler --> LLMService : 组装上下文
+Assembler --> AgentFW : 增强上下文
+
+' 生成层内部
+AgentFW --> LLMService : LLM调用
+
+' 外部服务调用
+Parse --> OCR : 扫描件OCR请求
+Parse --> VLM : table/figure/formula增强
+LLMService --> DSAPI : chat/completions
+Embed --> LocalTF : 文本向量生成
+StB --> LocalTF : 查询向量生成
+
+' 输出
+LLMService --> WS : SSE流式 → 前端
+AgentFW --> WS : 结构化回答 → 前端
+
+@enduml

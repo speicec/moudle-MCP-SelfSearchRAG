@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="图片PDF专项处理">
+    <mxGraphModel dx="1920" dy="1080" pageWidth="1920" pageHeight="1080">
+      <root>
+        <mxCell id="0" /><mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="图片PDF专项处理流程 — 扫描文档 OCR + VLM增强 → 结构化可检索内容" style="text;html=1;fontSize=22;fontStyle=1;fontColor=#4C1D95;align=center;" vertex="1" parent="1">
+          <mxGeometry x="260" y="10" width="1400" height="36" as="geometry" />
+        </mxCell>
+
+        <mxCell id="start" value="用户上传PDF文档" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="800" y="60" width="320" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="check" value="totalText==0?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="850" y="145" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="normal" value="普通PDF → 标准文本解析" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1150" y="160" width="230" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="start" target="check">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a0b" value="否 (普通PDF)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#82b366;" edge="1" parent="1" source="check" target="normal">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Step 1 -->
+        <mxCell id="step1-box" value="Step 1: PDF → 图片渲染 (pdfjs-dist, scale=2, 144dpi)" style="swimlane;startSize=28;fillColor=#f5f3ff;strokeColor=#a78bfa;fontSize=13;fontStyle=1;fontColor=#5b21b6;" vertex="1" parent="1">
+          <mxGeometry x="60" y="260" width="1800" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="render" value="逐页渲染PDF → Canvas" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="step1-box">
+          <mxGeometry x="40" y="40" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="pageimg" value="输出 PageImage[]: {pageNumber, imageBuffer, width, height}" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="step1-box">
+          <mxGeometry x="400" y="40" width="400" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="note1" value="为什么 scale=2? 144dpi保证OCR精度，同时控制内存占用" style="text;html=1;fontSize=10;fontColor=#6b7280;align=left;fontStyle=2;" vertex="1" parent="step1-box">
+          <mxGeometry x="880" y="42" width="360" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- Step 2 -->
+        <mxCell id="step2-box" value="Step 2: PaddleOCR 版面分析 (PP-Structure, table=false)" style="swimlane;startSize=28;fillColor=#ede9fe;strokeColor=#7c3aed;fontSize=13;fontStyle=1;fontColor=#5b21b6;" vertex="1" parent="1">
+          <mxGeometry x="60" y="410" width="1800" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ocr-layout" value="版面检测 → 文字方向识别 → 区域分类" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="step2-box">
+          <mxGeometry x="40" y="40" width="300" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ocr-block" value="OcrBlock[]: type(text|table|figure|formula|title) + bbox[x1,y1,x2,y2] + text + confidence" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="step2-box">
+          <mxGeometry x="420" y="40" width="500" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="note2" value="table=false: table/figure/formula只返回bbox,无内容理解" style="text;html=1;fontSize=10;fontColor=#6b7280;align=left;fontStyle=2;" vertex="1" parent="step2-box">
+          <mxGeometry x="1000" y="42" width="360" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- Step 3 -->
+        <mxCell id="step3-box" value="Step 3: VLM增强理解 (DashScope qwen3-vl-flash) — 处理 table/figure/formula 块" style="swimlane;startSize=28;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=13;fontStyle=1;fontColor=#5b21b6;" vertex="1" parent="1">
+          <mxGeometry x="60" y="560" width="1800" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="vlm-table" value="表格 Table&#xa;裁剪→Base64→VLM&#xa;Prompt:"转为Markdown"&#xa;输出: Markdown表格+摘要" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=10;align=left;" vertex="1" parent="step3-box">
+          <mxGeometry x="40" y="36" width="300" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="vlm-figure" value="图表 Figure&#xa;裁剪→Base64→VLM&#xa;Prompt:"图表类型+数据趋势"&#xa;输出: 类型+趋势+结论" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=10;align=left;" vertex="1" parent="step3-box">
+          <mxGeometry x="380" y="36" width="300" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="vlm-formula" value="公式 Formula&#xa;裁剪→Base64→VLM&#xa;Prompt:"LaTeX+符号解释"&#xa;输出: LaTeX+解释+用途" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=10;align=left;" vertex="1" parent="step3-box">
+          <mxGeometry x="720" y="36" width="300" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="vlm-result" value="VLM处理结果: table→Markdown表格, figure→图表描述, formula→LaTeX公式 ↔ 图片从"不可检索"变"可全文检索"" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#c4b5fd;strokeColor=#7c3aed;fontSize=11;fontStyle=1;" vertex="1" parent="step3-box">
+          <mxGeometry x="1080" y="36" width="660" height="68" as="geometry" />
+        </mxCell>
+
+        <!-- Step 4 -->
+        <mxCell id="step4-box" value="Step 4: 合并结构化输出 → ParsedContent" style="swimlane;startSize=28;fillColor=#c4b5fd;strokeColor=#7c3aed;fontSize=13;fontStyle=1;fontColor=#5b21b6;" vertex="1" parent="1">
+          <mxGeometry x="60" y="720" width="1800" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="merge" value="合并OCR text + VLM理解结果" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="step4-box">
+          <mxGeometry x="40" y="40" width="300" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="parsed-content" value="ParsedContent {pages[{textBlocks, tables(VLM Markdown), images(VLM描述), formulas(VLM LaTeX)}], totalPages}" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="step4-box">
+          <mxGeometry x="420" y="40" width="700" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="note4" value="VLM结果→content字段 | 原图→imageBuffer | bbox→页面定位" style="text;html=1;fontSize=10;fontColor=#6b7280;align=left;fontStyle=2;" vertex="1" parent="step4-box">
+          <mxGeometry x="1200" y="42" width="500" height="36" as="geometry" />
+        </mxCell>
+
+        <mxCell id="end" value="进入语义分块阶段" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="880" width="440" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Arrows -->
+        <mxCell id="s0" value="是 (纯图片PDF)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#7c3aed;" edge="1" parent="1" source="check" target="render">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="render" target="pageimg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="pageimg" target="ocr-layout">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="ocr-layout" target="ocr-block">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ocr-block" target="vlm-table">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s4b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ocr-block" target="vlm-figure">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="700" y="520" /><mxPoint x="700" y="540" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="s4c" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ocr-block" target="vlm-formula">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="900" y="520" /><mxPoint x="900" y="540" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="s5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" edge="1" parent="1" source="vlm-table" target="vlm-result">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s5b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" edge="1" parent="1" source="vlm-figure" target="vlm-result">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s5c" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" edge="1" parent="1" source="vlm-formula" target="vlm-result">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="vlm-result" target="merge">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="merge" target="parsed-content">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="parsed-content" target="end">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

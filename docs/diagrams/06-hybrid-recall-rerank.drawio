@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="多路召回重排融合">
+    <mxGraphModel dx="1920" dy="1080" pageWidth="1920" pageHeight="1080">
+      <root>
+        <mxCell id="0" /><mxCell id="1" parent="0" />
+        <mxCell id="title" value="多路召回 + 混合重排融合策略 — 三引擎并行→RRF融合→双模式路由→四因子置信度" style="text;html=1;fontSize=20;fontStyle=1;fontColor=#78350F;align=center;" vertex="1" parent="1">
+          <mxGeometry x="200" y="5" width="1520" height="32" as="geometry" />
+        </mxCell>
+
+        <mxCell id="start" value="用户查询 + 扩展术语" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="55" width="240" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Three engines in parallel -->
+        <mxCell id="fork" value="并行" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="250" y="140" width="60" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="semantic-box" value="语义检索 Semantic Search" style="swimlane;startSize=22;fillColor=#ede9fe;strokeColor=#7c3aed;fontSize=11;fontStyle=1;fontColor=#5b21b6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="210" width="500" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="sem1" value="Embedding Service → 查询向量 (384维)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=10;" vertex="1" parent="semantic-box">
+          <mxGeometry x="20" y="32" width="260" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="sem2" value="VectorStore.search() → 余弦相似度 → DenseResults[]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=10;" vertex="1" parent="semantic-box">
+          <mxGeometry x="20" y="72" width="260" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="sem3" value="优势: 语义理解, 同义词自动匹配" style="text;html=1;fontSize=9;fontColor=#7c3aed;align=left;fontStyle=2;" vertex="1" parent="semantic-box">
+          <mxGeometry x="320" y="40" width="170" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="keyword-box" value="关键词检索 Keyword Search" style="swimlane;startSize=22;fillColor=#ecfdf5;strokeColor=#059669;fontSize=11;fontStyle=1;fontColor=#047857;" vertex="1" parent="1">
+          <mxGeometry x="580" y="210" width="500" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="kw1" value="分词 + BM25-inspired词频评分" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;fontSize=10;" vertex="1" parent="keyword-box">
+          <mxGeometry x="20" y="32" width="260" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="kw2" value="score=(tf×2.5)/(tf+1.2×(docLen/100)) → SparseResults[]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;fontSize=10;" vertex="1" parent="keyword-box">
+          <mxGeometry x="20" y="72" width="260" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="kw3" value="优势: 精确匹配, 专有名词召回" style="text;html=1;fontSize=9;fontColor=#059669;align=left;fontStyle=2;" vertex="1" parent="keyword-box">
+          <mxGeometry x="320" y="40" width="170" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="hybrid-box" value="混合检索 Hybrid Search (semantic:0.7 + keyword:0.3)" style="swimlane;startSize=22;fillColor=#fef3c7;strokeColor=#ca8a04;fontSize=11;fontStyle=1;fontColor=#854d0e;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="210" width="460" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="hy1" value="双路命中→分数叠加, 单路命中→仅加权" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fde68a;strokeColor=#ca8a04;fontSize=10;" vertex="1" parent="hybrid-box">
+          <mxGeometry x="20" y="32" width="420" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="hy2" value="去重排序 → HybridResults[]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fde68a;strokeColor=#ca8a04;fontSize=10;" vertex="1" parent="hybrid-box">
+          <mxGeometry x="20" y="72" width="260" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="hy3" value="优势: 双路都命中自然排名更高" style="text;html=1;fontSize=9;fontColor=#ca8a04;align=left;fontStyle=2;" vertex="1" parent="hybrid-box">
+          <mxGeometry x="320" y="40" width="130" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- RRF Fusion -->
+        <mxCell id="rrf-box" value="RRF融合 Reciprocal Rank Fusion" style="swimlane;startSize=22;fillColor=#fef3c7;strokeColor=#ca8a04;fontSize=12;fontStyle=1;fontColor=#854d0e;" vertex="1" parent="1">
+          <mxGeometry x="580" y="390" width="760" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="rrf1" value="核心公式: score(id) = Σ 1/(60 + rank_i)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fde68a;strokeColor=#ca8a04;fontSize=11;fontStyle=1;" vertex="1" parent="rrf-box">
+          <mxGeometry x="20" y="32" width="350" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="rrf2" value="示例: 结果A Dense#1+Sparse#3 → 1/(61)+1/(63)=0.0323 | 结果B Dense#2+Sparse#1 → 0.0325 | 双路命中排名更高" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;" vertex="1" parent="rrf-box">
+          <mxGeometry x="20" y="70" width="720" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- Reranker -->
+        <mxCell id="rerank-box" value="HybridReranker 双模式路由" style="swimlane;startSize=22;fillColor=#fde68a;strokeColor=#d79b00;fontSize=12;fontStyle=1;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="40" y="560" width="880" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="route-check" value="N≤20?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="rerank-box">
+          <mxGeometry x="20" y="36" width="80" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="local-reranker" value="LocalReranker (bge-reranker-v2-m3)&#xa;Cross-Attention 高精度重排" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;fontStyle=1;" vertex="1" parent="rerank-box">
+          <mxGeometry x="150" y="36" width="300" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="confidence" value="ConfidenceCalculator (内部计算)&#xa;四因子快速评分" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="rerank-box">
+          <mxGeometry x="520" y="36" width="280" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Four factors -->
+        <mxCell id="factors-box" value="四因子置信度评分" style="swimlane;startSize=22;fillColor=#fcd34d;strokeColor=#d6b656;fontSize=12;fontStyle=1;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="40" y="730" width="1300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="f1" value="向量相似度 0.35" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;fontStyle=1;" vertex="1" parent="factors-box">
+          <mxGeometry x="20" y="36" width="200" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="f2" value="关键词匹配 0.25&#xa;Jaccard(queryTerms, content)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="factors-box">
+          <mxGeometry x="260" y="36" width="270" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="f3" value="位置分数 0.20&#xa;position=0→1.0, last→0.5" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="factors-box">
+          <mxGeometry x="570" y="36" width="270" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="f4" value="分块质量 0.20&#xa;score=qualityScore||0.5" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="factors-box">
+          <mxGeometry x="880" y="36" width="270" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="f-level" value="≥0.7→HIGH🟢  |  ≥0.4→MEDIUM🟡  |  &lt;0.4→LOW🔴" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fde68a;strokeColor=#ca8a04;fontSize=11;fontStyle=1;" vertex="1" parent="factors-box">
+          <mxGeometry x="260" y="76" width="580" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lowcheck" value="avgConfidence &lt; 0.3?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="560" y="870" width="160" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="nomatch" value="NoMatchResult: 建议尝试更具体的查询" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="200" y="875" width="260" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="end" value="输出: ConfidenceRetrievalResult[]&#xa;含置信度等级+来源标注" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="820" y="865" width="520" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Arrows -->
+        <mxCell id="e0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="start" target="fork"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e0a" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="fork" target="semantic-box"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e0b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="fork" target="keyword-box"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e0c" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="fork" target="hybrid-box"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="1" source="semantic-box" target="rrf-box"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="keyword-box" target="rrf-box"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=1;entryY=0.5;" edge="1" parent="1" source="hybrid-box" target="rrf-box"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="rrf-box" target="rerank-box"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="rerank-box" target="factors-box"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="factors-box" target="lowcheck"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;entryX=0.5;entryY=0;fontSize=9;fontColor=#b85450;" edge="1" parent="1" source="lowcheck" target="nomatch"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=9;fontColor=#22c55e;" edge="1" parent="1" source="lowcheck" target="end"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

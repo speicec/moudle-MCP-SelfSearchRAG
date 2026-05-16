@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="文档摄取全流程">
+    <mxGraphModel dx="1920" dy="1080" pageWidth="1920" pageHeight="1080">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="文档摄取全流程 — 从PDF上传到可检索知识库 (4-Stage Pipeline)" style="text;html=1;fontSize=22;fontStyle=1;fontColor=#14532d;align=center;" vertex="1" parent="1">
+          <mxGeometry x="360" y="10" width="1200" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- Start -->
+        <mxCell id="start" value="用户上传医学指南PDF" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="800" y="60" width="320" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- INGEST Stage -->
+        <mxCell id="ingest-box" value="INGEST 摄入阶段" style="swimlane;startSize=26;fillColor=#dcfce7;strokeColor=#22c55e;fontSize=13;fontStyle=1;fontColor=#15803d;" vertex="1" parent="1">
+          <mxGeometry x="80" y="140" width="1760" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="validate" value="文档格式校验&#xa;(PDF/PNG/JPG, 最大100MB, 最多500页)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="ingest-box">
+          <mxGeometry x="40" y="36" width="320" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="valid-ok" value="通过" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="ingest-box">
+          <mxGeometry x="410" y="38" width="80" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="queue" value="加入处理队列&#xa;(内存队列, FIFO顺序)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="ingest-box">
+          <mxGeometry x="540" y="36" width="240" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="create-meta" value="创建文档元数据&#xa;{documentId, fileName, uploadTime, status}" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="ingest-box">
+          <mxGeometry x="830" y="36" width="280" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="ws-ingest" value="发送WebSocket事件&#xa;stage:start (ingest)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="ingest-box">
+          <mxGeometry x="1160" y="36" width="250" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- PARSE Stage -->
+        <mxCell id="parse-box" value="PARSE 解析阶段" style="swimlane;startSize=26;fillColor=#d1fae5;strokeColor=#059669;fontSize=13;fontStyle=1;fontColor=#047857;" vertex="1" parent="1">
+          <mxGeometry x="80" y="300" width="1760" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="detect-pdf" value="检测PDF类型&#xa;(totalText==0?)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontStyle=1;" vertex="1" parent="parse-box">
+          <mxGeometry x="40" y="60" width="140" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="text-path" value="[文本PDF] PdfParser&#xa;提取原生文本层 + 内嵌图片&#xa;逐页提取textBlocks (保留坐标)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="parse-box">
+          <mxGeometry x="230" y="35" width="330" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="img-path" value="[图片PDF] PdfToImageConverter&#xa;pdfjs-dist, scale=2 (144dpi)&#xa;→ PNG Buffer 数组" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="parse-box">
+          <mxGeometry x="230" y="110" width="330" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="ocr-step" value="PaddleOCR 版面分析&#xa;(PP-Structure, table=false)&#xa;→ OcrBlock[]: text/table/figure/formula" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="parse-box">
+          <mxGeometry x="610" y="110" width="340" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="vlm-step" value="VLM增强 (DashScope qwen3-vl-flash)&#xa;table→Markdown表格 / figure→图表描述 / formula→LaTeX" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="parse-box">
+          <mxGeometry x="1000" y="110" width="380" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="merge-content" value="合并为 ParsedContent&#xa;pages[{textBlocks, tables(VLM), images(VLM), formulas(VLM)}]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="parse-box">
+          <mxGeometry x="610" y="30" width="770" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- CHUNK Stage -->
+        <mxCell id="chunk-box" value="CHUNK 语义分块阶段" style="swimlane;startSize=26;fillColor=#ecfdf5;strokeColor=#14b8a6;fontSize=13;fontStyle=1;fontColor=#0f766e;" vertex="1" parent="1">
+          <mxGeometry x="80" y="490" width="1760" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="sentence-split" value="句子切分 + Embedding&#xa;(multilingual-e5-small, 384维)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=11;" vertex="1" parent="chunk-box">
+          <mxGeometry x="40" y="40" width="260" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="cliff-detect" value="断崖检测 Cliff Detection&#xa;cosSim→阈值筛选→梯度验证→去噪" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=11;fontStyle=1;" vertex="1" parent="chunk-box">
+          <mxGeometry x="340" y="40" width="290" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="parent-chunks" value="创建 Parent Chunks&#xa;(每个 1000-2000 tokens)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=11;" vertex="1" parent="chunk-box">
+          <mxGeometry x="670" y="40" width="260" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="child-chunks" value="创建 Child Chunks&#xa;(每个Parent 4-6个, 200-500 tokens)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=11;" vertex="1" parent="chunk-box">
+          <mxGeometry x="970" y="40" width="280" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="quality-filter" value="质量过滤 Quality Filter&#xa;完整性/连贯性/信息密度" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=11;" vertex="1" parent="chunk-box">
+          <mxGeometry x="1290" y="40" width="250" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- EMBED Stage -->
+        <mxCell id="embed-box" value="EMBED 嵌入阶段" style="swimlane;startSize=26;fillColor=#fef3c7;strokeColor=#ca8a04;fontSize=13;fontStyle=1;fontColor=#854d0e;" vertex="1" parent="1">
+          <mxGeometry x="80" y="650" width="1760" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="gen-embed" value="生成 Embedding 向量&#xa;(Local Transformers, 384维)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fde68a;strokeColor=#ca8a04;fontSize=11;" vertex="1" parent="embed-box">
+          <mxGeometry x="40" y="36" width="280" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="cache-embed" value="缓存 Embedding 结果&#xa;(内存缓存, TTL可配置)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fde68a;strokeColor=#ca8a04;fontSize=11;" vertex="1" parent="embed-box">
+          <mxGeometry x="360" y="36" width="260" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="write-stores" value="写入存储&#xa;HierarchicalStore + ImageStore&#xa;+ DocumentStore (status=ready)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fde68a;strokeColor=#ca8a04;fontSize=11;fontStyle=1;" vertex="1" parent="embed-box">
+          <mxGeometry x="660" y="36" width="320" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="ws-done" value="发送 WebSocket 事件&#xa;pipeline:complete" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fde68a;strokeColor=#ca8a04;fontSize=11;" vertex="1" parent="embed-box">
+          <mxGeometry x="1020" y="36" width="250" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- End -->
+        <mxCell id="end" value="文档处理完成&#xa;status=ready, 可检索" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="810" width="440" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Arrows -->
+        <mxCell id="a0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="start" target="validate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" value="YES" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0;entryY=0.5;fontSize=10;fontColor=#059669;" edge="1" parent="1" source="validate" target="valid-ok">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" value="→" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="valid-ok" target="queue">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="queue" target="create-meta">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="create-meta" target="ws-ingest">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a5" value="文本路径" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=10;fontColor=#6c8ebf;" edge="1" parent="1" source="ws-ingest" target="text-path">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a6" value="图片路径" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=10;fontColor=#d79b00;" edge="1" parent="1" source="detect-pdf" target="img-path">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="img-path" target="ocr-step">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="ocr-step" target="vlm-step">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a8b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" edge="1" parent="1" source="merge-content" target="text-path">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a8c" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" edge="1" parent="1" source="merge-content" target="vlm-step">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="merge-content" target="sentence-split">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="sentence-split" target="cliff-detect">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="cliff-detect" target="parent-chunks">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="parent-chunks" target="child-chunks">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="child-chunks" target="quality-filter">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a14" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="quality-filter" target="gen-embed">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a15" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="gen-embed" target="cache-embed">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a16" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="cache-embed" target="write-stores">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a17" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="write-stores" target="ws-done">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a18" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ws-done" target="end">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

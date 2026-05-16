@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="增强检索全流程">
+    <mxGraphModel dx="1920" dy="1080" pageWidth="1920" pageHeight="1080">
+      <root>
+        <mxCell id="0" /><mxCell id="1" parent="0" />
+        <mxCell id="title" value="增强检索全流程 — 8阶段Enhanced Pipeline (Analyze→Rewrite→Expand→Decompose→Retrieve→Rerank→Assemble→Generate)" style="text;html=1;fontSize=20;fontStyle=1;fontColor=#14532d;align=center;" vertex="1" parent="1">
+          <mxGeometry x="160" y="5" width="1600" height="32" as="geometry" />
+        </mxCell>
+
+        <!-- Lifelines -->
+        <mxCell id="user" value="用户" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="50" width="90" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="client" value="Web UI/MCP" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="160" y="50" width="90" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="analyzer" value="Query&#xa;Analyzer" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="290" y="50" width="80" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="rewriter" value="Query&#xa;Rewriter" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="410" y="50" width="70" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="expander" value="Query&#xa;Expander" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="520" y="50" width="70" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="decomposer" value="Query&#xa;Decomposer" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="630" y="50" width="70" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="retriever" value="Small-to-Big&#xa;Retriever" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="750" y="50" width="90" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="reranker" value="Hybrid&#xa;Reranker" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="890" y="50" width="80" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="assembler" value="Context&#xa;Assembler" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="50" width="80" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="store" value="Hierarchical&#xa;Store" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;fillColor=#fde68a;strokeColor=#ca8a04;" vertex="1" parent="1">
+          <mxGeometry x="1150" y="50" width="90" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="llm" value="LLM (DeepSeek)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;fillColor=#fce7f3;strokeColor=#db2777;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="50" width="90" height="980" as="geometry" />
+        </mxCell>
+
+        <!-- Labels on left -->
+        <mxCell id="s1" value="S1: Analyse" style="text;html=1;fontSize=9;fontColor=#6c8ebf;fontStyle=1;rotation=0;" vertex="1" parent="1"><mxGeometry x="5" y="130" width="20" height="50" as="geometry" /></mxCell>
+        <mxCell id="s2" value="S2: Rewrite" style="text;html=1;fontSize=9;fontColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="5" y="210" width="20" height="50" as="geometry" /></mxCell>
+        <mxCell id="s3" value="S3: Expand" style="text;html=1;fontSize=9;fontColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="5" y="290" width="20" height="50" as="geometry" /></mxCell>
+        <mxCell id="s4" value="S4: Decomp" style="text;html=1;fontSize=9;fontColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="5" y="370" width="20" height="50" as="geometry" /></mxCell>
+        <mxCell id="s5" value="S5: Retrieve" style="text;html=1;fontSize=9;fontColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="5" y="480" width="20" height="80" as="geometry" /></mxCell>
+        <mxCell id="s6" value="S6: Rerank" style="text;html=1;fontSize=9;fontColor=#d6b656;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="5" y="620" width="20" height="50" as="geometry" /></mxCell>
+        <mxCell id="s7" value="S7: Assemble" style="text;html=1;fontSize=9;fontColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="5" y="710" width="20" height="50" as="geometry" /></mxCell>
+        <mxCell id="s8" value="S8: Generate" style="text;html=1;fontSize=9;fontColor=#db2777;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="5" y="800" width="20" height="80" as="geometry" /></mxCell>
+
+        <!-- Messages - condensed but complete -->
+        <mxCell id="m1" value="1. POST /api/chat/generate" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="user" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="130" y="120" /></Array></mxGeometry></mxCell>
+        <mxCell id="m2" value="2. analyze(query)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="client" target="analyzer"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="280" y="145" /></Array></mxGeometry></mxCell>
+        <mxCell id="m3" value="3. {complexity:complex, intent:禁忌查询, keywords:[...]}" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#6c8ebf;" edge="1" parent="1" source="analyzer" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="340" y="175" /></Array></mxGeometry></mxCell>
+        <mxCell id="m4" value="4. rewrite(query)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="client" target="rewriter"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="430" y="230" /></Array></mxGeometry></mxCell>
+        <mxCell id="m5" value="5. (无口语化特征,跳过)" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#6b7280;" edge="1" parent="1" source="rewriter" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="440" y="260" /></Array></mxGeometry></mxCell>
+        <mxCell id="m6" value="6. expand(query+entities)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="client" target="expander"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="530" y="310" /></Array></mxGeometry></mxCell>
+        <mxCell id="m7" value="7. expandedTerms: [格华止,美迪康,禁用,...]" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#6c8ebf;" edge="1" parent="1" source="expander" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="560" y="340" /></Array></mxGeometry></mxCell>
+        <mxCell id="m8" value="8. decompose(query)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="client" target="decomposer"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="640" y="390" /></Array></mxGeometry></mxCell>
+        <mxCell id="m9" value="9. (无需分解)" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;" edge="1" parent="1" source="decomposer" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="660" y="420" /></Array></mxGeometry></mxCell>
+        <mxCell id="m10" value="10. search(query+expandedTerms)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontStyle=1;" edge="1" parent="1" source="client" target="retriever"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="740" y="470" /></Array></mxGeometry></mxCell>
+
+        <!-- Phase 1 & 2 retrieval -->
+        <mxCell id="m11" value="11. Phase1: vector search(smallChunks)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontColor=#059669;" edge="1" parent="1" source="retriever" target="store"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1120" y="500" /></Array></mxGeometry></mxCell>
+        <mxCell id="m12" value="12. matched children: [child-3:0.88, child-7:0.79]" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#ca8a04;" edge="1" parent="1" source="store" target="retriever"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1200" y="530" /></Array></mxGeometry></mxCell>
+        <mxCell id="m13" value="13. Phase2: getParent → expand context window" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontColor=#059669;" edge="1" parent="1" source="retriever" target="store"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1120" y="560" /></Array></mxGeometry></mxCell>
+        <mxCell id="m14" value="14. parent-A (1800 tokens) + 去重" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#ca8a04;" edge="1" parent="1" source="store" target="retriever"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1200" y="590" /></Array></mxGeometry></mxCell>
+
+        <mxCell id="m15" value="15. RetrievedContext[] (15条)" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#6c8ebf;" edge="1" parent="1" source="retriever" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="800" y="610" /></Array></mxGeometry></mxCell>
+        <mxCell id="m16" value="16. rerank(results)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="client" target="reranker"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="870" y="660" /></Array></mxGeometry></mxCell>
+        <mxCell id="m17" value="17. ≤20→LocalReranker(bge) 四因子评分" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontColor=#d6b656;" edge="1" parent="1" source="reranker" target="reranker"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="980" y="690" /><mxPoint x="980" y="685" /></Array></mxGeometry></mxCell>
+        <mxCell id="m18" value="18. rerankedResults (降序)" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#d6b656;" edge="1" parent="1" source="reranker" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="940" y="720" /></Array></mxGeometry></mxCell>
+        <mxCell id="m19" value="19. assemble(reranked)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="client" target="assembler"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1000" y="750" /></Array></mxGeometry></mxCell>
+        <mxCell id="m20" value="20. DynamicTopK + 置信度标注 + 低置信检测" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="assembler" target="assembler"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1100" y="780" /><mxPoint x="1100" y="775" /></Array></mxGeometry></mxCell>
+        <mxCell id="m21" value="21. EnhancedAssembledContext" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#6c8ebf;" edge="1" parent="1" source="assembler" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1060" y="810" /></Array></mxGeometry></mxCell>
+        <mxCell id="m22" value="22. POST /v1/chat/completions (DeepSeek, SSE stream)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontStyle=1;fontColor=#db2777;" edge="1" parent="1" source="client" target="llm"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1330" y="850" /></Array></mxGeometry></mxCell>
+        <mxCell id="m23" value="23. reasoning_content → thinking" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#db2777;" edge="1" parent="1" source="llm" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1290" y="880" /></Array></mxGeometry></mxCell>
+        <mxCell id="m24" value="24. SSE content → answer chunks" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#db2777;" edge="1" parent="1" source="llm" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1290" y="910" /></Array></mxGeometry></mxCell>
+        <mxCell id="m25" value="25. SSE [DONE]" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#22c55e;" edge="1" parent="1" source="llm" target="client"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1290" y="940" /></Array></mxGeometry></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

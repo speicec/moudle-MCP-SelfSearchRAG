@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="Medical Agent流程">
+    <mxGraphModel dx="1920" dy="1080" pageWidth="1920" pageHeight="1080">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Medical Agent 用户使用全流程 — 从提问到带证据的结构化医学回答" style="text;html=1;fontSize=22;fontStyle=1;fontColor=#831843;align=center;" vertex="1" parent="1">
+          <mxGeometry x="300" y="10" width="1320" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- Lifelines -->
+        <mxCell id="actor" value="用户 (医生/患者)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=11;fontStyle=1;fillColor=#fce7f3;strokeColor=#db2777;" vertex="1" parent="1">
+          <mxGeometry x="60" y="70" width="140" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="frontend" value="Web UI (React)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=11;fillColor=#fce7f3;strokeColor=#ec4899;" vertex="1" parent="1">
+          <mxGeometry x="260" y="70" width="130" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="server" value="HTTP Server (Fastify)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=11;fillColor=#ede9fe;strokeColor=#7c3aed;" vertex="1" parent="1">
+          <mxGeometry x="450" y="70" width="140" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="agent" value="Medical AgentExecutor" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=11;fontStyle=1;fillColor=#fce7f3;strokeColor=#db2777;" vertex="1" parent="1">
+          <mxGeometry x="650" y="70" width="150" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="entity" value="Entity Recognizer" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=11;fillColor=#d1fae5;strokeColor=#059669;" vertex="1" parent="1">
+          <mxGeometry x="860" y="70" width="130" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="safety" value="Safety Layer" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=11;fillColor=#fef3c7;strokeColor=#ca8a04;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="70" width="120" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="retrieval" value="Enhanced Retrieval" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=11;fillColor=#ede9fe;strokeColor=#7c3aed;" vertex="1" parent="1">
+          <mxGeometry x="1230" y="70" width="130" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="reasoner" value="Medical Reasoner + Evidence" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=11;fillColor=#dcfce7;strokeColor=#22c55e;" vertex="1" parent="1">
+          <mxGeometry x="1420" y="70" width="150" height="950" as="geometry" />
+        </mxCell>
+
+        <!-- Phase labels -->
+        <mxCell id="ph1" value="Phase 1&#xa;实体识别" style="text;html=1;fontSize=10;fontColor=#6b7280;align=center;verticalAlign=bottom;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="10" y="140" width="40" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ph2" value="Phase 2&#xa;安全检查" style="text;html=1;fontSize=10;fontColor=#6b7280;align=center;verticalAlign=bottom;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="10" y="300" width="40" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ph3" value="Phase 3&#xa;查询规划" style="text;html=1;fontSize=10;fontColor=#6b7280;align=center;verticalAlign=bottom;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="10" y="460" width="40" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ph4" value="Phase 4&#xa;ReAct 循环" style="text;html=1;fontSize=10;fontColor=#6b7280;align=center;verticalAlign=bottom;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="10" y="590" width="40" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ph5" value="Phase 5&#xa;回答生成" style="text;html=1;fontSize=10;fontColor=#6b7280;align=center;verticalAlign=bottom;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="10" y="750" width="40" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ph6" value="Phase 6&#xa;流式输出" style="text;html=1;fontSize=10;fontColor=#6b7280;align=center;verticalAlign=bottom;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="10" y="920" width="40" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Messages -->
+        <!-- Phase 1: Query input -->
+        <mxCell id="msg1" value="1. 输入查询:"二甲双胍eGFR=35能否使用"" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=11;" edge="1" parent="1" source="actor" target="frontend">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="220" y="130" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg2" value="2. POST /api/chat/generate {query, enableAgent:true}" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="frontend" target="server">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="430" y="155" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg3" value="3. 创建 AgentExecutor" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="server" target="agent">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="630" y="180" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg4" value="4. identifyEntities(query)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="agent" target="entity">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="840" y="205" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg5" value="5. 词典匹配→ 二甲双胍(drug), eGFR=35(indicator)" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=10;fontColor=#059669;" edge="1" parent="1" source="entity" target="agent">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="930" y="235" /><mxPoint x="840" y="235" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- Phase 2: Safety -->
+        <mxCell id="msg6" value="6. performSafetyCheck(entities)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="agent" target="safety">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1070" y="280" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg7" value="7. 禁忌阈值: eGFR=35 → 30-45范围 → severity=relative (慎用)" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=10;fontColor=#ca8a04;" edge="1" parent="1" source="safety" target="agent">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1110" y="320" /><mxPoint x="840" y="320" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- Phase 3: Query Planning -->
+        <mxCell id="msg8" value="8. buildQueryStrategy: 主查询+扩展术语+过滤条件" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="agent" target="agent">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="840" y="440" /><mxPoint x="840" y="380" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- Phase 4: ReAct -->
+        <mxCell id="msg9" value="9. Iteration 1: Think→规则化决策→需要检索" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="agent" target="agent">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="840" y="500" /><mxPoint x="840" y="480" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg10" value="10. Act: 执行 EnhancedRetrievalPipeline" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="agent" target="retrieval">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1250" y="530" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg11" value="11. 返回5条结果 (ADA指南/KDIGO指南/中国指南), 最高相似度:0.88" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=10;fontColor=#7c3aed;" edge="1" parent="1" source="retrieval" target="agent">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1320" y="565" /><mxPoint x="840" y="565" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg12" value="12. Iteration 2: Think→retrievalCount≥3✓ maxSim>0.7✓ entityCover≥80%✓ → SATISFIED" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;fontColor=#22c55e;" edge="1" parent="1" source="agent" target="agent">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="840" y="620" /><mxPoint x="840" y="600" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- Phase 5: Answer Generation -->
+        <mxCell id="msg13" value="13. parseAnswer: 三层综合回答生成" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="agent" target="reasoner">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1450" y="680" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg14" value="14. Layer1: safety→慎用 | Layer2: 检索综合 | Layer3: GRADE-B" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="reasoner" target="reasoner">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1570" y="720" /><mxPoint x="1570" y="700" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg15" value="15. 结构化 MedicalAnswer: 结论+详细说明+证据等级+来源引用+警告" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=10;fontColor=#22c55e;" edge="1" parent="1" source="reasoner" target="agent">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1460" y="755" /><mxPoint x="840" y="755" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- Phase 6: Streaming output -->
+        <mxCell id="msg16" value="16. WebSocket → agent:complete {satisfied:true, retrievalCount:5, totalTimeMs:1500}" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;fontColor=#db2777;" edge="1" parent="1" source="agent" target="frontend">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="450" y="820" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg17" value="17. SSE流式推送: thinking → answer → complete" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="server" target="frontend">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="430" y="870" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="msg18" value="18. 渲染结构化回答: 结论 + 详细说明 + 证据等级 + 来源引用" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=10;" edge="1" parent="1" source="frontend" target="actor">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="220" y="920" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- Answer box at bottom -->
+        <mxCell id="answer-box" value="## 结论&#xa;慎用：eGFR 30-45ml/min时二甲双胍需减量至500-850mg/日&#xa;&#xa;## 详细说明&#xa;• eGFR≥45: 可正常使用&#xa;• eGFR 30-45: 慎用，需减量&#xa;• eGFR&lt;30: 禁用&#xa;&#xa;## 证据等级: Grade B&#xa;## 来源: ADA Standards 2024 / KDIGO CKD Guidelines 2024" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=10;align=left;" vertex="1" parent="1">
+          <mxGeometry x="1600" y="800" width="300" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="ans-arrow" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;dashed=1;strokeColor=#db2777;" edge="1" parent="1" source="frontend" target="answer-box">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

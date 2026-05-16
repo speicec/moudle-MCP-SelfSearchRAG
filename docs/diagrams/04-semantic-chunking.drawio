@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="语义分块断崖检测">
+    <mxGraphModel dx="1920" dy="1080" pageWidth="1920" pageHeight="1080">
+      <root>
+        <mxCell id="0" /><mxCell id="1" parent="0" />
+        <mxCell id="title" value="语义分块与断崖检测算法 — Semantic Chunking + Cliff Detection → Parent-Child层级结构" style="text;html=1;fontSize=22;fontStyle=1;fontColor=#064E3B;align=center;" vertex="1" parent="1">
+          <mxGeometry x="260" y="10" width="1400" height="36" as="geometry" />
+        </mxCell>
+
+        <mxCell id="start" value="从ParsedContent提取纯文本" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="70" width="280" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="sentences" value="句子切分 + Embedding&#xa;(multilingual-e5-small, 384维)&#xa;→ E = [e1, e2, e3, ..., en]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="100" y="160" width="320" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Step 1 -->
+        <mxCell id="step1-box" value="Step 1: 相邻相似度计算" style="swimlane;startSize=24;fillColor=#ecfdf5;strokeColor=#059669;fontSize=12;fontStyle=1;fontColor=#064E3B;" vertex="1" parent="1">
+          <mxGeometry x="500" y="60" width="600" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="calc-sim" value="sim_i = cosine(e_i, e_{i+1})  for i=1..n-1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;fontSize=11;" vertex="1" parent="step1-box">
+          <mxGeometry x="20" y="34" width="300" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="sim-example" value="示例: Sim = [0.85, 0.82, 0.78, 0.45, 0.72, 0.68, 0.51, 0.49, 0.80, 0.83]&#xa;                         ↑ 断崖! sim_3→sim_4 从 0.78 暴跌到 0.45" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;" vertex="1" parent="step1-box">
+          <mxGeometry x="20" y="85" width="560" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Step 2-5 -->
+        <mxCell id="step2" value="Step 2: 候选取筛选&#xa;sim_i &lt; 0.7" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="270" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="step3" value="Step 3: 梯度验证&#xa;|sim_i - sim_{i-1}| > 0.15" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="370" y="270" width="220" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="step4" value="Step 4: 去噪过滤&#xa;连续≥2个候选点" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="640" y="270" width="220" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="step5" value="Step 5: 选最终边界&#xa;相邻断崖取梯度最大" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="910" y="270" width="220" height="55" as="geometry" />
+        </mxCell>
+
+        <mxCell id="example-box" value="梯度验证示例" style="swimlane;startSize=20;fillColor=#fef3c7;strokeColor=#ca8a04;fontSize=11;fontStyle=1;fontColor=#854d0e;" vertex="1" parent="1">
+          <mxGeometry x="500" y="360" width="900" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="ex" value="gradient_3 = |0.45-0.78| = 0.33 > 0.15 ✓    gradient_6 = |0.51-0.68| = 0.17 > 0.15 ✓    gradient_7 = |0.49-0.51| = 0.02 &lt; 0.15 ✗&#xa;validated = [3, 6] → 去噪: [3,6]不连续→放宽阈值重试 → [3,4]连续✓ → boundaries=[3]" style="text;html=1;fontSize=11;fontColor=#854d0e;align=left;" vertex="1" parent="example-box">
+          <mxGeometry x="10" y="30" width="880" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="create-parent" value="在boundaries切分文本&#xa;→ Parent Chunks&#xa;(每个1000-2000 tokens)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="530" width="240" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="create-child" value="每个Parent内部创建&#xa;4-6个Child Chunks&#xa;(每个200-500 tokens)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="800" y="530" width="240" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="quality" value="质量评估 Quality Filter&#xa;完整性/连贯性/信息密度" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="530" width="240" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="store" value="存储到 HierarchicalStore&#xa;建立父子映射关系&#xa;child.parentId → parent.chunkId" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="650" width="440" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="start" target="sentences">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="sentences" target="calc-sim">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="calc-sim" target="step2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="step2" target="step3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="step3" target="step4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="step4" target="step5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="step5" target="ex">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ex" target="create-parent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="create-parent" target="create-child">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="create-child" target="quality">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="quality" target="store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Chunk visualization at bottom -->
+        <mxCell id="vis-box" value="层级结构示意" style="swimlane;startSize=22;fillColor=#f0fdf4;strokeColor=#86b086;fontSize=11;fontStyle=1;fontColor=#14532d;" vertex="1" parent="1">
+          <mxGeometry x="80" y="760" width="1760" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="pa" value="Parent Chunk A&#xa;(句子1-3, ~1200 tokens)&#xa;主题: 销售数据概述" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbf7d0;strokeColor=#16a34a;fontSize=11;fontStyle=1;" vertex="1" parent="vis-box">
+          <mxGeometry x="60" y="32" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="pb" value="Parent Chunk B&#xa;(句子4-10, ~1600 tokens)&#xa;主题: 增长率分析" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbf7d0;strokeColor=#16a34a;fontSize=11;fontStyle=1;" vertex="1" parent="vis-box">
+          <mxGeometry x="560" y="32" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ca1" value="Child A1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="vis-box">
+          <mxGeometry x="60" y="115" width="65" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="ca2" value="Child A2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="vis-box">
+          <mxGeometry x="130" y="115" width="65" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="ca3" value="Child A3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="vis-box">
+          <mxGeometry x="200" y="115" width="65" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="ca4" value="Child A4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="vis-box">
+          <mxGeometry x="270" y="115" width="65" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="cb1" value="Child B1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="vis-box">
+          <mxGeometry x="560" y="115" width="65" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="cb2" value="Child B2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="vis-box">
+          <mxGeometry x="630" y="115" width="65" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="cb3" value="Child B3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="vis-box">
+          <mxGeometry x="700" y="115" width="65" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="cb4" value="Child B4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="vis-box">
+          <mxGeometry x="770" y="115" width="65" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="cb5" value="Child B5" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="vis-box">
+          <mxGeometry x="840" y="115" width="65" height="12" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

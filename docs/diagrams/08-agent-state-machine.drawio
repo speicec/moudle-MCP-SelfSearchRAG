@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="Agent框架状态机">
+    <mxGraphModel dx="1920" dy="1080" pageWidth="1920" pageHeight="1080">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Medical Agent 框架设计 — ReAct + Planning 双模式智能执行引擎" style="text;html=1;fontSize=22;fontStyle=1;fontColor=#064E3B;align=center;" vertex="1" parent="1">
+          <mxGeometry x="360" y="10" width="1200" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- Entry -->
+        <mxCell id="entry" value="用户查询" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="70" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Entity Recognition -->
+        <mxCell id="entity-rec" value="实体识别 Entity Recognition&#xa;疾病词典/药物词典/指标词典/关系关键词" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="170" width="260" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- Safety -->
+        <mxCell id="safety-check" value="安全预检查 Safety Layer (Layer 1)&#xa;Step1: 禁忌阈值匹配&#xa;Step2: 药物相互作用检测&#xa;Step3: 严重程度判定" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="270" width="260" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Early termination -->
+        <mxCell id="early-term" value="早终止 Early Termination&#xa;绝对禁忌 → 直接返回&#xa;0次LLM调用, &lt;1秒" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="400" width="260" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- Complexity -->
+        <mxCell id="complexity" value="复杂度评估 Complexity Assessment&#xa;simple / moderate / complex / structured" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="410" y="260" width="220" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ReAct Loop -->
+        <mxCell id="react-box" value="ReAct 循环 (ruleBasedDecide=true)" style="swimlane;startSize=28;fillColor=#ecfdf5;strokeColor=#14b8a6;fontSize=13;fontStyle=1;fontColor=#0f766e;" vertex="1" parent="1">
+          <mxGeometry x="700" y="60" width="440" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="think" value="Think 推理分析&#xa;规则化决策(零LLM):&#xa;1. retrievalCount≥3?&#xa;2. maxSimilarity>0.7?&#xa;3. entityCoverage≥80%?&#xa;4. absoluteContraindication?" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=10;align=left;" vertex="1" parent="react-box">
+          <mxGeometry x="20" y="40" width="400" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="act" value="Act 执行动作: retrieve / expand_query / need_more" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=10;align=left;" vertex="1" parent="react-box">
+          <mxGeometry x="20" y="148" width="400" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="observe" value="Observe 观察结果: 检索数量+质量 / 实体覆盖率 / 证据质量" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#14b8a6;fontSize=10;align=left;" vertex="1" parent="react-box">
+          <mxGeometry x="20" y="208" width="400" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="decide" value="Decide 判断: canContinue()?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="react-box">
+          <mxGeometry x="120" y="265" width="180" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="satisfied" value="SATISFIED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="react-box">
+          <mxGeometry x="260" y="324" width="140" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ReAct internal arrows -->
+        <mxCell id="ra1" value="需检索" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;" edge="1" parent="1" source="think" target="act">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ra2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;" edge="1" parent="1" source="act" target="observe">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ra3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;" edge="1" parent="1" source="observe" target="decide">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ra4" value="NOT SATISFIED" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#ca8a04;" edge="1" parent="1" source="decide" target="think">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="210" y="334" /><mxPoint x="210" y="320" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="ra5" value="满足" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#22c55e;" edge="1" parent="1" source="decide" target="satisfied">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Planning Mode -->
+        <mxCell id="plan-box" value="Planning 模式 (PlanAndExecute)" style="swimlane;startSize=28;fillColor=#ede9fe;strokeColor=#7c3aed;fontSize=13;fontStyle=1;fontColor=#5b21b6;" vertex="1" parent="1">
+          <mxGeometry x="700" y="450" width="440" height="370" as="geometry" />
+        </mxCell>
+        <mxCell id="template-match" value="模板匹配 Template Matching (零LLM)&#xa;6个内置模板: 指南年份过滤/药物禁忌检查/药物对比/指标药物查询/指标决策支持/疾病用药建议" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=10;align=left;" vertex="1" parent="plan-box">
+          <mxGeometry x="20" y="40" width="400" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="build-dag" value="构建 DAG: 定义任务节点+依赖关系+并行组" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=10;align=left;" vertex="1" parent="plan-box">
+          <mxGeometry x="20" y="125" width="400" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="parallel-exec" value="并行执行 Parallel Execute: 独立任务同时运行" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=10;align=left;" vertex="1" parent="plan-box">
+          <mxGeometry x="20" y="185" width="400" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="aggregate" value="结果聚合 Result Aggregation" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=10;align=left;" vertex="1" parent="plan-box">
+          <mxGeometry x="20" y="245" width="400" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="replan" value="重规划? entityCover&lt;80% / failedRatio>20% / criticalFailed?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="plan-box">
+          <mxGeometry x="80" y="300" width="280" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Planning internal arrows -->
+        <mxCell id="pa1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="template-match" target="build-dag">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pa2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="build-dag" target="parallel-exec">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pa3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="parallel-exec" target="aggregate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pa4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="aggregate" target="replan">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pa5" value="需重规划 (最多2次)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#7c3aed;" edge="1" parent="1" source="replan" target="build-dag">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="220" y="370" /><mxPoint x="220" y="370" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- Answer Generation -->
+        <mxCell id="answer-gen" value="三层综合回答生成 3-Layer Answer&#xa;Layer1 (Safety): 安全评估结论 — 绝对禁忌直接采用&#xa;Layer2 (Retrieval): 检索结果综合 — 多来源交叉验证&#xa;Layer3 (Evidence): 证据等级标注 — GRADE A/B/C/D" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=11;align=left;" vertex="1" parent="1">
+          <mxGeometry x="60" y="530" width="500" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Evidence Evaluation -->
+        <mxCell id="evidence-eval" value="证据评估 (5维度)&#xa;GRADE等级(40%) + 来源权威度(20%) + 时效性(20%)&#xa;+ 一致性(10%) + 适用性(10%)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#059669;fontSize=11;align=left;" vertex="1" parent="1">
+          <mxGeometry x="60" y="650" width="500" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Quality Check -->
+        <mxCell id="quality-check" value="质量检查 Quality Check&#xa;结论准确? 证据充分? 来源可追溯? 有适当警告?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="130" y="750" width="340" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Output -->
+        <mxCell id="output" value="输出 + WebSocket推送&#xa;agent:complete&#xa;提交异步评估 (Redis+Bull, 8维RAG评估)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="870" width="360" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Cross-area arrows -->
+        <mxCell id="e1" value="W/S: agent:input" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#6366f1;" edge="1" parent="1" source="entry" target="entity-rec">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="W/S: agent:entities" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#6366f1;" edge="1" parent="1" source="entity-rec" target="safety-check">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="非绝对禁忌&#xa;W/S: agent:complexity" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#6366f1;" edge="1" parent="1" source="safety-check" target="complexity">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="绝对禁忌" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#b85450;" edge="1" parent="1" source="safety-check" target="early-term">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="simple / 禁用Planning" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#14b8a6;" edge="1" parent="1" source="complexity" target="react-box">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="560" y="260" /><mxPoint x="560" y="240" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="moderate/complex&#xa;且 enablePlanning" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#7c3aed;" edge="1" parent="1" source="complexity" target="plan-box">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="560" y="450" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="回退 Fallback" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#ca8a04;dashed=1;" edge="1" parent="1" source="replan" target="react-box">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="680" y="325" /><mxPoint x="680" y="240" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="满足" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#22c55e;" edge="1" parent="1" source="replan" target="answer-gen">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="660" y="375" /><mxPoint x="660" y="570" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#22c55e;" edge="1" parent="1" source="satisfied" target="answer-gen">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1200" y="540" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;" edge="1" parent="1" source="early-term" target="answer-gen">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="190" y="455" /><mxPoint x="190" y="530" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;" edge="1" parent="1" source="answer-gen" target="evidence-eval">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;" edge="1" parent="1" source="evidence-eval" target="quality-check">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" value="VALID&#xa;→ agent:complete" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#22c55e;" edge="1" parent="1" source="quality-check" target="output">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" value="INVALID" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#b85450;dashed=1;" edge="1" parent="1" source="quality-check" target="answer-gen">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="240" y="790" /><mxPoint x="240" y="610" /></Array></mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

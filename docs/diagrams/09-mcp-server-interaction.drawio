@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="MCP服务器交互">
+    <mxGraphModel dx="1920" dy="1080" pageWidth="1920" pageHeight="1080">
+      <root>
+        <mxCell id="0" /><mxCell id="1" parent="0" />
+        <mxCell id="title" value="MCP Server 工具交互流程 — Claude Desktop ↔ MCP Server → SelfSearchRAG Engine" style="text;html=1;fontSize=20;fontStyle=1;fontColor=#3730A3;align=center;" vertex="1" parent="1">
+          <mxGeometry x="300" y="5" width="1320" height="32" as="geometry" />
+        </mxCell>
+
+        <mxCell id="claude" value="Claude Desktop" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=10;fontStyle=1;fillColor=#e0e7ff;strokeColor=#6366f1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="50" width="110" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="mcp" value="MCP Server&#xa;(mcp-tools.ts)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=10;fillColor=#e0e7ff;strokeColor=#6366f1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="50" width="110" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="docmgr" value="Document&#xa;Manager" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;fillColor=#dcfce7;strokeColor=#22c55e;" vertex="1" parent="1">
+          <mxGeometry x="370" y="50" width="80" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="retrieval" value="Enhanced&#xa;Retrieval" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;fillColor=#ede9fe;strokeColor=#7c3aed;" vertex="1" parent="1">
+          <mxGeometry x="510" y="50" width="80" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="agent" value="Medical&#xa;AgentExecutor" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;fillColor=#fce7f3;strokeColor=#db2777;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="50" width="90" height="980" as="geometry" />
+        </mxCell>
+        <mxCell id="store" value="Storage&#xa;(Document/Hierarchical/Image)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;fontSize=9;fillColor=#fef3c7;strokeColor=#ca8a04;" vertex="1" parent="1">
+          <mxGeometry x="800" y="50" width="100" height="980" as="geometry" />
+        </mxCell>
+
+        <!-- Tool 1: ingest_document -->
+        <mxCell id="tool1-label" value="工具1:&#xa;ingest_document" style="text;html=1;fontSize=9;fontColor=#22c55e;fontStyle=1;align=right;" vertex="1" parent="1">
+          <mxGeometry x="10" y="110" width="65" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="t1a" value="1. ingest_document {path, metadata}" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="claude" target="mcp"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="120" /></Array></mxGeometry></mxCell>
+        <mxCell id="t1b" value="2. 触发Pipeline" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="mcp" target="docmgr"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="350" y="145" /></Array></mxGeometry></mxCell>
+        <mxCell id="t1c" value="3. Ingest→Parse→Chunk→Embed" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontColor=#059669;" edge="1" parent="1" source="docmgr" target="docmgr"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="460" y="170" /><mxPoint x="460" y="165" /></Array></mxGeometry></mxCell>
+        <mxCell id="t1d" value="4. 写入 Chunks + 元数据" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontColor=#ca8a04;" edge="1" parent="1" source="docmgr" target="store"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="830" y="195" /></Array></mxGeometry></mxCell>
+        <mxCell id="t1e" value="5. {success, documentId, totalChunks}" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#22c55e;" edge="1" parent="1" source="mcp" target="claude"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="220" /></Array></mxGeometry></mxCell>
+
+        <!-- Tool 2: search_medical -->
+        <mxCell id="tool2-label" value="工具2:&#xa;search_medical" style="text;html=1;fontSize=9;fontColor=#7c3aed;fontStyle=1;align=right;" vertex="1" parent="1">
+          <mxGeometry x="10" y="270" width="65" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="t2a" value="6. search_medical {query, topK, threshold}" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="claude" target="mcp"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="290" /></Array></mxGeometry></mxCell>
+        <mxCell id="t2b" value="7. EnhancedRetrievalPipeline" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="mcp" target="retrieval"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="510" y="320" /></Array></mxGeometry></mxCell>
+        <mxCell id="t2c" value="8. 向量检索" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontColor=#ca8a04;" edge="1" parent="1" source="retrieval" target="store"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="830" y="345" /></Array></mxGeometry></mxCell>
+        <mxCell id="t2d" value="9. {results:5条, confidenceLevel}" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#7c3aed;" edge="1" parent="1" source="mcp" target="claude"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="370" /></Array></mxGeometry></mxCell>
+
+        <!-- Tool 3: medical_query -->
+        <mxCell id="tool3-label" value="工具3:&#xa;medical_query" style="text;html=1;fontSize=9;fontColor=#059669;fontStyle=1;align=right;" vertex="1" parent="1">
+          <mxGeometry x="10" y="420" width="65" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="t3a" value="10. medical_query {query, domain}" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="claude" target="mcp"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="440" /></Array></mxGeometry></mxCell>
+        <mxCell id="t3b" value="11. 简化Agent (实体识别+检索)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="mcp" target="agent"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="630" y="470" /></Array></mxGeometry></mxCell>
+        <mxCell id="t3c" value="12. 结构化医学回答" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#db2777;" edge="1" parent="1" source="agent" target="mcp"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="700" y="500" /></Array></mxGeometry></mxCell>
+        <mxCell id="t3d" value="13. {entities, strategy, answer}" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#22c55e;" edge="1" parent="1" source="mcp" target="claude"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="530" /></Array></mxGeometry></mxCell>
+
+        <!-- Tool 4: medical_agent (ReAct) -->
+        <mxCell id="tool4-label" value="工具4:&#xa;medical_agent&#xa;(ReAct)" style="text;html=1;fontSize=9;fontColor=#db2777;fontStyle=1;align=right;" vertex="1" parent="1">
+          <mxGeometry x="5" y="580" width="70" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="t4a" value="14. medical_agent {query, max_iterations:5}" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="claude" target="mcp"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="600" /></Array></mxGeometry></mxCell>
+        <mxCell id="t4b" value="15. createAgentExecutor(ReAct)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontColor=#db2777;" edge="1" parent="1" source="mcp" target="agent"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="630" y="630" /></Array></mxGeometry></mxCell>
+        <mxCell id="t4c" value="16. Entity→Safety→QueryPlan" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="agent" target="agent"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="750" y="660" /><mxPoint x="750" y="655" /></Array></mxGeometry></mxCell>
+        <mxCell id="t4d" value="17. ReAct: Think→Act(检索)→Observe→Decide→SATISFIED (2轮)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="agent" target="agent"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="750" y="690" /><mxPoint x="750" y="685" /></Array></mxGeometry></mxCell>
+        <mxCell id="t4e" value="18. 三层回答: Safety→Retrieval→Evidence" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="agent" target="agent"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="750" y="720" /><mxPoint x="750" y="715" /></Array></mxGeometry></mxCell>
+        <mxCell id="t4f" value="19. StructuredAnswer (迭代:2, LLM:1, 耗时:1.5s)" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#db2777;" edge="1" parent="1" source="mcp" target="claude"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="750" /></Array></mxGeometry></mxCell>
+
+        <!-- Tool 5: medical_agent_plan -->
+        <mxCell id="tool5-label" value="工具5:&#xa;medical_agent&#xa;_plan&#xa;(Planning)" style="text;html=1;fontSize=9;fontColor=#7c3aed;fontStyle=1;align=right;" vertex="1" parent="1">
+          <mxGeometry x="5" y="800" width="70" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="t5a" value="20. medical_agent_plan {query, enable_planning:true}" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;" edge="1" parent="1" source="claude" target="mcp"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="820" /></Array></mxGeometry></mxCell>
+        <mxCell id="t5b" value="21. createAgentExecutor(Planning)" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontColor=#7c3aed;" edge="1" parent="1" source="mcp" target="agent"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="630" y="850" /></Array></mxGeometry></mxCell>
+        <mxCell id="t5c" value="22. 模板匹配→DAG构建→并行执行→聚合→重规划" style="html=1;verticalAlign=bottom;endArrow=block;fontSize=9;fontColor=#7c3aed;" edge="1" parent="1" source="agent" target="agent"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="750" y="880" /><mxPoint x="750" y="875" /></Array></mxGeometry></mxCell>
+        <mxCell id="t5d" value="23. Answer + DAG信息 + 执行统计" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;fontSize=9;fontColor=#7c3aed;" edge="1" parent="1" source="mcp" target="claude"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="910" /></Array></mxGeometry></mxCell>
+
+        <!-- Tool summary box -->
+        <mxCell id="summary" value="MCP 工具总览 (5个)&#xa;ingest_document | search_medical | medical_query | medical_agent (ReAct) | medical_agent_plan (Planning)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="950" y="60" width="900" height="40" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
